@@ -18,7 +18,7 @@ import type {
   SubmittedReport,
 } from '../screens/ReportsScreen';
 import type { Project, VolunteerTimeLog } from '../models/types';
-import { isImageMediaUri, pickDocumentFromDevice, pickImageFromDevice } from '../utils/media';
+import { isImageMediaUri } from '../utils/media';
 
 type MaterialIconName = keyof typeof MaterialIcons.glyphMap;
 
@@ -37,8 +37,8 @@ interface ReportUploadModalProps {
   fieldOfficerProjectIds?: string[];
   initialProjectId?: string;
   initialDescription?: string;
-  initialMediaUri?: string;
   partnerProjectSummaries?: PartnerProjectReportSummary[];
+  volunteerProfileId?: string | null;
 }
 
 export default function ReportUploadModal({
@@ -51,18 +51,15 @@ export default function ReportUploadModal({
   fieldOfficerProjectIds = [],
   initialProjectId,
   initialDescription,
-  initialMediaUri,
   partnerProjectSummaries = [],
+  volunteerProfileId,
 }: ReportUploadModalProps) {
   const [reportType, setReportType] =
     useState<SubmittedReport['reportType']>('volunteer_engagement');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [selectedProject, setSelectedProject] = useState<string | undefined>();
-  const [selectedPhotoUri, setSelectedPhotoUri] = useState('');
-  const [selectedDocumentUri, setSelectedDocumentUri] = useState('');
   const [volunteerSummary, setVolunteerSummary] = useState('');
-  const [volunteerContribution, setVolunteerContribution] = useState('');
   const [volunteerExperience, setVolunteerExperience] = useState('');
   const [volunteerFollowUp, setVolunteerFollowUp] = useState('');
   const [collaborationFeedback, setCollaborationFeedback] = useState('');
@@ -85,6 +82,28 @@ export default function ReportUploadModal({
   const entityLabel = isVolunteer ? 'Event' : 'Project';
   const entityLabelLower = entityLabel.toLowerCase();
 
+  const isVolunteerAssignedToTask = useCallback(
+    (task: { assignedVolunteerId?: string; assignedVolunteerIds?: string[] }) => {
+      if (!volunteerProfileId) {
+        return false;
+      }
+
+      const assignedVolunteerIds = Array.from(
+        new Set(
+          [
+            ...(Array.isArray(task.assignedVolunteerIds) ? task.assignedVolunteerIds : []),
+            task.assignedVolunteerId,
+          ]
+            .map(value => String(value || '').trim())
+            .filter(Boolean)
+        )
+      );
+
+      return assignedVolunteerIds.includes(volunteerProfileId);
+    },
+    [volunteerProfileId]
+  );
+
   const getLocalDateKey = (value: string) => {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
@@ -96,31 +115,22 @@ export default function ReportUploadModal({
     return `${date.getFullYear()}-${month}-${day}`;
   };
 
-  const getAttachmentLabel = (value: string) => {
-    if (!value) {
-      return 'Selected attachment';
-    }
-
-    if (value.startsWith('data:')) {
-      const mimeType = value.slice('data:'.length).split(';')[0];
-      return mimeType || 'Selected attachment';
-    }
-
-    const normalizedValue = value.split('?')[0].split('#')[0];
-    const segments = normalizedValue.split('/');
-    return segments[segments.length - 1] || 'Selected attachment';
-  };
-
   const volunteerMetrics = useMemo(() => {
-    if (!isVolunteer || !selectedProject || !volunteerTimeLogs?.length) {
-      return { volunteerHours: 0, tasksCompleted: 0, attendanceDays: 0 };
+    if (!isVolunteer || !selectedProject) {
+      return {
+        volunteerHours: 0,
+        tasksCompleted: 0,
+        attendanceDays: 0,
+        latestAttendancePhoto: '',
+        assignedTaskTitles: [] as string[],
+      };
     }
 
-    const logsForProject = volunteerTimeLogs.filter(log => log.projectId === selectedProject);
+    const logsForProject = (volunteerTimeLogs || []).filter(log => log.projectId === selectedProject);
     const attendanceDays = new Set(
       logsForProject
-        .filter(log => Boolean(log.timeIn))
-        .map(log => getLocalDateKey(log.timeIn))
+        .filter(log => Boolean(log.attendanceConfirmedAt || log.timeIn))
+        .map(log => getLocalDateKey(log.attendanceConfirmedAt || log.timeIn || ''))
         .filter(Boolean)
     ).size;
     const totalHours = logsForProject.reduce((sum, log) => {
@@ -135,16 +145,30 @@ export default function ReportUploadModal({
       }
       return sum + (end - start) / 3_600_000;
     }, 0);
-
-    const completedLogs = logsForProject.filter(log => Boolean(log.timeOut));
-    const hasAnyLog = logsForProject.length > 0;
+    const latestPhotoLog = [...logsForProject]
+      .sort(
+        (left, right) =>
+          new Date(right.attendanceConfirmedAt || right.timeIn).getTime() -
+          new Date(left.attendanceConfirmedAt || left.timeIn).getTime()
+      )
+      .find(log => Boolean((log.attendancePhoto || log.completionPhoto || '').trim()));
+    const selectedProjectRecord = projects.find(
+      project => project.id === selectedProject
+    ) as Project | undefined;
+    const assignedTaskTitles = selectedProjectRecord
+      ? (selectedProjectRecord.internalTasks || [])
+          .filter(task => isVolunteerAssignedToTask(task))
+          .map(task => task.title)
+      : [];
 
     return {
       volunteerHours: Number(totalHours.toFixed(1)),
-      tasksCompleted: completedLogs.length > 0 ? completedLogs.length : hasAnyLog ? 1 : 0,
+      tasksCompleted: assignedTaskTitles.length,
       attendanceDays,
+      latestAttendancePhoto: latestPhotoLog?.attendancePhoto || latestPhotoLog?.completionPhoto || '',
+      assignedTaskTitles,
     };
-  }, [isVolunteer, selectedProject, volunteerTimeLogs]);
+  }, [isVolunteer, isVolunteerAssignedToTask, projects, selectedProject, volunteerTimeLogs]);
 
   const selectedProjectData = useMemo(
     () =>
@@ -188,12 +212,8 @@ export default function ReportUploadModal({
     if (initialDescription) {
       setDescription(initialDescription);
     }
-    if (initialMediaUri) {
-      setSelectedPhotoUri(initialMediaUri);
-    }
   }, [
     initialDescription,
-    initialMediaUri,
     initialProjectId,
     isPartner,
     isVolunteer,
@@ -312,46 +332,11 @@ export default function ReportUploadModal({
     return Object.keys(nextErrors).length === 0;
   };
 
-  const handlePickPhoto = useCallback(async () => {
-    try {
-      const pickedImage = await pickImageFromDevice();
-      if (!pickedImage) {
-        return;
-      }
-
-      setSelectedPhotoUri(pickedImage);
-    } catch (error: any) {
-      Alert.alert(
-        'Photo Access Needed',
-        error?.message || 'Unable to open your photo library.'
-      );
-    }
-  }, []);
-
-  const handlePickDocument = useCallback(async () => {
-    try {
-      const pickedDocument = await pickDocumentFromDevice();
-      if (!pickedDocument) {
-        return;
-      }
-
-      setSelectedDocumentUri(pickedDocument);
-    } catch (error: any) {
-      Alert.alert(
-        'File Access Needed',
-        error?.message || 'Unable to open your files.'
-      );
-    }
-  }, []);
-
   const handleReset = useCallback(() => {
     setTitle('');
     setDescription('');
     setSelectedProject(undefined);
-    setSelectedPhotoUri('');
-    setSelectedDocumentUri('');
     setVolunteerSummary('');
-    setVolunteerContribution('');
     setVolunteerExperience('');
     setVolunteerFollowUp('');
     setCollaborationFeedback('');
@@ -446,6 +431,7 @@ export default function ReportUploadModal({
     const volunteerMetricValues = isVolunteer
       ? {
           volunteerHours: volunteerMetrics.volunteerHours,
+          verifiedAttendance: volunteerMetrics.attendanceDays,
           tasksCompleted: volunteerMetrics.tasksCompleted,
         }
       : {};
@@ -470,8 +456,8 @@ export default function ReportUploadModal({
           volunteerSummary.trim()
             ? `What happened during the event:\n${volunteerSummary.trim()}`
             : '',
-          volunteerContribution.trim()
-            ? `What I helped with:\n${volunteerContribution.trim()}`
+          volunteerMetrics.assignedTaskTitles.length
+            ? `Assigned event task:\n${volunteerMetrics.assignedTaskTitles.join(', ')}`
             : '',
           volunteerExperience.trim()
             ? `My experience:\n${volunteerExperience.trim()}`
@@ -487,16 +473,6 @@ export default function ReportUploadModal({
           .join('\n\n')
       : description.trim();
 
-    const attachments = selectedDocumentUri
-      ? [
-          {
-            url: selectedDocumentUri,
-            type: 'document' as const,
-            description: 'Volunteer report attachment',
-          },
-        ]
-      : [];
-
     const reportData: Omit<
       SubmittedReport,
       'id' | 'submittedAt' | 'submittedBy' | 'submitterName' | 'submitterRole' | 'viewedBy'
@@ -508,8 +484,10 @@ export default function ReportUploadModal({
       projectTitle: selectedProjectData?.title,
       category: selectedProjectData?.category,
       metrics: metricsData,
-      attachments,
-      mediaFile: selectedPhotoUri || undefined,
+      attachments: [],
+      mediaFile: isVolunteer
+        ? volunteerMetrics.latestAttendancePhoto || undefined
+        : undefined,
       status: 'Submitted',
     };
 
@@ -533,15 +511,17 @@ export default function ReportUploadModal({
     onSubmit,
     projects,
     reportType,
-    selectedDocumentUri,
-    selectedPhotoUri,
     selectedProject,
     selectedPartnerProjectSummary,
     title,
     volunteerPraise,
-    volunteerContribution,
     volunteerExperience,
     volunteerFollowUp,
+    volunteerMetrics.assignedTaskTitles,
+    volunteerMetrics.attendanceDays,
+    volunteerMetrics.latestAttendancePhoto,
+    volunteerMetrics.tasksCompleted,
+    volunteerMetrics.volunteerHours,
     volunteerSummary,
     volunteerTimeLogs,
     onClose,
@@ -802,16 +782,16 @@ export default function ReportUploadModal({
         <Text style={styles.errorText}>{errors.volunteerSummary}</Text>
       ) : null}
 
-      <Text style={styles.label}>What did you help with?</Text>
-      <TextInput
-        style={styles.textArea}
-        placeholder="Example: registration, setup, assisting participants, distribution, documentation, cleanup."
-        value={volunteerContribution}
-        onChangeText={setVolunteerContribution}
-        multiline
-        numberOfLines={3}
-        placeholderTextColor="#cbd5e1"
-      />
+      <Text style={styles.label}>Assigned Event Task</Text>
+      <View style={styles.readOnlyCardLarge}>
+        <Text style={styles.readOnlyDescription}>
+          {selectedProject
+            ? volunteerMetrics.assignedTaskTitles.length
+              ? volunteerMetrics.assignedTaskTitles.join(', ')
+              : 'No assigned event task found for this event yet.'
+            : 'Select an event to load your assigned task.'}
+        </Text>
+      </View>
 
       <Text style={styles.label}>How was your experience? *</Text>
       <TextInput
@@ -840,74 +820,38 @@ export default function ReportUploadModal({
 
       <Text style={styles.sectionTitle}>Auto-generated Event Metrics</Text>
       <Text style={styles.sectionHelper}>
-        Volunteer hours and task count are generated automatically from your time log.
+        Attendance count, event task count, and field photo are generated automatically from your event records.
       </Text>
       <View style={styles.autoMetricsCard}>
+        <View style={styles.autoMetricRow}>
+          <Text style={styles.autoMetricLabel}>Volunteer Attendance Count</Text>
+          <Text style={styles.autoMetricValue}>
+            {selectedProject ? volunteerMetrics.attendanceDays : 'Select an event'}
+          </Text>
+        </View>
+        <View style={styles.autoMetricRow}>
+          <Text style={styles.autoMetricLabel}>Event Task Count</Text>
+          <Text style={styles.autoMetricValue}>
+            {selectedProject ? volunteerMetrics.tasksCompleted : 'Select an event'}
+          </Text>
+        </View>
         <View style={styles.autoMetricRow}>
           <Text style={styles.autoMetricLabel}>Volunteer Hours</Text>
           <Text style={styles.autoMetricValue}>
             {selectedProject ? `${volunteerMetrics.volunteerHours.toFixed(1)} hrs` : 'Select an event'}
           </Text>
         </View>
-        <View style={styles.autoMetricRow}>
-          <Text style={styles.autoMetricLabel}>Tasks Completed</Text>
-          <Text style={styles.autoMetricValue}>
-            {selectedProject ? volunteerMetrics.tasksCompleted : 'Select an event'}
-          </Text>
-        </View>
-        <View style={styles.autoMetricRow}>
-          <Text style={styles.autoMetricLabel}>Days Timed In</Text>
-          <Text style={styles.autoMetricValue}>
-            {selectedProject ? volunteerMetrics.attendanceDays : 'Select an event'}
-          </Text>
-        </View>
       </View>
 
-      <Text style={styles.sectionTitle}>Optional Impact Numbers</Text>
+      <Text style={styles.sectionTitle}>Field Photo</Text>
       <Text style={styles.sectionHelper}>
-        Share how many people your event work helped, if you know it.
+        This photo is pulled automatically from your attendance confirmation for the selected event.
       </Text>
-      <View style={styles.metricsGrid}>
-        {getMetricFieldsForType().map(field => (
-          <View key={field} style={styles.metricInput}>
-            <Text style={styles.metricLabel}>{formatMetricLabel(field, true)}</Text>
-            <TextInput
-              style={styles.metricInputField}
-              placeholder="0"
-              value={metrics[field as keyof typeof metrics]}
-              onChangeText={value => handleMetricChange(field, value)}
-              keyboardType="number-pad"
-              placeholderTextColor="#cbd5e1"
-            />
-          </View>
-        ))}
-      </View>
-
-      <Text style={styles.sectionTitle}>Photo or File Proof</Text>
-      <View style={styles.proofActionRow}>
-        <TouchableOpacity style={styles.photoButton} onPress={handlePickPhoto}>
-          <MaterialIcons name="photo-library" size={18} color="#166534" />
-          <Text style={styles.photoButtonText}>
-            {selectedPhotoUri ? 'Replace Photo' : 'Upload Event Photo'}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.photoButton} onPress={handlePickDocument}>
-          <MaterialIcons name="attach-file" size={18} color="#166534" />
-          <Text style={styles.photoButtonText}>
-            {selectedDocumentUri ? 'Replace File' : 'Upload File'}
-          </Text>
-        </TouchableOpacity>
-      </View>
-      <Text style={styles.photoHint}>
-        Optional, but this helps admins verify the event story and keeps documentation in
-        one place.
-      </Text>
-
-      {selectedPhotoUri ? (
+      {volunteerMetrics.latestAttendancePhoto ? (
         <View style={styles.photoPreviewCard}>
-          {isImageMediaUri(selectedPhotoUri) ? (
+          {isImageMediaUri(volunteerMetrics.latestAttendancePhoto) ? (
             <Image
-              source={{ uri: selectedPhotoUri }}
+              source={{ uri: volunteerMetrics.latestAttendancePhoto }}
               style={styles.photoPreview}
               resizeMode="cover"
             />
@@ -917,30 +861,36 @@ export default function ReportUploadModal({
             </View>
           )}
           <View style={styles.photoPreviewMeta}>
-            <Text style={styles.photoPreviewTitle}>Photo ready for this report</Text>
-            <TouchableOpacity onPress={() => setSelectedPhotoUri('')}>
-              <Text style={styles.photoRemoveText}>Remove Photo</Text>
-            </TouchableOpacity>
+            <Text style={styles.photoPreviewTitle}>Attendance photo ready for this report</Text>
           </View>
         </View>
-      ) : null}
+      ) : (
+        <View style={styles.readOnlyCard}>
+          <Text style={styles.readOnlyDescription}>
+            {selectedProject
+              ? 'No attendance photo found yet for this event.'
+              : 'Select an event to load the field photo.'}
+          </Text>
+        </View>
+      )}
 
-      {selectedDocumentUri ? (
-        <View style={styles.documentPreviewCard}>
-          <View style={styles.documentPreviewIcon}>
-            <MaterialIcons name="description" size={22} color="#166534" />
-          </View>
-          <View style={styles.documentPreviewMeta}>
-            <Text style={styles.documentPreviewTitle}>File ready for this report</Text>
-            <Text style={styles.documentPreviewName} numberOfLines={1}>
-              {getAttachmentLabel(selectedDocumentUri)}
-            </Text>
-          </View>
-          <TouchableOpacity onPress={() => setSelectedDocumentUri('')}>
-            <Text style={styles.photoRemoveText}>Remove</Text>
-          </TouchableOpacity>
+      <Text style={styles.sectionTitle}>Beneficiary Count</Text>
+      <Text style={styles.sectionHelper}>
+        Enter the number of beneficiaries served during this event.
+      </Text>
+      <View style={styles.metricsGrid}>
+        <View style={styles.metricInput}>
+          <Text style={styles.metricLabel}>Beneficiary Count</Text>
+          <TextInput
+            style={styles.metricInputField}
+            placeholder="0"
+            value={metrics.beneficiariesServed}
+            onChangeText={value => handleMetricChange('beneficiariesServed', value)}
+            keyboardType="number-pad"
+            placeholderTextColor="#cbd5e1"
+          />
         </View>
-      ) : null}
+      </View>
 
       <Text style={styles.sectionTitle}>Short Admin Summary</Text>
       <Text style={styles.sectionHelper}>

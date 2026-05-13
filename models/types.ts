@@ -80,6 +80,8 @@ export interface ProjectInternalTask {
   status: 'Unassigned' | 'Assigned' | 'In Progress' | 'Completed';
   assignedVolunteerId?: string;
   assignedVolunteerName?: string;
+  assignedVolunteerIds?: string[];
+  assignedVolunteerNames?: string[];
   isFieldOfficer?: boolean;
   skillsNeeded: string[]; // Skills required for this specific task
   createdAt: string;
@@ -235,6 +237,11 @@ export interface VolunteerTimeLog {
   timeIn: string;
   timeOut?: string;
   note?: string;
+  attendancePhoto?: string;
+  attendanceConfirmedAt?: string;
+  attendanceCheckedAt?: string;
+  attendanceCheckedBy?: string;
+  attendanceCheckedByName?: string;
   completionPhoto?: string;
   completionReport?: string;
 }

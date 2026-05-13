@@ -17,6 +17,7 @@ import InlineLoadError from '../components/InlineLoadError';
 import { useAuth } from '../contexts/AuthContext';
 import {
   buildProgramProposalProjectId,
+  getAllPartnerReports,
   getProgramModuleFromProposalProjectId,
   getAllVolunteers,
   getProjectsScreenSnapshot,
@@ -25,13 +26,11 @@ import {
   saveEvent,
   notifyVolunteerAboutTaskUnassignment,
   notifyVolunteerAboutTaskUpdate,
-  submitVolunteerTimeOutReport,
   submitPartnerProgramProposal,
   startVolunteerTimeLog,
-  endVolunteerTimeLog,
   subscribeToStorageChanges,
 } from '../models/storage';
-import { PartnerProjectApplication, PartnerProjectProposalDetails, Project, Volunteer, VolunteerProjectJoinRecord, VolunteerProjectMatch, VolunteerTimeLog } from '../models/types';
+import { PartnerProjectApplication, PartnerProjectProposalDetails, PartnerReport, Project, Volunteer, VolunteerProjectJoinRecord, VolunteerProjectMatch, VolunteerTimeLog } from '../models/types';
 import { isImageMediaUri, pickImageFromDevice } from '../utils/media';
 import { navigateToAvailableRoute } from '../utils/navigation';
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
@@ -72,6 +71,86 @@ type Recommendation = {
 
 type ContentFilter = 'All' | 'Programs' | 'Events';
 
+type ProgramWebsiteDetail = {
+  eyebrow: string;
+  title: string;
+  url: string;
+  hero: string;
+  overview: string;
+  projects: { title: string; description: string }[];
+  accent: string;
+  softAccent: string;
+  icon: keyof typeof MaterialIcons.glyphMap;
+};
+
+const PROGRAM_WEBSITE_DETAILS: Record<Project['category'], ProgramWebsiteDetail> = {
+  Nutrition: {
+    eyebrow: 'Nutrition Projects',
+    title: 'Nutrition',
+    url: 'https://www.nvcfoundation-ph.org/nutrition/',
+    hero: 'Local sourcing, nutritious food production, and Mingo meals for children and emergency feeding needs.',
+    overview:
+      'NVC nutrition work centers on Mingo, a rice, mung bean, and moringa food used to support undernourished children. The program also connects local farmers to a stable buyer while helping fill urgent feeding gaps.',
+    projects: [
+      { title: 'Mingo for Nutritional Support', description: 'Mingo meals for undernourished Filipino children.' },
+      { title: 'Farm to Fork Program', description: 'Local farmers supply harvests used for nutritious food products.' },
+      { title: 'Mingo for Emergency Relief', description: 'Convenient nutrition support for relief operations.' },
+      { title: 'Mingo Parties', description: 'Community giving activities built around Mingo meals.' },
+    ],
+    accent: '#dc2626',
+    softAccent: '#fee2e2',
+    icon: 'restaurant',
+  },
+  Education: {
+    eyebrow: 'Education Projects',
+    title: 'Education',
+    url: 'https://www.nvcfoundation-ph.org/education/',
+    hero: 'School supplies, classrooms, education tools, and teacher support for children in underserved communities.',
+    overview:
+      'NVC education projects improve schooling for children from poor communities through supplies, infrastructure, and support for teachers and classrooms.',
+    projects: [
+      { title: 'LoveBags', description: 'School bags and supplies for students who need assistance.' },
+      { title: 'School Support', description: 'Classrooms, educational tools, and support for public schools.' },
+    ],
+    accent: '#2563eb',
+    softAccent: '#dbeafe',
+    icon: 'school',
+  },
+  Livelihood: {
+    eyebrow: 'Livelihood Projects',
+    title: 'Livelihood',
+    url: 'https://www.nvcfoundation-ph.org/livelihood/',
+    hero: 'Income opportunities for families through craft work, tools, gardens, fisherfolk support, and social enterprise.',
+    overview:
+      'NVC livelihood projects help adults earn or increase income through practical support, production opportunities, and community-based enterprise.',
+    projects: [
+      { title: 'Artisans of Hope', description: 'Handmade products that provide artisans with sustainable livelihood.' },
+      { title: 'Project Joseph', description: 'Tools and support that help skilled workers earn more from their abilities.' },
+      { title: 'Growing Hope', description: 'Community gardens for food security and excess produce income.' },
+      { title: 'Peter Project', description: 'Support for fisherfolk, including market support for their catch.' },
+    ],
+    accent: '#7c3aed',
+    softAccent: '#ede9fe',
+    icon: 'work',
+  },
+  Disaster: {
+    eyebrow: 'Emergency Response',
+    title: 'Disaster',
+    url: 'https://www.nvcfoundation-ph.org/what-we-do/',
+    hero: 'Relief coordination, volunteer mobilization, and recovery support for communities affected by emergencies.',
+    overview:
+      'Disaster work in this system is modeled as an emergency-response program for relief goods, volunteer operations, community recovery, and severe weather support.',
+    projects: [
+      { title: 'Relief Operations', description: 'Organized support for affected communities during urgent needs.' },
+      { title: 'Volunteer Mobilization', description: 'Rapid coordination of volunteers and field support.' },
+      { title: 'Community Recovery', description: 'Follow-through assistance after emergency response work.' },
+    ],
+    accent: '#f97316',
+    softAccent: '#ffedd5',
+    icon: 'warning',
+  },
+};
+
 type PartnerProposalDraft = {
   proposedTitle: string;
   proposedDescription: string;
@@ -101,6 +180,20 @@ function formatProjectDateRange(startValue?: string, endValue?: string): string 
   return startLabel === endLabel ? startLabel : `${startLabel} - ${endLabel}`;
 }
 
+function getReportBeneficiariesServed(report: PartnerReport): number {
+  const beneficiariesServed = Number(report.metrics?.beneficiariesServed);
+  if (Number.isFinite(beneficiariesServed) && beneficiariesServed > 0) {
+    return beneficiariesServed;
+  }
+
+  const impactCount = Number(report.impactCount);
+  return Number.isFinite(impactCount) && impactCount > 0 ? impactCount : 0;
+}
+
+function formatImpactCount(value: number): string {
+  return value.toLocaleString('en-US');
+}
+
 function hasEventStartedForToday(startValue?: string, now: Date = new Date()): boolean {
   if (!startValue) {
     return true;
@@ -111,9 +204,9 @@ function hasEventStartedForToday(startValue?: string, now: Date = new Date()): b
     return true;
   }
 
-  const startDay = new Date(startDate);
-  startDay.setHours(0, 0, 0, 0);
-  return now >= startDay;
+  const attendanceStart = new Date(startDate);
+  attendanceStart.setHours(9, 0, 0, 0);
+  return now >= attendanceStart;
 }
 
 function getLocalDateKey(value?: string, now: Date = new Date()): string {
@@ -128,6 +221,28 @@ function getLocalDateKey(value?: string, now: Date = new Date()): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function isVolunteerAssignedToTask(
+  task: { assignedVolunteerId?: string; assignedVolunteerIds?: string[]; isFieldOfficer?: boolean },
+  volunteerId?: string | null
+): boolean {
+  if (!volunteerId) {
+    return false;
+  }
+
+  const assignedVolunteerIds = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(task.assignedVolunteerIds) ? task.assignedVolunteerIds : []),
+        task.assignedVolunteerId,
+      ]
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+    )
+  );
+
+  return assignedVolunteerIds.includes(volunteerId);
 }
 
 function createPartnerProposalDraft(project: Project): PartnerProposalDraft {
@@ -428,24 +543,33 @@ export default function ProjectsScreen({ navigation, route }: any) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [volunteerProfile, setVolunteerProfile] = useState<Volunteer | null>(null);
   const [partnerApplications, setPartnerApplications] = useState<PartnerProjectApplication[]>([]);
+  const [allPartnerReports, setAllPartnerReports] = useState<PartnerReport[]>([]);
   const [timeLogs, setTimeLogs] = useState<VolunteerTimeLog[]>([]);
   const [volunteerJoinRecords, setVolunteerJoinRecords] = useState<VolunteerProjectJoinRecord[]>([]);
   const [volunteerMatches, setVolunteerMatches] = useState<VolunteerProjectMatch[]>([]);
   const [allVolunteers, setAllVolunteers] = useState<Volunteer[]>([]);
   const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null);
+  const [attendanceNotice, setAttendanceNotice] = useState<string | null>(null);
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Project['category'] | null>(null);
   const [selectedProgramId, setSelectedProgramId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [programWebsiteProjectId, setProgramWebsiteProjectId] = useState<string | null>(null);
+  const attendanceNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(timer);
   }, []);
-  const [timeOutProjectId, setTimeOutProjectId] = useState<string | null>(null);
-  const [timeOutReportDraft, setTimeOutReportDraft] = useState('');
-  const [timeOutPhotoDraft, setTimeOutPhotoDraft] = useState('');
+  useEffect(() => {
+    return () => {
+      if (attendanceNoticeTimerRef.current) {
+        clearTimeout(attendanceNoticeTimerRef.current);
+        attendanceNoticeTimerRef.current = null;
+      }
+    };
+  }, []);
   const [proposalProjectId, setProposalProjectId] = useState<string | null>(null);
   const [partnerProposalDraft, setPartnerProposalDraft] = useState<PartnerProposalDraft | null>(null);
   const [imagePreview, setImagePreview] = useState<{
@@ -460,6 +584,18 @@ export default function ProjectsScreen({ navigation, route }: any) {
   const [contentFilter, setContentFilter] = useState<ContentFilter>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const deferredSearchQuery = useDeferredValue(searchQuery.trim().toLowerCase());
+  const showAttendanceNotice = useCallback((message: string, durationMs = 1000) => {
+    if (attendanceNoticeTimerRef.current) {
+      clearTimeout(attendanceNoticeTimerRef.current);
+      attendanceNoticeTimerRef.current = null;
+    }
+
+    setAttendanceNotice(message);
+    attendanceNoticeTimerRef.current = setTimeout(() => {
+      setAttendanceNotice(null);
+      attendanceNoticeTimerRef.current = null;
+    }, durationMs);
+  }, []);
   // Applies the latest project snapshot to local screen state.
   const applySnapshot = useCallback((snapshot: {
     projects: Project[];
@@ -485,6 +621,11 @@ export default function ProjectsScreen({ navigation, route }: any) {
     try {
       const snapshot = await getProjectsScreenSnapshot(user, ['projects', 'volunteerProfile']);
       applySnapshot(snapshot);
+      try {
+        setAllPartnerReports(await getAllPartnerReports());
+      } catch {
+        setAllPartnerReports([]);
+      }
       setAllVolunteers([]);
       if (user?.role === 'volunteer') {
         setTimeout(async () => {
@@ -511,6 +652,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
         setVolunteerProfile(null);
         setTimeLogs([]);
         setPartnerApplications([]);
+        setAllPartnerReports([]);
         setVolunteerJoinRecords([]);
         setVolunteerMatches([]);
         setAllVolunteers([]);
@@ -523,7 +665,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
     React.useCallback(() => {
       void loadProjectsData();
       return subscribeToStorageChanges(
-        ['projects', 'volunteers', 'volunteerProjectJoins', 'volunteerTimeLogs', 'partnerProjectApplications', 'volunteerMatches'],
+        ['projects', 'volunteers', 'volunteerProjectJoins', 'volunteerTimeLogs', 'partnerProjectApplications', 'partnerReports', 'volunteerMatches'],
         () => {
           void loadProjectsData();
         }
@@ -640,8 +782,8 @@ export default function ProjectsScreen({ navigation, route }: any) {
     }
   }, [activeProposalProject, partnerProposalDraft, user]);
 
-  // Starts a volunteer time log for the selected project.
-  const handleTimeIn = async (projectId: string) => {
+  // Confirms daily attendance for the selected event with a photo.
+  const handleConfirmAttendance = async (projectId: string) => {
     if (!volunteerProfile) return;
     const project = projects.find(item => item.id === projectId) || null;
     if (!project) {
@@ -651,7 +793,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
 
     const projectStatus = getProjectDisplayStatus(project);
     if (projectStatus === 'Completed' || projectStatus === 'Cancelled') {
-      Alert.alert('Event closed', 'Time in is only available while the event is still active.');
+      Alert.alert('Event closed', 'Attendance confirmation is only available while the event is still active.');
       return;
     }
 
@@ -660,27 +802,37 @@ export default function ProjectsScreen({ navigation, route }: any) {
       if (startDate && !Number.isNaN(startDate.getTime()) && !hasEventStartedForToday(project.startDate)) {
         Alert.alert(
           'Event not started',
-          `This event starts on ${format(startDate, 'MMM d')}. Please refresh once the event begins to time in.`
+          `This event starts on ${format(startDate, 'MMM d')}. Attendance confirmation opens at 9:00 AM once the event begins.`
         );
         return;
       }
 
       const isAssignedToEventTask = (project.internalTasks || []).some(
-        task => task.assignedVolunteerId === volunteerProfile.id
+        task => isVolunteerAssignedToTask(task, volunteerProfile.id)
       );
 
       if (!isAssignedToEventTask) {
         Alert.alert(
           'Assignment Required',
-          'You need to be assigned to an event task before you can time in.'
+          'You need to be assigned to an event task before you can confirm attendance.'
         );
         return;
       }
     }
 
     try {
+      const attendancePhoto = await pickImageFromDevice();
+      if (!attendancePhoto) {
+        return;
+      }
+
       setLoadingProjectId(projectId);
-      const createdLog = await startVolunteerTimeLog(volunteerProfile.id, projectId);
+      const createdLog = await startVolunteerTimeLog(
+        volunteerProfile.id,
+        projectId,
+        undefined,
+        attendancePhoto
+      );
       startTransition(() => {
         setTimeLogs(prev =>
           [createdLog, ...prev.filter(log => log.id !== createdLog.id)].sort(
@@ -688,10 +840,10 @@ export default function ProjectsScreen({ navigation, route }: any) {
           )
         );
       });
-      Alert.alert('Time In recorded', 'Remember to time out when you finish.');
+      showAttendanceNotice('Attendance confirmed for today.');
     } catch (error) {
       Alert.alert(
-        getRequestErrorTitle(error, 'Unable to time in'),
+        getRequestErrorTitle(error, 'Unable to confirm attendance'),
         getRequestErrorMessage(error, 'Please try again.')
       );
     } finally {
@@ -737,7 +889,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
       const todayKey = getLocalDateKey();
       return new Map(
         timeLogs
-          .filter(log => !log.timeOut && getLocalDateKey(log.timeIn) === todayKey)
+          .filter(log => getLocalDateKey(log.attendanceConfirmedAt || log.timeIn) === todayKey)
           .map(log => [log.projectId, log])
       );
     },
@@ -757,11 +909,6 @@ export default function ProjectsScreen({ navigation, route }: any) {
   const volunteerMatchByProjectId = useMemo(
     () => new Map(volunteerMatches.map(match => [match.projectId, match])),
     [volunteerMatches]
-  );
-
-  const activeTimeOutProject = useMemo(
-    () => projects.find(project => project.id === timeOutProjectId) || null,
-    [projects, timeOutProjectId]
   );
 
   const visibleProjects = useMemo(() => {
@@ -925,6 +1072,31 @@ export default function ProjectsScreen({ navigation, route }: any) {
     () => projects.find(project => project.id === selectedEventId && project.isEvent) || null,
     [projects, selectedEventId]
   );
+  const programWebsiteProject = useMemo(
+    () => projects.find(project => project.id === programWebsiteProjectId && !project.isEvent) || null,
+    [programWebsiteProjectId, projects]
+  );
+  const programWebsiteDetail = programWebsiteProject
+    ? PROGRAM_WEBSITE_DETAILS[programWebsiteProject.programModule || programWebsiteProject.category]
+    : null;
+  const programWebsiteEvents = useMemo(
+    () => (programWebsiteProject ? linkedEventsByProgramId.get(programWebsiteProject.id) || [] : []),
+    [linkedEventsByProgramId, programWebsiteProject]
+  );
+  const programWebsiteBeneficiariesServed = useMemo(() => {
+    if (!programWebsiteProject) {
+      return 0;
+    }
+
+    const linkedProjectIds = new Set([
+      programWebsiteProject.id,
+      ...programWebsiteEvents.map(event => event.id),
+    ]);
+
+    return allPartnerReports
+      .filter(report => linkedProjectIds.has(report.projectId))
+      .reduce((sum, report) => sum + getReportBeneficiariesServed(report), 0);
+  }, [allPartnerReports, programWebsiteEvents, programWebsiteProject]);
   const allVolunteersById = useMemo(
     () => new Map(allVolunteers.map(volunteer => [volunteer.id, volunteer])),
     [allVolunteers]
@@ -940,7 +1112,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
     }
 
     return (event.internalTasks || []).some(
-      task => task.isFieldOfficer && task.assignedVolunteerId === volunteerProfile.id
+      task => task.isFieldOfficer && isVolunteerAssignedToTask(task, volunteerProfile.id)
     );
   }, [user?.role, volunteerProfile?.id]);
 
@@ -1126,7 +1298,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
     const joinedUsers = project.joinedUserIds || [];
     const volunteerId = volunteerProfile?.id;
     const isVolunteerAssigned = (project.internalTasks || []).some(
-      task => task.assignedVolunteerId === volunteerId
+      task => isVolunteerAssignedToTask(task, volunteerId)
     );
     
     return (
@@ -1142,18 +1314,20 @@ export default function ProjectsScreen({ navigation, route }: any) {
     const joinRecord = volunteerJoinRecordByProjectId.get(project.id);
     const volunteerMatch = volunteerMatchByProjectId.get(project.id);
     const isAssigned = (project.internalTasks || []).some(
-      task => task.assignedVolunteerId === volunteerProfile?.id
+      task => isVolunteerAssignedToTask(task, volunteerProfile?.id)
     );
     const completedParticipation = joinRecord?.participationStatus === 'Completed';
     const isPendingApproval = volunteerMatch?.status === 'Requested';
     const wasRejected = volunteerMatch?.status === 'Rejected';
     const isClosedStatus = displayStatus === 'Completed' || displayStatus === 'Cancelled';
     const isOnHold = displayStatus === 'On Hold';
+    const hasConfirmedToday = Boolean(activeLogByProjectId.get(project.id));
 
     const startDate = project.startDate ? new Date(project.startDate) : null;
     const eventHasNotStarted = project.isEvent ? !hasEventStartedForToday(project.startDate) : false;
     const canTimeIn =
       isAssigned &&
+      !hasConfirmedToday &&
       !completedParticipation &&
       !isPendingApproval &&
       !isClosedStatus &&
@@ -1192,9 +1366,11 @@ export default function ProjectsScreen({ navigation, route }: any) {
       ? 'You already completed this event.'
       : joined
       ? isAssigned
-        ? eventHasNotStarted && startDate
-          ? `Assigned. Time in becomes available on ${format(startDate, 'MMM d')}.`
-          : 'Admin assigned you to this event. You can time in now.'
+        ? hasConfirmedToday
+          ? 'Your attendance is already confirmed for today.'
+          : eventHasNotStarted && startDate
+          ? `Assigned. Attendance confirmation becomes available at 9:00 AM on ${format(startDate, 'MMM d')}.`
+          : 'Admin assigned you to this event. You can confirm attendance now.'
         : 'You are approved to join this event, but you need an assigned task before timing in.'
       : isPendingApproval
       ? 'Waiting for admin approval.'
@@ -1218,11 +1394,12 @@ export default function ProjectsScreen({ navigation, route }: any) {
       isPendingApproval,
       isAssigned,
       canTimeIn,
+      hasConfirmedToday,
       statusMessage,
       wasRejected,
       eventHasNotStarted,
     };
-  }, [isJoined, volunteerJoinRecordByProjectId, volunteerMatchByProjectId, volunteerProfile?.id]);
+  }, [activeLogByProjectId, isJoined, volunteerJoinRecordByProjectId, volunteerMatchByProjectId, volunteerProfile?.id]);
 
   // Formats timestamps shown on time logs and project metadata.
   const formatTimestamp = (value?: string) => {
@@ -1256,39 +1433,6 @@ export default function ProjectsScreen({ navigation, route }: any) {
     });
   }, []);
 
-  const openTimeOutModal = useCallback((projectId: string) => {
-    const activeLog = activeLogByProjectId.get(projectId);
-    navigateToAvailableRoute(navigation, 'Reports', {
-      projectId,
-      autoOpenUpload: true,
-      completionReport: activeLog?.completionReport,
-      completionPhoto: activeLog?.completionPhoto,
-    });
-  }, [activeLogByProjectId, navigation]);
-
-  const closeTimeOutModal = useCallback(() => {
-    if (loadingProjectId === timeOutProjectId && timeOutProjectId) {
-      return;
-    }
-
-    setTimeOutProjectId(null);
-    setTimeOutReportDraft('');
-    setTimeOutPhotoDraft('');
-  }, [loadingProjectId, timeOutProjectId]);
-
-  const handlePickTimeOutPhoto = useCallback(async () => {
-    try {
-      const pickedImage = await pickImageFromDevice();
-      if (!pickedImage) {
-        return;
-      }
-
-      setTimeOutPhotoDraft(pickedImage);
-    } catch (error: any) {
-      Alert.alert('Photo Access Needed', error?.message || 'Unable to open your photo library.');
-    }
-  }, []);
-
   const handleOpenCategory = useCallback((category: Project['category']) => {
     setSelectedCategory(category);
     setSelectedProgramId(null);
@@ -1299,6 +1443,34 @@ export default function ProjectsScreen({ navigation, route }: any) {
     setSelectedProgramId(projectId);
     setSelectedEventId(null);
   }, []);
+
+  const handleOpenProgramWebsiteDetails = useCallback((projectId: string) => {
+    setProgramWebsiteProjectId(projectId);
+  }, []);
+
+  const closeProgramWebsiteDetails = useCallback(() => {
+    setProgramWebsiteProjectId(null);
+  }, []);
+
+  const openProgramWorkspaceFromModal = useCallback(() => {
+    if (!programWebsiteProject) {
+      return;
+    }
+
+    closeProgramWebsiteDetails();
+    if (user?.role === 'admin') {
+      handleOpenProject(programWebsiteProject.id);
+      return;
+    }
+
+    handleOpenProgramDetails(programWebsiteProject.id);
+  }, [
+    closeProgramWebsiteDetails,
+    handleOpenProgramDetails,
+    handleOpenProject,
+    programWebsiteProject,
+    user?.role,
+  ]);
 
   const handleOpenEventDetails = useCallback((eventId: string) => {
     setSelectedEventId(eventId);
@@ -1348,7 +1520,14 @@ export default function ProjectsScreen({ navigation, route }: any) {
             : `${linkedEvents.length} linked event${linkedEvents.length === 1 ? '' : 's'}`;
 
           return (
-            <View style={styles.card}>
+            <Pressable
+              style={styles.card}
+              onPress={() => {
+                if (!item.isEvent) {
+                  handleOpenProgramWebsiteDetails(item.id);
+                }
+              }}
+            >
               <ProjectCardImage
                 project={item}
                 onPress={() => handleOpenImagePreview(item)}
@@ -1584,30 +1763,26 @@ export default function ProjectsScreen({ navigation, route }: any) {
                                   </Text>
                                 </TouchableOpacity>
 
-                                {eventJoined && (eventActiveLog || (!eventCompleted && !eventIsClosed)) ? (
+                                {eventJoined && (!eventCompleted && !eventIsClosed) ? (
                                   <TouchableOpacity
                                     style={[
                                       styles.timeButton,
-                                      eventActiveLog ? styles.timeOutButton : styles.timeInButton,
-                                      (!eventActiveLog && !linkedEventAction.canTimeIn) || linkedEventAction.eventHasNotStarted ? styles.timeButtonDisabled : null,
+                                      styles.timeInButton,
+                                      !linkedEventAction.canTimeIn ? styles.timeButtonDisabled : null,
                                     ]}
                                     onPress={() => {
-                                      if (eventActiveLog) {
-                                        return openTimeOutModal(event.id);
-                                      }
-
                                       if (linkedEventAction.eventHasNotStarted) {
                                         const startDate = event.startDate ? new Date(event.startDate) : null;
                                         return Alert.alert(
                                           'Event not started',
                                           startDate
-                                            ? `This event starts on ${format(startDate, 'MMM d')}. Time in will be available then.`
+                                            ? `This event starts on ${format(startDate, 'MMM d')}. Attendance confirmation opens at 9:00 AM when the event starts.`
                                             : 'This event has not started yet. Please refresh when the event begins.'
                                         );
                                       }
 
                                       if (linkedEventAction.canTimeIn) {
-                                        return handleTimeIn(event.id);
+                                        return handleConfirmAttendance(event.id);
                                       }
 
                                       if (linkedEventAction.isAssigned && eventLifecycleStatus === 'Planning') {
@@ -1622,31 +1797,28 @@ export default function ProjectsScreen({ navigation, route }: any) {
 
                                       return Alert.alert(
                                         'Assignment Required',
-                                        'You need to be assigned to an event task before you can time in.'
+                                        'You need to be assigned to an event task before you can confirm attendance.'
                                       );
                                     }}
                                     disabled={
                                       loadingProjectId === event.id ||
-                                      (!eventActiveLog && !linkedEventAction.canTimeIn && !linkedEventAction.eventHasNotStarted) ||
-                                      linkedEventAction.eventHasNotStarted
+                                      !linkedEventAction.canTimeIn
                                     }
                                   >
                                     <MaterialIcons
                                       name={
-                                        eventActiveLog
-                                          ? 'logout'
-                                          : linkedEventAction.canTimeIn
-                                          ? 'login'
+                                        linkedEventAction.canTimeIn
+                                          ? 'verified-user'
                                           : 'lock'
                                       }
                                       size={16}
                                       color="#fff"
                                     />
                                     <Text style={styles.timeButtonText}>
-                                      {eventActiveLog
-                                        ? 'Time Out'
+                                      {linkedEventAction.hasConfirmedToday
+                                        ? 'Done Today'
                                         : linkedEventAction.canTimeIn
-                                        ? 'Time In'
+                                        ? 'Confirm Attendance'
                                         : linkedEventAction.eventHasNotStarted
                                         ? 'Await Start'
                                         : eventLifecycleStatus === 'Planning' && linkedEventAction.isAssigned
@@ -1689,7 +1861,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
 
                                   <View style={styles.logMeta}>
                                     <Text style={styles.logMetaLabel}>
-                                      {eventActiveLog ? 'Active since' : 'Last log'}
+                                      {linkedEventAction.hasConfirmedToday ? 'Confirmed today' : 'Last attendance'}
                                     </Text>
                                     <Text style={styles.logMetaValue}>
                                       {eventActiveLog
@@ -1808,7 +1980,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
                 <View style={styles.volunteerActions}>
                   {!joined && !isPendingApproval && !completedParticipation ? (
                     <Text style={styles.volunteerActionHint}>
-                      Request to join first. Time In and Time Out appear after approval.
+                      Request to join first. Confirm Attendance appears after approval.
                     </Text>
                   ) : null}
 
@@ -1870,42 +2042,53 @@ export default function ProjectsScreen({ navigation, route }: any) {
                                 return Alert.alert(
                                   'Event not started',
                                   startDate
-                                    ? `This event starts on ${format(startDate, 'MMM d')}. Time in will be available then.`
+                                    ? `This event starts on ${format(startDate, 'MMM d')}. Attendance confirmation opens at 9:00 AM when the event starts.`
                                     : 'This event has not started yet. Please refresh when the event begins.'
                                 );
-                              }
-
-                              if (activeLog) {
-                                return openTimeOutModal(item.id);
                               }
 
                               if (item.isEvent && !eventActionState?.isAssigned) {
                                 return Alert.alert(
                                   'Assignment Required',
-                                  'You need to be assigned to an event task before you can time in.'
+                                  'You need to be assigned to an event task before you can confirm attendance.'
                                 );
                               }
 
-                              return handleTimeIn(item.id);
+                              return handleConfirmAttendance(item.id);
                             }}
-                            disabled={loadingProjectId === item.id || ((!activeLog && item.isEvent && !eventActionState?.isAssigned) || eventActionState?.eventHasNotStarted) && !activeLog}
+                            disabled={
+                              loadingProjectId === item.id ||
+                              !eventActionState?.canTimeIn
+                            }
                           >
                             <MaterialIcons
-                              name={activeLog ? 'logout' : item.isEvent && !eventActionState?.isAssigned ? 'lock' : 'login'}
+                              name={
+                                eventActionState?.canTimeIn
+                                  ? 'verified-user'
+                                  : item.isEvent && !eventActionState?.isAssigned
+                                  ? 'lock'
+                                  : 'event-busy'
+                              }
                               size={16}
                               color="#fff"
                             />
                             <Text style={styles.timeButtonText}>
-                              {activeLog ? 'Time Out' : eventActionState?.eventHasNotStarted ? 'Await Start' : item.isEvent && !eventActionState?.isAssigned ? 'Await Assignment' : 'Time In'}
+                              {eventActionState?.hasConfirmedToday
+                                ? 'Done Today'
+                                : eventActionState?.eventHasNotStarted
+                                ? 'Await Start'
+                                : item.isEvent && !eventActionState?.isAssigned
+                                ? 'Await Assignment'
+                                : 'Confirm Attendance'}
                             </Text>
                           </TouchableOpacity>
                         )}
 
                         {joined && !completedParticipation && eventActionState?.eventHasNotStarted && (
                           <View style={styles.logMeta}>
-                            <Text style={styles.logMetaLabel}>Time in availability</Text>
+                            <Text style={styles.logMetaLabel}>Attendance availability</Text>
                             <Text style={styles.logMetaValue}>
-                              {item.startDate ? `Available from ${format(new Date(item.startDate), 'MMM d')}` : 'Awaiting event start'}
+                              {item.startDate ? `Available from 9:00 AM on ${format(new Date(item.startDate), 'MMM d')}` : 'Awaiting event start'}
                             </Text>
                           </View>
                         )}
@@ -1962,7 +2145,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
                             <View style={styles.proofReminderCard}>
                               <MaterialIcons name="verified" size={16} color="#b45309" />
                               <Text style={styles.proofReminderText}>
-                                Tap Time Out to open My Event Reports. Submitting the report will finalize your timeout.
+                                Attendance is already confirmed for today.
                               </Text>
                             </View>
                           ) : latestLog?.completionPhoto || latestLog?.completionReport ? (
@@ -2056,7 +2239,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
                     : `${linkedEvents.length} linked event${linkedEvents.length === 1 ? '' : 's'}`}
                 </Text>
               </View>
-            </View>
+            </Pressable>
           );
         }, [
           activeLogByProjectId,
@@ -2068,102 +2251,21 @@ export default function ProjectsScreen({ navigation, route }: any) {
           handleAssignEventTask,
           handleJoinProject,
           handleOpenGroupChat,
-          handleTimeIn,
+          handleConfirmAttendance,
           latestLogByProjectId,
           linkedEventsByProgramId,
           loadingProjectId,
           partnerApplicationByProjectId,
           handleOpenImagePreview,
           handleOpenProject,
+          handleOpenProgramWebsiteDetails,
           isFieldOfficerForEvent,
-          openTimeOutModal,
           user,
           volunteerJoinRecordByProjectId,
           volunteerProfile,
           suggestionByProjectId,
         ]);
 
-  // Ends the active volunteer time log after proof-of-work is submitted.
-  const handleTimeOut = async (projectId: string) => {
-    if (!volunteerProfile) return;
-
-    const completionReport = timeOutReportDraft.trim();
-    const completionPhoto = timeOutPhotoDraft.trim();
-
-    if (!completionReport) {
-      Alert.alert('Report Required', 'Submit your completion report before timing out.');
-      return;
-    }
-
-    if (!completionPhoto) {
-      Alert.alert('Photo Required', 'Upload a completion photo before timing out.');
-      return;
-    }
-
-    try {
-      setLoadingProjectId(projectId);
-      const result = await endVolunteerTimeLog(
-        volunteerProfile.id,
-        projectId,
-        completionReport || undefined,
-        completionPhoto || undefined
-      );
-      if (!result.log) {
-        Alert.alert('No active log', 'Please tap Time In before timing out.');
-        return;
-      }
-
-      let autoSubmittedReport = false;
-      try {
-        if (user?.id) {
-          await submitVolunteerTimeOutReport({
-            projectId,
-            projectTitle:
-              projects.find(project => project.id === projectId)?.title ||
-              activeTimeOutProject?.title,
-            volunteerUserId: user.id,
-            volunteerName: user.name || volunteerProfile.name,
-            completionLog: result.log,
-          });
-          autoSubmittedReport = true;
-        }
-      } catch (reportError) {
-        console.error('Error auto-submitting volunteer timeout report:', reportError);
-      }
-
-      startTransition(() => {
-        setTimeLogs(prev =>
-          prev
-            .map(log => (log.id === result.log?.id ? result.log : log))
-            .sort((a, b) => new Date(b.timeIn).getTime() - new Date(a.timeIn).getTime())
-        );
-        if (result.volunteerProfile) {
-          setVolunteerProfile(result.volunteerProfile);
-        }
-      });
-      setTimeOutProjectId(null);
-      setTimeOutReportDraft('');
-      setTimeOutPhotoDraft('');
-      navigateToAvailableRoute(navigation, 'Reports', {
-        projectId,
-        autoOpenUpload: true,
-        completionReport,
-        completionPhoto,
-      });
-      Alert.alert('Time Out recorded', 'Your hours were added and you can now submit your event report.');
-    } catch (error) {
-      Alert.alert(
-        getRequestErrorTitle(error, 'Unable to time out'),
-        getRequestErrorMessage(error, 'Please try again.')
-      );
-    } finally {
-      setLoadingProjectId(null);
-    }
-  };
-
-  const hasTimeOutPhoto = Boolean(timeOutPhotoDraft.trim());
-  const hasTimeOutReport = Boolean(timeOutReportDraft.trim());
-  const hasTimeOutSubmissionRequirements = hasTimeOutPhoto && hasTimeOutReport;
   const selectedEventActionState = selectedEvent ? getVolunteerEventActionState(selectedEvent) : null;
   const selectedEventJoinRecord = selectedEvent ? volunteerJoinRecordByProjectId.get(selectedEvent.id) : undefined;
   const selectedEventActiveLog = selectedEvent ? activeLogByProjectId.get(selectedEvent.id) : undefined;
@@ -2177,6 +2279,14 @@ export default function ProjectsScreen({ navigation, route }: any) {
 
   return (
     <View style={styles.container}>
+      {attendanceNotice ? (
+        <View pointerEvents="none" style={styles.attendanceNoticeOverlay}>
+          <View style={styles.attendanceNoticeCard}>
+            <MaterialIcons name="check-circle" size={18} color="#166534" />
+            <Text style={styles.attendanceNoticeText}>{attendanceNotice}</Text>
+          </View>
+        </View>
+      ) : null}
       {isDesktop ? (
         <>
           <View style={styles.topPanel}>
@@ -2231,7 +2341,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
                     </View>
                     <View style={styles.volunteerGuideStep}>
                       <Text style={styles.volunteerGuideStepNumber}>3</Text>
-                      <Text style={styles.volunteerGuideStepText}>Request to join, then time in after approval</Text>
+                      <Text style={styles.volunteerGuideStepText}>Request to join, then confirm attendance after approval</Text>
                     </View>
                   </View>
                 </View>
@@ -2628,7 +2738,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
                   !selectedEventActionState.isPendingApproval &&
                   !selectedEventActionState.completedParticipation ? (
                     <Text style={styles.volunteerActionHint}>
-                      Request to join first. Time In and Time Out appear after approval.
+                      Request to join first. Confirm Attendance appears after approval.
                     </Text>
                   ) : null}
 
@@ -2669,23 +2779,18 @@ export default function ProjectsScreen({ navigation, route }: any) {
                   <Text style={styles.mobileEventStatusText}>{selectedEventActionState.statusMessage}</Text>
 
                   {selectedEventActionState.joined &&
-                  (selectedEventActiveLog ||
-                    (!selectedEventActionState.completedParticipation &&
-                      selectedEventLifecycleStatus !== 'Completed' &&
-                      selectedEventLifecycleStatus !== 'Cancelled')) ? (
+                  !selectedEventActionState.completedParticipation &&
+                  selectedEventLifecycleStatus !== 'Completed' &&
+                  selectedEventLifecycleStatus !== 'Cancelled' ? (
                     <TouchableOpacity
                       style={[
                         styles.timeButton,
-                        selectedEventActiveLog ? styles.timeOutButton : styles.timeInButton,
-                        !selectedEventActiveLog && !selectedEventActionState.canTimeIn && styles.timeButtonDisabled,
+                        styles.timeInButton,
+                        !selectedEventActionState.canTimeIn && styles.timeButtonDisabled,
                       ]}
                       onPress={() => {
-                        if (selectedEventActiveLog) {
-                          return openTimeOutModal(selectedEvent.id);
-                        }
-
                         if (selectedEventActionState.canTimeIn) {
-                          return handleTimeIn(selectedEvent.id);
+                          return handleConfirmAttendance(selectedEvent.id);
                         }
 
                         if (
@@ -2696,34 +2801,32 @@ export default function ProjectsScreen({ navigation, route }: any) {
                           return Alert.alert(
                             'Not started yet',
                             startDate
-                              ? `This event starts on ${format(startDate, 'MMM d')}. Time in will be available then.`
+                              ? `This event starts on ${format(startDate, 'MMM d')}. Attendance confirmation opens at 9:00 AM when the event starts.`
                               : 'This event has not started yet. Please refresh when the event begins.'
                           );
                         }
 
                         return Alert.alert(
                           'Assignment Required',
-                          'You need to be assigned to an event task before you can time in.'
+                          'You need to be assigned to an event task before you can confirm attendance.'
                         );
                       }}
-                      disabled={loadingProjectId === selectedEvent.id || (!selectedEventActiveLog && !selectedEventActionState.canTimeIn)}
+                      disabled={loadingProjectId === selectedEvent.id || !selectedEventActionState.canTimeIn}
                     >
                       <MaterialIcons
                         name={
-                          selectedEventActiveLog
-                            ? 'logout'
-                            : selectedEventActionState.canTimeIn
-                            ? 'login'
+                          selectedEventActionState.canTimeIn
+                            ? 'verified-user'
                             : 'lock'
                         }
                         size={16}
                         color="#fff"
                       />
                       <Text style={styles.timeButtonText}>
-                        {selectedEventActiveLog
-                          ? 'Time Out'
+                        {selectedEventActionState.hasConfirmedToday
+                          ? 'Done Today'
                           : selectedEventActionState.canTimeIn
-                          ? 'Time In'
+                          ? 'Confirm Attendance'
                           : selectedEventLifecycleStatus === 'Planning' &&
                             selectedEventActionState.isAssigned
                           ? 'Await Start'
@@ -2751,9 +2854,13 @@ export default function ProjectsScreen({ navigation, route }: any) {
                             ? `Completed ${formatTimestamp(selectedEventJoinRecord.completedAt)}`
                             : 'Completed and saved to profile'
                           : selectedEventActiveLog
-                          ? `Active since ${formatTimestamp(selectedEventActiveLog.timeIn)}`
+                          ? `Confirmed ${formatTimestamp(
+                              selectedEventActiveLog.attendanceConfirmedAt || selectedEventActiveLog.timeIn
+                            )}`
                           : selectedEventLatestLog
-                          ? `Last log ${formatTimestamp(selectedEventLatestLog.timeIn)}`
+                          ? `Last attendance ${formatTimestamp(
+                              selectedEventLatestLog.attendanceConfirmedAt || selectedEventLatestLog.timeIn
+                            )}`
                           : 'Joined'}
                       </Text>
                     </View>
@@ -2842,113 +2949,6 @@ export default function ProjectsScreen({ navigation, route }: any) {
           ) : null}
         </ScrollView>
       )}
-
-      <Modal
-        visible={Boolean(timeOutProjectId)}
-        transparent
-        animationType="slide"
-        onRequestClose={closeTimeOutModal}
-      >
-        <Pressable style={styles.timeOutModalBackdrop} onPress={closeTimeOutModal}>
-          <Pressable style={styles.timeOutModalCard} onPress={() => undefined}>
-            <View style={styles.timeOutModalHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.timeOutModalTitle}>Submit Completion Proof</Text>
-                <Text style={styles.timeOutModalSubtitle}>
-                  {activeTimeOutProject?.title || 'Selected project'}
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={closeTimeOutModal}
-                style={styles.timeOutModalCloseButton}
-                disabled={loadingProjectId === timeOutProjectId}
-              >
-                <MaterialIcons name="close" size={22} color="#0f172a" />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.timeOutModalHint}>
-              Before timing out, submit your completion report and upload a completion photo.
-            </Text>
-
-            <View style={styles.timeOutProofActions}>
-              <TouchableOpacity
-                style={styles.timeOutProofButton}
-                onPress={handlePickTimeOutPhoto}
-                disabled={loadingProjectId === timeOutProjectId}
-              >
-                <MaterialIcons name="photo-camera" size={18} color="#166534" />
-                <Text style={styles.timeOutProofButtonText}>
-                  {timeOutPhotoDraft ? 'Replace Photo' : 'Upload Photo'}
-                </Text>
-              </TouchableOpacity>
-
-              {timeOutPhotoDraft ? (
-                <TouchableOpacity
-                  style={styles.timeOutProofRemoveButton}
-                  onPress={() => setTimeOutPhotoDraft('')}
-                  disabled={loadingProjectId === timeOutProjectId}
-                >
-                  <MaterialIcons name="delete-outline" size={18} color="#b91c1c" />
-                  <Text style={styles.timeOutProofRemoveText}>Remove</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-
-            {timeOutPhotoDraft ? (
-              <View style={styles.timeOutPhotoPreviewCard}>
-                {isImageMediaUri(timeOutPhotoDraft) ? (
-                  <Image
-                    source={{ uri: timeOutPhotoDraft }}
-                    style={styles.timeOutPhotoPreview}
-                    resizeMode="cover"
-                  />
-                ) : null}
-                <Text style={styles.timeOutPhotoCaption}>Completion photo attached</Text>
-              </View>
-            ) : null}
-
-            <Text style={styles.timeOutFieldLabel}>Completion Report Required</Text>
-            <TextInput
-              style={styles.timeOutReportInput}
-              multiline
-              numberOfLines={5}
-              value={timeOutReportDraft}
-              onChangeText={setTimeOutReportDraft}
-              placeholder="Describe the work you completed, what was delivered, and any important outcome."
-              placeholderTextColor="#94a3b8"
-              textAlignVertical="top"
-              editable={loadingProjectId !== timeOutProjectId}
-            />
-
-            <Text style={styles.timeOutRequirementText}>
-              {hasTimeOutSubmissionRequirements
-                ? 'Report and photo attached. You can now submit sign out.'
-                : 'Both completion report and completion photo are required before sign out.'}
-            </Text>
-
-            <TouchableOpacity
-              style={[
-                styles.timeOutSubmitButton,
-                !hasTimeOutSubmissionRequirements && styles.timeOutSubmitButtonDisabled,
-                loadingProjectId === timeOutProjectId && styles.timeOutSubmitButtonDisabled,
-              ]}
-              onPress={() => {
-                if (timeOutProjectId) {
-                  void handleTimeOut(timeOutProjectId);
-                }
-              }}
-              disabled={!hasTimeOutSubmissionRequirements || loadingProjectId === timeOutProjectId}
-            >
-              <MaterialIcons name="task-alt" size={18} color="#fff" />
-              <Text style={styles.timeOutSubmitButtonText}>
-                {loadingProjectId === timeOutProjectId ? 'Submitting...' : 'Submit and Time Out'}
-              </Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
       <Modal
         visible={Boolean(activeProposalProject && partnerProposalDraft)}
         transparent
@@ -3115,6 +3115,116 @@ export default function ProjectsScreen({ navigation, route }: any) {
       </Modal>
 
       <Modal
+        visible={Boolean(programWebsiteProject && programWebsiteDetail)}
+        transparent
+        animationType="fade"
+        onRequestClose={closeProgramWebsiteDetails}
+      >
+        <Pressable style={styles.programWebsiteBackdrop} onPress={closeProgramWebsiteDetails}>
+          <Pressable style={styles.programWebsiteShell} onPress={() => undefined}>
+            {programWebsiteProject && programWebsiteDetail ? (
+              <>
+                <View style={[styles.programWebsiteHero, { backgroundColor: programWebsiteDetail.accent }]}>
+                  <View style={styles.programWebsiteHeroTop}>
+                    <View style={styles.programWebsiteBrandMark}>
+                      <MaterialIcons name={programWebsiteDetail.icon} size={30} color={programWebsiteDetail.accent} />
+                    </View>
+                    <TouchableOpacity style={styles.programWebsiteCloseButton} onPress={closeProgramWebsiteDetails}>
+                      <MaterialIcons name="close" size={22} color="#fff" />
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.programWebsiteEyebrow}>{programWebsiteDetail.eyebrow}</Text>
+                  <Text style={styles.programWebsiteTitle}>{programWebsiteDetail.title}</Text>
+                  <Text style={styles.programWebsiteHeroText}>{programWebsiteDetail.hero}</Text>
+                </View>
+
+                <ScrollView style={styles.programWebsiteScroll} contentContainerStyle={styles.programWebsiteContent}>
+                  <View style={styles.programWebsiteSection}>
+                    <Text style={styles.programWebsiteSectionKicker}>Program overview</Text>
+                    <Text style={styles.programWebsiteBody}>{programWebsiteDetail.overview}</Text>
+                    {programWebsiteProject.description ? (
+                      <View style={[styles.programWebsiteAppNote, { borderColor: programWebsiteDetail.softAccent }]}>
+                        <Text style={styles.programWebsiteAppNoteLabel}>Current app program</Text>
+                        <Text style={styles.programWebsiteAppNoteTitle}>{programWebsiteProject.title}</Text>
+                        <Text style={styles.programWebsiteAppNoteText}>{programWebsiteProject.description}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  <View style={styles.programWebsiteStatsGrid}>
+                    <View style={styles.programWebsiteStatCard}>
+                      <Text style={[styles.programWebsiteStatValue, { color: programWebsiteDetail.accent }]}>
+                        {formatImpactCount(programWebsiteBeneficiariesServed)}
+                      </Text>
+                      <Text style={styles.programWebsiteStatLabel}>beneficiaries served based on system reports</Text>
+                    </View>
+                    <View style={styles.programWebsiteStatCard}>
+                      <Text style={[styles.programWebsiteStatValue, { color: programWebsiteDetail.accent }]}>
+                        {programWebsiteEvents.length}
+                      </Text>
+                      <Text style={styles.programWebsiteStatLabel}>linked events in this system</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.programWebsiteSection}>
+                    <Text style={styles.programWebsiteSectionKicker}>Featured NVC projects</Text>
+                    <View style={styles.programWebsiteProjectGrid}>
+                      {programWebsiteDetail.projects.map(project => (
+                        <View key={project.title} style={styles.programWebsiteProjectCard}>
+                          <View
+                            style={[
+                              styles.programWebsiteProjectIcon,
+                              { backgroundColor: programWebsiteDetail.softAccent },
+                            ]}
+                          >
+                            <MaterialIcons name="eco" size={18} color={programWebsiteDetail.accent} />
+                          </View>
+                          <Text style={styles.programWebsiteProjectTitle}>{project.title}</Text>
+                          <Text style={styles.programWebsiteProjectText}>{project.description}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+
+                  {programWebsiteEvents.length ? (
+                    <View style={styles.programWebsiteSection}>
+                      <Text style={styles.programWebsiteSectionKicker}>Events inside this program</Text>
+                      {programWebsiteEvents.slice(0, 4).map(event => (
+                        <View key={event.id} style={styles.programWebsiteEventRow}>
+                          <MaterialIcons name="event" size={17} color={programWebsiteDetail.accent} />
+                          <View style={styles.programWebsiteEventCopy}>
+                            <Text style={styles.programWebsiteEventTitle}>{event.title}</Text>
+                            <Text style={styles.programWebsiteEventMeta}>
+                              {formatProjectDateRange(event.startDate, event.endDate)}
+                            </Text>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+                </ScrollView>
+
+                <View style={styles.programWebsiteActions}>
+                  <TouchableOpacity style={styles.programWebsiteSecondaryButton} onPress={() => setProgramWebsiteProjectId(null)}>
+                    <Text style={styles.programWebsiteSecondaryText}>Close</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.programWebsitePrimaryButton, { backgroundColor: programWebsiteDetail.accent }]}
+                    onPress={openProgramWorkspaceFromModal}
+                  >
+                    <Text style={styles.programWebsitePrimaryText}>
+                      {user?.role === 'admin' ? 'Open Program' : 'View Events'}
+                    </Text>
+                    <MaterialIcons name="arrow-forward" size={18} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
         visible={Boolean(imagePreview)}
         transparent
         animationType="fade"
@@ -3150,6 +3260,35 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: Platform.select({ web: 8, default: 15 }),
     backgroundColor: '#eef4ef',
+  },
+  attendanceNoticeOverlay: {
+    position: 'absolute',
+    top: Platform.select({ web: 14, default: 18 }),
+    left: 12,
+    right: 12,
+    zIndex: 60,
+    alignItems: 'center',
+  },
+  attendanceNoticeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#86efac',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    shadowColor: '#166534',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  attendanceNoticeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#166534',
   },
   topPanel: {
     gap: 12,
@@ -4671,6 +4810,242 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '800',
+  },
+  programWebsiteBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+    justifyContent: 'center',
+    padding: Platform.select({ web: 24, default: 14 }),
+  },
+  programWebsiteShell: {
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: 920,
+    maxHeight: '92%',
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    overflow: 'hidden',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 20 },
+    shadowOpacity: 0.25,
+    shadowRadius: 34,
+    elevation: 10,
+  },
+  programWebsiteHero: {
+    padding: Platform.select({ web: 28, default: 20 }),
+  },
+  programWebsiteHeroTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  programWebsiteBrandMark: {
+    width: 58,
+    height: 58,
+    borderRadius: 18,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  programWebsiteCloseButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  programWebsiteEyebrow: {
+    color: 'rgba(255,255,255,0.88)',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  programWebsiteTitle: {
+    color: '#ffffff',
+    fontSize: Platform.select({ web: 38, default: 28 }),
+    lineHeight: Platform.select({ web: 44, default: 34 }),
+    fontWeight: '900',
+    marginBottom: 10,
+  },
+  programWebsiteHeroText: {
+    color: '#ffffff',
+    fontSize: 15,
+    lineHeight: 23,
+    fontWeight: '700',
+    maxWidth: 720,
+  },
+  programWebsiteScroll: {
+    maxHeight: Platform.select({ web: 520, default: 420 }),
+  },
+  programWebsiteContent: {
+    padding: Platform.select({ web: 24, default: 16 }),
+    gap: 18,
+  },
+  programWebsiteSection: {
+    gap: 10,
+  },
+  programWebsiteSectionKicker: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#166534',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  programWebsiteBody: {
+    fontSize: 14,
+    lineHeight: 22,
+    color: '#334155',
+    fontWeight: '600',
+  },
+  programWebsiteAppNote: {
+    marginTop: 4,
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 14,
+    backgroundColor: '#f8fafc',
+  },
+  programWebsiteAppNoteLabel: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    marginBottom: 5,
+  },
+  programWebsiteAppNoteTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#0f172a',
+    marginBottom: 5,
+  },
+  programWebsiteAppNoteText: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: '#475569',
+    fontWeight: '600',
+  },
+  programWebsiteStatsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  programWebsiteStatCard: {
+    flexGrow: 1,
+    flexBasis: Platform.select({ web: '30%', default: '45%' }) as any,
+    backgroundColor: '#f8fafc',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 14,
+  },
+  programWebsiteStatValue: {
+    fontSize: 22,
+    fontWeight: '900',
+    marginBottom: 4,
+  },
+  programWebsiteStatLabel: {
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '800',
+    color: '#64748b',
+  },
+  programWebsiteProjectGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  programWebsiteProjectCard: {
+    flexGrow: 1,
+    flexBasis: Platform.select({ web: '45%', default: '100%' }) as any,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 14,
+    padding: 14,
+  },
+  programWebsiteProjectIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  programWebsiteProjectTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#0f172a',
+    marginBottom: 5,
+  },
+  programWebsiteProjectText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#475569',
+    fontWeight: '600',
+  },
+  programWebsiteEventRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    padding: 11,
+  },
+  programWebsiteEventCopy: {
+    flex: 1,
+  },
+  programWebsiteEventTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#0f172a',
+  },
+  programWebsiteEventMeta: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+    marginTop: 2,
+  },
+  programWebsiteActions: {
+    flexDirection: 'row',
+    gap: 10,
+    padding: Platform.select({ web: 18, default: 14 }),
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
+  },
+  programWebsiteSecondaryButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    backgroundColor: '#f0fdf4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 7,
+  },
+  programWebsiteSecondaryText: {
+    color: '#166534',
+    fontWeight: '900',
+    fontSize: 12,
+  },
+  programWebsitePrimaryButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 7,
+  },
+  programWebsitePrimaryText: {
+    color: '#ffffff',
+    fontWeight: '900',
+    fontSize: 12,
   },
   imagePreviewBackdrop: {
     flex: 1,

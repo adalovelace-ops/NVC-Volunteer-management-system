@@ -4,6 +4,8 @@ import {
   Alert,
   Image,
   ImageSourcePropType,
+  Modal,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -36,6 +38,7 @@ type ProgramGroup = {
   id: string;
   title: string;
   description?: string;
+  context?: string;
   projectCount: number;
   eventCount: number;
 };
@@ -104,6 +107,7 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
   const [loading, setLoading] = useState(true);
   const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null);
   const [selectedProgramId, setSelectedProgramId] = useState<string | null>(null);
+  const [selectedProgramDetailsId, setSelectedProgramDetailsId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const hasLoadedOnceRef = useRef(false);
 
@@ -183,6 +187,7 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
           id: track.id,
           title: track.title || track.id,
           description: track.description,
+          context: track.context,
           projectCount: 0,
           eventCount: 0,
         });
@@ -228,6 +233,11 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
     [programs, selectedProgramId]
   );
 
+  const selectedProgramDetails = useMemo(
+    () => programs.find(program => program.id === selectedProgramDetailsId) || null,
+    [programs, selectedProgramDetailsId]
+  );
+
   const projectsForSelectedProgram = useMemo(
     () =>
       selectedProgramId
@@ -236,6 +246,16 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
             .sort(sortByDate)
         : [],
     [records, selectedProgramId]
+  );
+
+  const projectsForProgramDetails = useMemo(
+    () =>
+      selectedProgramDetailsId
+        ? records
+            .filter(project => !project.isEvent && getProjectProgramId(project) === selectedProgramDetailsId)
+            .sort(sortByDate)
+        : [],
+    [records, selectedProgramDetailsId]
   );
 
   const selectedProject = useMemo(
@@ -348,6 +368,21 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
 
   const openProjectDetails = (projectId: string) => {
     navigation.navigate('ProjectDetails', { projectId });
+  };
+
+  const openProgramDetails = (programId: string) => {
+    setSelectedProgramDetailsId(programId);
+  };
+
+  const closeProgramDetails = () => {
+    setSelectedProgramDetailsId(null);
+  };
+
+  const continueToProgramProjects = () => {
+    if (!selectedProgramDetails) return;
+    setSelectedProgramId(selectedProgramDetails.id);
+    setSelectedProjectId(null);
+    setSelectedProgramDetailsId(null);
   };
 
   const renderEventCard = (event: Project) => {
@@ -529,10 +564,7 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
                 <TouchableOpacity
                   key={program.id}
                   style={styles.selectionCard}
-                  onPress={() => {
-                    setSelectedProgramId(program.id);
-                    setSelectedProjectId(null);
-                  }}
+                  onPress={() => openProgramDetails(program.id)}
                   activeOpacity={0.88}
                 >
                   <View style={[styles.programIcon, { backgroundColor: visual.softColor }]}>
@@ -631,6 +663,82 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
           )}
         </>
       ) : null}
+
+      <Modal
+        visible={Boolean(selectedProgramDetails)}
+        transparent
+        animationType="fade"
+        onRequestClose={closeProgramDetails}
+      >
+        <Pressable style={styles.programModalBackdrop} onPress={closeProgramDetails}>
+          <Pressable style={styles.programModalCard} onPress={() => undefined}>
+            {selectedProgramDetails ? (
+              <>
+                <View style={styles.programModalHeader}>
+                  <View
+                    style={[
+                      styles.programModalIcon,
+                      { backgroundColor: getProgramVisual(selectedProgramDetails.id).softColor },
+                    ]}
+                  >
+                    <MaterialIcons
+                      name={getProgramVisual(selectedProgramDetails.id).icon}
+                      size={28}
+                      color={getProgramVisual(selectedProgramDetails.id).color}
+                    />
+                  </View>
+                  <TouchableOpacity style={styles.programModalClose} onPress={closeProgramDetails}>
+                    <MaterialIcons name="close" size={20} color="#475569" />
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.programModalLabel}>Program Details</Text>
+                <Text style={styles.programModalTitle}>{selectedProgramDetails.title}</Text>
+                <Text style={styles.programModalDescription}>
+                  {selectedProgramDetails.context ||
+                    selectedProgramDetails.description ||
+                    'Program details will appear here once the program information is added.'}
+                </Text>
+
+                <View style={styles.programModalStats}>
+                  <View style={styles.programModalStat}>
+                    <Text style={styles.programModalStatValue}>{selectedProgramDetails.projectCount}</Text>
+                    <Text style={styles.programModalStatLabel}>Projects</Text>
+                  </View>
+                  <View style={styles.programModalStat}>
+                    <Text style={styles.programModalStatValue}>{selectedProgramDetails.eventCount}</Text>
+                    <Text style={styles.programModalStatLabel}>Events</Text>
+                  </View>
+                </View>
+
+                {projectsForProgramDetails.length ? (
+                  <View style={styles.programModalSection}>
+                    <Text style={styles.programModalSectionTitle}>Linked projects</Text>
+                    {projectsForProgramDetails.slice(0, 3).map(project => (
+                      <View key={project.id} style={styles.programModalProjectRow}>
+                        <MaterialIcons name="business-center" size={16} color="#166534" />
+                        <Text style={styles.programModalProjectText} numberOfLines={1}>
+                          {project.title}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+
+                <View style={styles.programModalActions}>
+                  <TouchableOpacity style={styles.programModalSecondaryButton} onPress={closeProgramDetails}>
+                    <Text style={styles.programModalSecondaryText}>Close</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.programModalPrimaryButton} onPress={continueToProgramProjects}>
+                    <Text style={styles.programModalPrimaryText}>View projects</Text>
+                    <MaterialIcons name="arrow-forward" size={18} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </ScrollView>
   );
 }
@@ -845,4 +953,143 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: { backgroundColor: '#94a3b8' },
   buttonText: { color: '#fff', fontWeight: '900' },
+  programModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    justifyContent: 'center',
+    padding: 18,
+  },
+  programModalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#dbe7df',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.18,
+    shadowRadius: 28,
+    elevation: 8,
+  },
+  programModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  programModalIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  programModalClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  programModalLabel: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#166534',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  programModalTitle: {
+    fontSize: 21,
+    lineHeight: 27,
+    fontWeight: '900',
+    color: '#102118',
+    marginBottom: 8,
+  },
+  programModalDescription: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: '#475569',
+    fontWeight: '600',
+  },
+  programModalStats: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+  },
+  programModalStat: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  programModalStatValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#102118',
+  },
+  programModalStatLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748b',
+    marginTop: 2,
+  },
+  programModalSection: {
+    marginTop: 16,
+    gap: 8,
+  },
+  programModalSectionTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#102118',
+  },
+  programModalProjectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  programModalProjectText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#334155',
+  },
+  programModalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 18,
+  },
+  programModalSecondaryButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 14,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  programModalSecondaryText: {
+    color: '#475569',
+    fontWeight: '900',
+  },
+  programModalPrimaryButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 14,
+    backgroundColor: '#166534',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  programModalPrimaryText: {
+    color: '#ffffff',
+    fontWeight: '900',
+  },
 });

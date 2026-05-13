@@ -140,6 +140,28 @@ function getCompletedVolunteerHours(log: VolunteerTimeLog): number {
   return (end - start) / 3_600_000;
 }
 
+function isVolunteerAssignedToTask(
+  task: { assignedVolunteerId?: string; assignedVolunteerIds?: string[] },
+  volunteerId?: string | null
+): boolean {
+  if (!volunteerId) {
+    return false;
+  }
+
+  const assignedVolunteerIds = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(task.assignedVolunteerIds) ? task.assignedVolunteerIds : []),
+        task.assignedVolunteerId,
+      ]
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+    )
+  );
+
+  return assignedVolunteerIds.includes(volunteerId);
+}
+
 function formatMetricNumber(value: number | undefined, suffix = ''): string {
   if (!value) {
     return `0${suffix}`;
@@ -402,7 +424,7 @@ export default function ReportsScreen({ navigation, route }: any) {
         project =>
           project.isEvent &&
           (project.internalTasks || []).some(
-            task => task.isFieldOfficer && task.assignedVolunteerId === volunteerProfileId
+            task => task.isFieldOfficer && isVolunteerAssignedToTask(task, volunteerProfileId)
           )
       )
       .map(project => project.id);
@@ -643,7 +665,7 @@ export default function ReportsScreen({ navigation, route }: any) {
           'Success',
           user.role === 'volunteer'
             ? hadActiveVolunteerLog
-              ? 'Your report was submitted and your time out is complete for today.'
+              ? 'Your report was submitted for today\'s confirmed attendance.'
               : 'Your report was submitted to the event reports.'
             : 'Your report was submitted to the impact hub.'
         );
@@ -706,8 +728,8 @@ export default function ReportsScreen({ navigation, route }: any) {
   const handleOpenUploadModal = useCallback(() => {
     if (user?.role === 'volunteer' && volunteerEventProjects.length === 0) {
       Alert.alert(
-        'Time In Required',
-        'You can only submit a report for an event where you already timed in.'
+        'Attendance Required',
+        'You can only submit a report for an event where your attendance is already confirmed.'
       );
       return;
     }
@@ -776,9 +798,9 @@ export default function ReportsScreen({ navigation, route }: any) {
         userRole={user?.role}
         volunteerTimeLogs={user?.role === 'volunteer' ? volunteerTimeLogs : undefined}
         fieldOfficerProjectIds={user?.role === 'volunteer' ? fieldOfficerProjectIds : undefined}
+        volunteerProfileId={user?.role === 'volunteer' ? volunteerProfileId : undefined}
         initialProjectId={uploadModalInitialValues?.projectId}
         initialDescription={uploadModalInitialValues?.completionReport}
-        initialMediaUri={uploadModalInitialValues?.completionPhoto}
         partnerProjectSummaries={
           user?.role === 'partner' ? partnerProjectSummaries : undefined
         }

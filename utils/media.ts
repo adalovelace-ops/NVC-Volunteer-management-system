@@ -1,6 +1,7 @@
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Linking } from 'react-native';
+import { compressImage } from './imageCompression';
 
 // Safe Platform accessor for web environments
 function getPlatformOS(): string {
@@ -14,6 +15,7 @@ function getPlatformOS(): string {
 
 const IMAGE_FILE_PATTERN = /\.(png|jpe?g|gif|webp|bmp|heic|heif)(\?.*)?$/i;
 const DATA_URI_PATTERN = /^data:([^;,]+)(;base64)?,/i;
+const IMAGE_PICKER_QUALITY = 0.4;
 
 // Returns true when the provided string can be rendered as an image preview.
 export function isImageMediaUri(value?: string | null): boolean {
@@ -123,7 +125,7 @@ export async function pickImageFromDevice(): Promise<string | null> {
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ['images'],
     allowsEditing: true,
-    quality: 0.5,
+    quality: IMAGE_PICKER_QUALITY,
     base64: true,
   });
 
@@ -133,7 +135,9 @@ export async function pickImageFromDevice(): Promise<string | null> {
 
   const asset = result.assets[0];
   if (asset.base64) {
-    return `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}`;
+    const imageDataUri = `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}`;
+    const optimizedImage = await compressImage(imageDataUri);
+    return optimizedImage || imageDataUri;
   }
 
   return asset.uri;

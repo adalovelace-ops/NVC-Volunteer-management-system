@@ -8,6 +8,7 @@ import {
   Alert,
   Modal,
   ScrollView,
+  Image,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -25,6 +26,7 @@ import {
   startVolunteerTimeLog,
   notifyVolunteerAboutTaskUnassignment,
   notifyVolunteerAboutTaskUpdate,
+  setVolunteerAttendanceChecked,
 } from '../models/storage';
 import {
   Project,
@@ -33,9 +35,10 @@ import {
   VolunteerProjectJoinRecord,
   VolunteerTimeLog,
 } from '../models/types';
-import { getProjectDisplayStatus } from '../utils/projectStatus';
+import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
 import { navigateToAvailableRoute } from '../utils/navigation';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
+import { isImageMediaUri, pickImageFromDevice } from '../utils/media';
 
 type AssignedTask = ProjectInternalTask & {
   projectId: string;
@@ -44,18 +47,51 @@ type AssignedTask = ProjectInternalTask & {
   projectEndDate: string;
   statusTrackingNote: string;
 };
+type AssignedTaskGroup = {
+  projectId: string;
+  projectTitle: string;
+  tasks: AssignedTask[];
+};
 type FieldOfficerFilter = 'All' | 'Active' | 'Upcoming' | 'Completed';
 type TaskScreenTab = 'My Tasks' | 'Manage Assignments';
+type TaskSectionId = 'assigned-events' | 'field-officer-events';
+type TaskSectionItemKind = 'task-group' | 'field-officer-event';
+
+type TaskSectionPreviewItem = {
+  id: string;
+  kind: TaskSectionItemKind;
+  projectId: string;
+  title: string;
+  description: string;
+  badgeLabel?: string;
+  badgeColor?: string;
+};
+
+type TaskSectionPreview = {
+  id: TaskSectionId;
+  title: string;
+  eyebrow?: string;
+  subtitle: string;
+  items: TaskSectionPreviewItem[];
+  emptyTitle: string;
+  emptyText: string;
+};
 
 type TaskEventAttendanceState = {
-  activeLog: VolunteerTimeLog | null;
+  todayLog: VolunteerTimeLog | null;
   latestLog: VolunteerTimeLog | null;
-  canTimeIn: boolean;
-  canTimeOut: boolean;
+  canConfirmAttendance: boolean;
   eventHasNotStarted: boolean;
   eventHasEnded: boolean;
-  hasLoggedToday: boolean;
+  hasConfirmedToday: boolean;
   helperText: string;
+};
+
+const FILTER_OPTION_LABELS: Record<'All' | 'Assigned' | 'In Progress' | 'Completed', string> = {
+  All: 'All',
+  Assigned: 'Assigned',
+  'In Progress': 'In Progress',
+  Completed: 'Completed',
 };
 
 function formatEventDateLabel(startDate?: string, endDate?: string): string {
@@ -96,6 +132,33 @@ function getLocalDateKey(value?: string, now: Date = new Date()): string {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
+function getDateRangeKeys(startDate?: string, endDate?: string): string[] {
+  if (!startDate) {
+    return [];
+  }
+
+  const start = new Date(startDate);
+  const end = new Date(endDate || startDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return [];
+  }
+
+  const current = new Date(start);
+  const finalDate = new Date(end);
+  current.setHours(0, 0, 0, 0);
+  finalDate.setHours(0, 0, 0, 0);
+
+  const keys: string[] = [];
+  let guard = 0;
+  while (current <= finalDate && guard < 90) {
+    keys.push(getLocalDateKey(current.toISOString()));
+    current.setDate(current.getDate() + 1);
+    guard += 1;
+  }
+
+  return keys;
+}
+
 function hasEventStartedForToday(startValue?: string, now: Date = new Date()): boolean {
   if (!startValue) {
     return true;
@@ -106,9 +169,9 @@ function hasEventStartedForToday(startValue?: string, now: Date = new Date()): b
     return true;
   }
 
-  const startDay = new Date(startDate);
-  startDay.setHours(0, 0, 0, 0);
-  return now >= startDay;
+  const attendanceStart = new Date(startDate);
+  attendanceStart.setHours(9, 0, 0, 0);
+  return now >= attendanceStart;
 }
 
 function hasEventEndedForToday(endValue?: string, now: Date = new Date()): boolean {
@@ -167,13 +230,47 @@ function formatVolunteerTime(totalMinutes: number): string {
   return `${roundedHours}h`;
 }
 
+function getTaskAssignedVolunteerIds(task: ProjectInternalTask): string[] {
+  return Array.from(
+    new Set(
+      [
+        ...(Array.isArray(task.assignedVolunteerIds) ? task.assignedVolunteerIds : []),
+        task.assignedVolunteerId,
+      ]
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function getTaskAssignedVolunteerNames(task: ProjectInternalTask): string[] {
+  return Array.from(
+    new Set(
+      [
+        ...(Array.isArray(task.assignedVolunteerNames) ? task.assignedVolunteerNames : []),
+        task.assignedVolunteerName,
+      ]
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function isVolunteerAssignedToTask(task: ProjectInternalTask, volunteerId?: string | null): boolean {
+  if (!volunteerId) {
+    return false;
+  }
+
+  return getTaskAssignedVolunteerIds(task).includes(volunteerId);
+}
+
 function getTrackedTaskStatus(
   task: ProjectInternalTask,
   project: Project,
   joinRecord: VolunteerProjectJoinRecord | undefined,
   timeLogs: VolunteerTimeLog[]
 ): Pick<AssignedTask, 'status' | 'updatedAt' | 'statusTrackingNote'> {
-  if (!task.assignedVolunteerId) {
+  if (getTaskAssignedVolunteerIds(task).length === 0) {
     return {
       status: 'Unassigned',
       updatedAt: task.updatedAt,
@@ -191,37 +288,36 @@ function getTrackedTaskStatus(
 
   const todayKey = getLocalDateKey();
   const activeLog = timeLogs.find(
-    log => !log.timeOut && getLocalDateKey(log.timeIn) === todayKey
+    log => getLocalDateKey(log.attendanceConfirmedAt || log.timeIn) === todayKey
   );
   if (activeLog) {
     return {
       status: 'In Progress',
-      updatedAt: activeLog.timeIn,
-      statusTrackingNote: 'In progress while you have an active time-in for this event.',
+      updatedAt: activeLog.attendanceConfirmedAt || activeLog.timeIn,
+      statusTrackingNote: 'In progress after your attendance has been confirmed for today.',
     };
   }
 
   const latestCompletedLog = timeLogs
-    .filter(log => Boolean(log.timeOut))
     .sort(
       (left, right) =>
-        new Date(right.timeOut || right.timeIn).getTime() -
-        new Date(left.timeOut || left.timeIn).getTime()
+        new Date(right.attendanceConfirmedAt || right.timeOut || right.timeIn).getTime() -
+        new Date(left.attendanceConfirmedAt || left.timeOut || left.timeIn).getTime()
     )[0];
-  if (latestCompletedLog?.timeOut) {
+  if (latestCompletedLog) {
     const projectEnded = hasEventEndedForToday(project.endDate || project.startDate);
     if (!projectEnded && !['Completed', 'Cancelled'].includes(getProjectDisplayStatus(project))) {
       return {
         status: 'Assigned',
-        updatedAt: latestCompletedLog.timeOut,
-        statusTrackingNote: 'Attendance was saved for today. You can time in again on the next event day.',
+        updatedAt: latestCompletedLog.attendanceConfirmedAt || latestCompletedLog.timeIn,
+        statusTrackingNote: 'Attendance is already confirmed for the latest event day. It will refresh on the next event day.',
       };
     }
 
     return {
       status: 'Completed',
-      updatedAt: latestCompletedLog.timeOut,
-      statusTrackingNote: 'Completed automatically after your latest timed-out attendance log.',
+      updatedAt: latestCompletedLog.attendanceConfirmedAt || latestCompletedLog.timeIn,
+      statusTrackingNote: 'Completed automatically after your latest attendance confirmation.',
     };
   }
 
@@ -251,40 +347,39 @@ function getTaskEventAttendanceState(
       new Date(left.timeOut || left.timeIn).getTime()
   );
   const todayKey = getLocalDateKey();
-  const activeLog =
-    sortedLogs.find(log => !log.timeOut && getLocalDateKey(log.timeIn) === todayKey) || null;
+  const todayLog =
+    sortedLogs.find(log => getLocalDateKey(log.attendanceConfirmedAt || log.timeIn) === todayKey) || null;
   const latestLog = sortedLogs[0] || null;
-  const hasLoggedToday = sortedLogs.some(log => getLocalDateKey(log.timeIn) === todayKey);
+  const hasConfirmedToday = sortedLogs.some(
+    log => getLocalDateKey(log.attendanceConfirmedAt || log.timeIn) === todayKey
+  );
   const eventHasNotStarted = !hasEventStartedForToday(project.startDate);
   const lifecycleStatus = getProjectDisplayStatus(project);
   const eventHasEnded =
     hasEventEndedForToday(project.endDate || project.startDate) ||
     lifecycleStatus === 'Completed' ||
     lifecycleStatus === 'Cancelled';
-  const canTimeIn = isAssigned && !activeLog && !hasLoggedToday && !eventHasNotStarted && !eventHasEnded;
-  const canTimeOut = Boolean(activeLog);
+  const canConfirmAttendance =
+    isAssigned && !hasConfirmedToday && !eventHasNotStarted && !eventHasEnded;
 
-  let helperText = 'Attendance is ready for today.';
+  let helperText = 'Attendance confirmation is ready for today.';
   if (!isAssigned) {
     helperText = 'You need an assigned task before attendance opens for this event.';
-  } else if (activeLog) {
-    helperText = 'You are timed in for today. Submit your My Event Report to finish time out.';
   } else if (eventHasNotStarted) {
-    helperText = 'Time in unlocks on the event start date.';
+    helperText = 'Attendance confirmation unlocks at 9:00 AM on the event start date.';
   } else if (eventHasEnded) {
     helperText = 'Attendance is closed because the event timeline already ended.';
-  } else if (hasLoggedToday) {
-    helperText = 'Today is already recorded. Attendance will refresh on the next event day.';
+  } else if (hasConfirmedToday) {
+    helperText = 'Attendance is already confirmed for today. It will reset on the next event day.';
   }
 
   return {
-    activeLog,
+    todayLog,
     latestLog,
-    canTimeIn,
-    canTimeOut,
+    canConfirmAttendance,
     eventHasNotStarted,
     eventHasEnded,
-    hasLoggedToday,
+    hasConfirmedToday,
     helperText,
   };
 }
@@ -307,7 +402,7 @@ function collectAssignedTasks(
     }
 
     project.internalTasks.forEach(task => {
-      if (task.assignedVolunteerId === volunteerProfile.id) {
+      if (isVolunteerAssignedToTask(task, volunteerProfile.id)) {
         const trackedStatus = getTrackedTaskStatus(
           task,
           project,
@@ -349,13 +444,19 @@ export default function VolunteerTasksScreen({ navigation }: any) {
   const [showTaskGroupDetails, setShowTaskGroupDetails] = useState(false);
   const [selectedManagedEventId, setSelectedManagedEventId] = useState<string | null>(null);
   const [showFieldOfficerBoard, setShowFieldOfficerBoard] = useState(false);
+  const [selectedManagedAttendanceDateKey, setSelectedManagedAttendanceDateKey] = useState<string | null>(null);
+  const [expandedManagedTaskId, setExpandedManagedTaskId] = useState<string | null>(null);
+  const [showManagedTaskAssignments, setShowManagedTaskAssignments] = useState(false);
   const [filterStatus, setFilterStatus] = useState<'All' | 'Assigned' | 'In Progress' | 'Completed'>('All');
   const [fieldOfficerFilter, setFieldOfficerFilter] = useState<FieldOfficerFilter>('All');
-  const [showAllFieldOfficerEvents, setShowAllFieldOfficerEvents] = useState(false);
   const [activeTab, setActiveTab] = useState<TaskScreenTab>('My Tasks');
+  const [selectedTaskSection, setSelectedTaskSection] = useState<TaskSectionPreview | null>(null);
+  const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null);
+  const [attendanceNotice, setAttendanceNotice] = useState<string | null>(null);
 
   const tasksLoadInFlightRef = useRef<Promise<void> | null>(null);
   const tasksReloadQueuedRef = useRef(false);
+  const attendanceNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const volunteerJoinRecordByProjectId = useMemo(
     () => new Map(volunteerJoinRecords.map(record => [record.projectId, record] as const)),
@@ -403,7 +504,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
             projects
               .filter(project =>
                 (project.internalTasks || []).some(
-                  task => task.assignedVolunteerId === currentVolunteerProfile.id
+                  task => isVolunteerAssignedToTask(task, currentVolunteerProfile.id)
                 )
               )
               .map(project => project.id)
@@ -507,6 +608,28 @@ export default function VolunteerTasksScreen({ navigation }: any) {
     );
   }, [loadVolunteerTasksCoalesced]);
 
+  useEffect(() => {
+    return () => {
+      if (attendanceNoticeTimerRef.current) {
+        clearTimeout(attendanceNoticeTimerRef.current);
+        attendanceNoticeTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const showAttendanceNotice = (message: string, durationMs = 1000) => {
+    if (attendanceNoticeTimerRef.current) {
+      clearTimeout(attendanceNoticeTimerRef.current);
+      attendanceNoticeTimerRef.current = null;
+    }
+
+    setAttendanceNotice(message);
+    attendanceNoticeTimerRef.current = setTimeout(() => {
+      setAttendanceNotice(null);
+      attendanceNoticeTimerRef.current = null;
+    }, durationMs);
+  };
+
   const formatTimestamp = (value?: string) => {
     if (!value) {
       return '--';
@@ -520,7 +643,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
     return parsed.toLocaleString();
   };
 
-  const handleTimeInForProject = async (projectId: string) => {
+  const handleConfirmAttendanceForProject = async (projectId: string) => {
     if (!volunteerProfile) {
       return;
     }
@@ -535,42 +658,52 @@ export default function VolunteerTasksScreen({ navigation }: any) {
     const isAssigned = tasks.some(task => task.projectId === projectId);
     const attendanceState = getTaskEventAttendanceState(project, isAssigned, projectLogs);
 
-    if (!attendanceState.canTimeIn) {
+    if (!attendanceState.canConfirmAttendance) {
       Alert.alert('Attendance Unavailable', attendanceState.helperText);
       return;
     }
 
     try {
-      await startVolunteerTimeLog(volunteerProfile.id, projectId);
-      await loadVolunteerTasksCoalesced();
-      Alert.alert('Time In recorded', 'Your attendance for today is now active.');
+      const attendancePhoto = await pickImageFromDevice();
+      if (!attendancePhoto) {
+        return;
+      }
+
+      const createdLog = await startVolunteerTimeLog(
+        volunteerProfile.id,
+        projectId,
+        undefined,
+        attendancePhoto
+      );
+      const nextVolunteerTimeLogs = [createdLog, ...volunteerTimeLogs.filter(log => log.id !== createdLog.id)].sort(
+        (left, right) => new Date(right.timeIn).getTime() - new Date(left.timeIn).getTime()
+      );
+      const nextAllVolunteerTimeLogs = [
+        createdLog,
+        ...allVolunteerTimeLogs.filter(log => log.id !== createdLog.id),
+      ].sort((left, right) => new Date(right.timeIn).getTime() - new Date(left.timeIn).getTime());
+      const nextTasks = collectAssignedTasks(
+        allProjects,
+        volunteerProfile,
+        volunteerJoinRecordByProjectId,
+        nextVolunteerTimeLogs
+      );
+
+      setVolunteerTimeLogs(nextVolunteerTimeLogs);
+      setAllVolunteerTimeLogs(nextAllVolunteerTimeLogs);
+      setTasks(nextTasks);
+      setSelectedTask(current =>
+        current
+          ? nextTasks.find(task => task.id === current.id && task.projectId === current.projectId) || null
+          : current
+      );
+      showAttendanceNotice('Attendance confirmed for today.');
     } catch (error) {
       Alert.alert(
-        getRequestErrorTitle(error, 'Unable to time in'),
+        getRequestErrorTitle(error, 'Unable to confirm attendance'),
         getRequestErrorMessage(error, 'Please try again.')
       );
     }
-  };
-
-  const handleOpenTimeOutReport = (projectId: string) => {
-    const todayKey = getLocalDateKey();
-    const activeLog = volunteerTimeLogs.find(
-      log =>
-        log.projectId === projectId &&
-        !log.timeOut &&
-        getLocalDateKey(log.timeIn) === todayKey
-    );
-    if (!activeLog) {
-      Alert.alert('No active attendance', 'Time in first before opening the time out report.');
-      return;
-    }
-
-    navigateToAvailableRoute(navigation, 'Reports', {
-      projectId,
-      autoOpenUpload: true,
-      completionReport: activeLog.completionReport,
-      completionPhoto: activeLog.completionPhoto,
-    });
   };
 
   const selectedEventProject = useMemo(
@@ -588,7 +721,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
         project =>
           project.isEvent &&
           (project.internalTasks || []).some(
-            task => task.isFieldOfficer && task.assignedVolunteerId === volunteerProfile.id
+            task => task.isFieldOfficer && isVolunteerAssignedToTask(task, volunteerProfile.id)
           )
       )
       .sort((left, right) => new Date(left.startDate).getTime() - new Date(right.startDate).getTime());
@@ -615,7 +748,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
     }
 
     return (selectedEventProject.internalTasks || []).some(
-      task => task.isFieldOfficer && task.assignedVolunteerId === volunteerProfile.id
+      task => task.isFieldOfficer && isVolunteerAssignedToTask(task, volunteerProfile.id)
     );
   }, [selectedEventProject, volunteerProfile]);
 
@@ -641,10 +774,102 @@ export default function VolunteerTasksScreen({ navigation }: any) {
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [allVolunteers, selectedManagedEvent]);
 
+  const managedEventAttendanceDateKeys = useMemo(() => {
+    if (!selectedManagedEvent) {
+      return [];
+    }
+
+    const eventDateKeys = getDateRangeKeys(selectedManagedEvent.startDate, selectedManagedEvent.endDate);
+    const fallbackDateKeys = Array.from(
+      new Set(
+        allVolunteerTimeLogs
+          .filter(log => log.projectId === selectedManagedEvent.id)
+          .map(log => getLocalDateKey(log.attendanceConfirmedAt || log.timeIn))
+          .filter(Boolean)
+      )
+    ).sort((left, right) => new Date(left).getTime() - new Date(right).getTime());
+
+    return eventDateKeys.length ? eventDateKeys : fallbackDateKeys;
+  }, [allVolunteerTimeLogs, selectedManagedEvent]);
+
+  useEffect(() => {
+    if (!selectedManagedEvent) {
+      setSelectedManagedAttendanceDateKey(null);
+      setExpandedManagedTaskId(null);
+      setShowManagedTaskAssignments(false);
+      return;
+    }
+
+    const todayKey = getLocalDateKey();
+    setSelectedManagedAttendanceDateKey(current => {
+      if (current && managedEventAttendanceDateKeys.includes(current)) {
+        return current;
+      }
+
+      if (managedEventAttendanceDateKeys.includes(todayKey)) {
+        return todayKey;
+      }
+
+      return managedEventAttendanceDateKeys[0] || todayKey;
+    });
+  }, [managedEventAttendanceDateKeys, selectedManagedEvent]);
+
+  const resolvedManagedAttendanceDateKey =
+    selectedManagedAttendanceDateKey && managedEventAttendanceDateKeys.includes(selectedManagedAttendanceDateKey)
+      ? selectedManagedAttendanceDateKey
+      : managedEventAttendanceDateKeys.includes(getLocalDateKey())
+      ? getLocalDateKey()
+      : managedEventAttendanceDateKeys[0] || getLocalDateKey();
+
+  const managedEventAttendanceEntries = useMemo(() => {
+    if (!selectedManagedEvent) {
+      return [];
+    }
+
+    return managedEventVolunteerOptions
+      .map(volunteer => {
+        const logs = allVolunteerTimeLogs
+          .filter(log => log.projectId === selectedManagedEvent.id && log.volunteerId === volunteer.id)
+          .filter(
+            log => getLocalDateKey(log.attendanceConfirmedAt || log.timeIn) === resolvedManagedAttendanceDateKey
+          )
+          .sort(
+            (left, right) =>
+              new Date(right.attendanceConfirmedAt || right.timeIn).getTime() -
+              new Date(left.attendanceConfirmedAt || left.timeIn).getTime()
+          );
+
+        return {
+          volunteer,
+          logs,
+          checkedAttendanceDays: new Set(
+            logs
+              .filter(log => Boolean(log.attendanceCheckedAt))
+              .map(log => getLocalDateKey(log.attendanceConfirmedAt || log.timeIn))
+              .filter(Boolean)
+          ).size,
+        };
+      })
+      .sort((left, right) => left.volunteer.name.localeCompare(right.volunteer.name));
+  }, [
+    allVolunteerTimeLogs,
+    managedEventVolunteerOptions,
+    resolvedManagedAttendanceDateKey,
+    selectedManagedEvent,
+  ]);
+
+  const managedEventSelectedDateUploadCount = managedEventAttendanceEntries.filter(
+    entry => entry.logs.length > 0
+  ).length;
+  const managedEventSelectedDateCheckedCount = managedEventAttendanceEntries.filter(
+    entry => entry.logs.some(log => Boolean(log.attendanceCheckedAt))
+  ).length;
+
   const handleAssignEventTask = async (
     eventProject: Project | null,
     taskId: string,
-    volunteerId?: string
+    volunteerId?: string,
+    mode: 'assign' | 'remove' = 'assign'
   ) => {
     if (!eventProject || !volunteerProfile) {
       return;
@@ -652,7 +877,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
 
     try {
       const isFieldOfficerForEvent = (eventProject.internalTasks || []).some(
-        task => task.isFieldOfficer && task.assignedVolunteerId === volunteerProfile.id
+        task => task.isFieldOfficer && isVolunteerAssignedToTask(task, volunteerProfile.id)
       );
 
       if (!isFieldOfficerForEvent) {
@@ -667,14 +892,27 @@ export default function VolunteerTasksScreen({ navigation }: any) {
         ? assignableVolunteers.find(volunteer => volunteer.id === volunteerId) || null
         : null;
       const currentTask = (eventProject.internalTasks || []).find(task => task.id === taskId) || null;
-      const previouslyAssignedVolunteer =
-        currentTask?.assignedVolunteerId && currentTask.assignedVolunteerId !== volunteerId
-          ? assignableVolunteers.find(volunteer => volunteer.id === currentTask.assignedVolunteerId) || null
+      const currentAssignedVolunteerIds = currentTask ? getTaskAssignedVolunteerIds(currentTask) : [];
+      const isAlreadyAssigned = Boolean(
+        volunteerId && currentTask && currentAssignedVolunteerIds.includes(volunteerId)
+      );
+      const nextAssignedVolunteerIds = !volunteerId
+        ? []
+        : mode === 'remove'
+        ? currentAssignedVolunteerIds.filter(id => id !== volunteerId)
+        : isAlreadyAssigned
+        ? currentAssignedVolunteerIds
+        : [...currentAssignedVolunteerIds, volunteerId];
+      const nextAssignedVolunteers = nextAssignedVolunteerIds
+        .map(id => assignableVolunteers.find(volunteer => volunteer.id === id) || null)
+        .filter((volunteer): volunteer is Volunteer => volunteer !== null);
+      const nextAssignedVolunteerNames = nextAssignedVolunteers.map(volunteer => volunteer.name);
+      const removedVolunteer =
+        mode === 'remove' && volunteerId
+          ? assignableVolunteers.find(volunteer => volunteer.id === volunteerId) || null
           : null;
       const shouldNotifyAssignedVolunteer = Boolean(
-        assignedVolunteer &&
-        currentTask &&
-        currentTask.assignedVolunteerId !== assignedVolunteer.id
+        assignedVolunteer && volunteerId && mode === 'assign' && !currentAssignedVolunteerIds.includes(volunteerId)
       );
 
       const updatedTasks = (eventProject.internalTasks || []).map(task => {
@@ -686,17 +924,19 @@ export default function VolunteerTasksScreen({ navigation }: any) {
           return task;
         }
 
-        const nextStatus =
-          volunteerId && task.status === 'Unassigned'
-            ? 'Assigned'
-            : !volunteerId
+        const nextStatus: ProjectInternalTask['status'] =
+          nextAssignedVolunteerIds.length === 0
             ? 'Unassigned'
+            : task.status === 'Unassigned'
+            ? 'Assigned'
             : task.status;
 
         return {
           ...task,
-          assignedVolunteerId: volunteerId || undefined,
-          assignedVolunteerName: assignedVolunteer?.name || undefined,
+          assignedVolunteerId: nextAssignedVolunteerIds[0] || undefined,
+          assignedVolunteerName: nextAssignedVolunteerNames[0] || undefined,
+          assignedVolunteerIds: nextAssignedVolunteerIds.length ? nextAssignedVolunteerIds : undefined,
+          assignedVolunteerNames: nextAssignedVolunteerNames.length ? nextAssignedVolunteerNames : undefined,
           status: nextStatus,
           updatedAt: new Date().toISOString(),
         };
@@ -708,11 +948,11 @@ export default function VolunteerTasksScreen({ navigation }: any) {
         updatedAt: new Date().toISOString(),
       });
       const notificationTasks: Promise<void>[] = [];
-      if (currentTask && previouslyAssignedVolunteer) {
+      if (currentTask && removedVolunteer) {
         notificationTasks.push(notifyVolunteerAboutTaskUnassignment({
           event: eventProject,
           task: currentTask,
-          volunteer: previouslyAssignedVolunteer,
+          volunteer: removedVolunteer,
           actorUserId: user?.id,
         }));
       }
@@ -721,10 +961,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
           event: eventProject,
           task: {
             ...currentTask,
-            status:
-              volunteerId && currentTask.status === 'Unassigned'
-                ? 'Assigned'
-                : currentTask.status,
+            status: nextAssignedVolunteerIds.length ? 'Assigned' : currentTask.status,
           },
           volunteer: assignedVolunteer,
           actorUserId: user?.id,
@@ -758,13 +995,89 @@ export default function VolunteerTasksScreen({ navigation }: any) {
         return nextTasks.find(task => task.id === current.id && task.projectId === current.projectId) || null;
       });
       void loadVolunteerTasks();
-      const actionLabel = volunteerId ? 'assigned' : 'unassigned';
-      setShowFieldOfficerBoard(false);
-      setShowDetails(false);
-      Alert.alert('Saved', `Event task ${actionLabel}.`);
+      const actionLabel =
+        !volunteerId
+          ? 'cleared'
+          : mode === 'remove'
+          ? 'updated'
+          : isAlreadyAssigned
+          ? 'kept'
+          : 'assigned';
+      Alert.alert(
+        'Saved',
+        actionLabel === 'updated'
+          ? 'Volunteer removed from this task.'
+          : actionLabel === 'kept'
+          ? 'Volunteer is already assigned to this task.'
+          : actionLabel === 'cleared'
+          ? 'Task assignments cleared.'
+          : 'Volunteer assigned to this task.'
+      );
     } catch (error) {
       console.error('Error assigning event task:', error);
       Alert.alert('Error', 'Failed to update the event task assignment.');
+    }
+  };
+
+  const handleTaskVolunteerChipPress = (eventTask: ProjectInternalTask, volunteer: Volunteer) => {
+    if (!selectedManagedEvent) {
+      return;
+    }
+
+    const isAssigned = isVolunteerAssignedToTask(eventTask, volunteer.id);
+
+    if (isAssigned) {
+      void handleAssignEventTask(selectedManagedEvent, eventTask.id, volunteer.id, 'remove');
+      return;
+    }
+
+    void handleAssignEventTask(selectedManagedEvent, eventTask.id, volunteer.id, 'assign');
+  };
+
+  const handleToggleAttendanceCheck = async (log: VolunteerTimeLog, checked: boolean) => {
+    if (!user?.id) {
+      return;
+    }
+
+    const loadingKey = `attendance-check-${log.id}`;
+    const optimisticLog: VolunteerTimeLog = {
+      ...log,
+      attendanceCheckedAt: checked ? new Date().toISOString() : undefined,
+      attendanceCheckedBy: checked ? user.id : undefined,
+      attendanceCheckedByName: checked ? user.name || 'Field Officer' : undefined,
+    };
+    try {
+      setActionLoadingKey(loadingKey);
+      setAllVolunteerTimeLogs(current =>
+        current.map(entry => (entry.id === optimisticLog.id ? optimisticLog : entry))
+      );
+      setVolunteerTimeLogs(current =>
+        current.map(entry => (entry.id === optimisticLog.id ? optimisticLog : entry))
+      );
+      const updatedLog = await setVolunteerAttendanceChecked(log.id, checked, user.id);
+      setAllVolunteerTimeLogs(current =>
+        current.map(entry => (entry.id === updatedLog.id ? updatedLog : entry))
+      );
+      setVolunteerTimeLogs(current =>
+        current.map(entry => (entry.id === updatedLog.id ? updatedLog : entry))
+      );
+      showAttendanceNotice(checked ? 'Attendance marked.' : 'Attendance mark removed.');
+    } catch (error) {
+      setAllVolunteerTimeLogs(current =>
+        current.map(entry => (entry.id === log.id ? log : entry))
+      );
+      setVolunteerTimeLogs(current =>
+        current.map(entry => (entry.id === log.id ? log : entry))
+      );
+      Alert.alert(
+        getRequestErrorTitle(error, 'Unable to mark attendance'),
+        getRequestErrorMessage(
+          error,
+          'Only the assigned field officer for this event can mark attendance.'
+        )
+      );
+    } finally {
+      setActionLoadingKey(current => (current === loadingKey ? null : current));
     }
   };
 
@@ -797,12 +1110,6 @@ export default function VolunteerTasksScreen({ navigation }: any) {
   };
 
   const filteredTasks = filterStatus === 'All' ? tasks : tasks.filter(t => t.status === filterStatus);
-  const filterOptionLabels: Record<'All' | 'Assigned' | 'In Progress' | 'Completed', string> = {
-    All: 'All',
-    Assigned: 'Assigned',
-    'In Progress': 'In Progress',
-    Completed: 'Completed',
-  };
   const hasFieldOfficerAccess = fieldOfficerEvents.length > 0;
   const fieldOfficerEventCounts = useMemo(
     () => ({
@@ -833,19 +1140,11 @@ export default function VolunteerTasksScreen({ navigation }: any) {
         return new Date(left.startDate).getTime() - new Date(right.startDate).getTime();
       });
   }, [fieldOfficerEvents, fieldOfficerFilter]);
-  const visibleFieldOfficerEvents = useMemo(
-    () => (showAllFieldOfficerEvents ? filteredFieldOfficerEvents : filteredFieldOfficerEvents.slice(0, 3)),
-    [filteredFieldOfficerEvents, showAllFieldOfficerEvents]
-  );
-  const hiddenFieldOfficerEventCount = Math.max(
-    filteredFieldOfficerEvents.length - visibleFieldOfficerEvents.length,
-    0
-  );
   const assignedCount = tasks.filter(task => task.status === 'Assigned').length;
   const inProgressCount = tasks.filter(task => task.status === 'In Progress').length;
   const completedCount = tasks.filter(task => task.status === 'Completed').length;
   const groupedFilteredTasks = useMemo(() => {
-    const groups = new Map<string, { projectId: string; projectTitle: string; tasks: AssignedTask[] }>();
+    const groups = new Map<string, AssignedTaskGroup>();
 
     filteredTasks.forEach(task => {
       const existingGroup = groups.get(task.projectId);
@@ -875,6 +1174,80 @@ export default function VolunteerTasksScreen({ navigation }: any) {
     [allProjects, selectedTaskGroupProjectId]
   );
 
+  const taskGroupSectionItems = useMemo<TaskSectionPreviewItem[]>(
+    () =>
+      groupedFilteredTasks.map(group => {
+        const project = allProjects.find(entry => entry.id === group.projectId) || null;
+        const eventStatus = project ? getProjectDisplayStatus(project) : 'Planning';
+
+        return {
+          id: `task-group-${group.projectId}`,
+          kind: 'task-group',
+          projectId: group.projectId,
+          title: group.projectTitle,
+          description: project
+            ? `${group.tasks.length} task${group.tasks.length === 1 ? '' : 's'} • ${formatEventDateLabel(
+                project.startDate,
+                project.endDate
+              )}`
+            : `${group.tasks.length} task${group.tasks.length === 1 ? '' : 's'} ready to review`,
+          badgeLabel: eventStatus,
+          badgeColor: project ? getProjectStatusColor(project) : '#64748b',
+        };
+      }),
+    [allProjects, groupedFilteredTasks]
+  );
+
+  const fieldOfficerSectionItems = useMemo<TaskSectionPreviewItem[]>(
+    () =>
+      filteredFieldOfficerEvents.map(eventProject => ({
+        id: `field-officer-${eventProject.id}`,
+        kind: 'field-officer-event',
+        projectId: eventProject.id,
+        title: eventProject.title,
+        description: `${formatEventDateLabel(eventProject.startDate, eventProject.endDate)} • ${
+          eventProject.volunteers.length
+        } volunteer${eventProject.volunteers.length === 1 ? '' : 's'}`,
+        badgeLabel: getFieldOfficerEventBucket(eventProject),
+        badgeColor: getProjectStatusColor(eventProject),
+      })),
+    [filteredFieldOfficerEvents]
+  );
+
+  const taskGroupsSection = useMemo<TaskSectionPreview>(
+    () => ({
+      id: 'assigned-events',
+      title: 'Assigned Event Pages',
+      eyebrow: 'My Tasks',
+      subtitle: groupedFilteredTasks.length
+        ? `Open the list to review ${groupedFilteredTasks.length} assigned event page${
+            groupedFilteredTasks.length === 1 ? '' : 's'
+          } in the ${FILTER_OPTION_LABELS[filterStatus]} view.`
+        : `No assigned event pages are available in the ${FILTER_OPTION_LABELS[filterStatus]} view.`,
+      items: taskGroupSectionItems,
+      emptyTitle: 'No event pages in this filter',
+      emptyText: 'Try another task status filter or wait for a new assignment.',
+    }),
+    [filterStatus, groupedFilteredTasks.length, taskGroupSectionItems]
+  );
+
+  const fieldOfficerEventsSection = useMemo<TaskSectionPreview>(
+    () => ({
+      id: 'field-officer-events',
+      title: 'Field Officer Events',
+      eyebrow: 'Manage Assignments',
+      subtitle: filteredFieldOfficerEvents.length
+        ? `Open the list to manage ${filteredFieldOfficerEvents.length} supervised event${
+            filteredFieldOfficerEvents.length === 1 ? '' : 's'
+          } in the ${fieldOfficerFilter} view.`
+        : `No field officer events are available in the ${fieldOfficerFilter} view.`,
+      items: fieldOfficerSectionItems,
+      emptyTitle: 'No events in this filter',
+      emptyText: 'Try another filter to review the rest of your field officer events.',
+    }),
+    [fieldOfficerFilter, fieldOfficerSectionItems, filteredFieldOfficerEvents.length]
+  );
+
   const handleBackToTaskGroupDetails = () => {
     setShowDetails(false);
     if (selectedTaskGroupProjectId) {
@@ -883,14 +1256,241 @@ export default function VolunteerTasksScreen({ navigation }: any) {
   };
 
   useEffect(() => {
-    setShowAllFieldOfficerEvents(false);
-  }, [fieldOfficerFilter, fieldOfficerEvents.length]);
-
-  useEffect(() => {
     if (!hasFieldOfficerAccess && activeTab === 'Manage Assignments') {
       setActiveTab('My Tasks');
     }
   }, [activeTab, hasFieldOfficerAccess]);
+
+  const openTaskSection = (section: TaskSectionPreview) => {
+    setSelectedTaskSection(section);
+  };
+
+  const handleOpenTaskSectionItem = (item: TaskSectionPreviewItem) => {
+    setSelectedTaskSection(null);
+
+    if (item.kind === 'field-officer-event') {
+      setSelectedManagedEventId(item.projectId);
+      setShowFieldOfficerBoard(true);
+      return;
+    }
+
+    setSelectedTaskGroupProjectId(item.projectId);
+    setShowTaskGroupDetails(true);
+  };
+
+  const renderTaskSectionCard = (section: TaskSectionPreview) => {
+    const firstItem = section.items[0];
+
+    return (
+      <TouchableOpacity
+        key={section.id}
+        style={styles.sectionSummaryCard}
+        onPress={() => openTaskSection(section)}
+        activeOpacity={0.88}
+      >
+        <View style={styles.sectionSummaryHeader}>
+          <View style={styles.sectionSummaryHeaderCopy}>
+            {section.eyebrow ? <Text style={styles.sectionSummaryEyebrow}>{section.eyebrow}</Text> : null}
+            <Text style={styles.sectionSummaryTitle}>{section.title}</Text>
+          </View>
+          <View style={styles.sectionSummaryCountBadge}>
+            <Text style={styles.sectionSummaryCountText}>
+              {section.items.length} item{section.items.length === 1 ? '' : 's'}
+            </Text>
+          </View>
+        </View>
+
+        <Text style={styles.sectionSummarySubtitle}>
+          {section.items.length > 0 && firstItem
+            ? `Tap to open the list. First item: ${firstItem.title}`
+            : section.emptyText}
+        </Text>
+
+        <View style={styles.sectionSummaryFooter}>
+          <Text style={styles.sectionSummaryFooterText}>
+            {section.items.length > 0 ? 'Tap to view list' : 'No items yet'}
+          </Text>
+          <MaterialIcons name="chevron-right" size={18} color="#166534" />
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderFieldOfficerEventCard = (eventProject: Project) => {
+    const eventTasks = eventProject.internalTasks || [];
+    const assignableTasks = eventTasks.filter(task => !task.isFieldOfficer);
+    const assignedTaskCount = assignableTasks.filter(task => getTaskAssignedVolunteerIds(task).length > 0).length;
+    const unassignedTaskCount = assignableTasks.length - assignedTaskCount;
+    const parentProgramTitle = eventProject.parentProjectId
+      ? parentProjectTitleById.get(eventProject.parentProjectId)
+      : null;
+    const eventBucket = getFieldOfficerEventBucket(eventProject);
+
+    return (
+      <TouchableOpacity
+        key={eventProject.id}
+        style={styles.fieldOfficerEventCard}
+        onPress={() =>
+          handleOpenTaskSectionItem({
+            id: `field-officer-${eventProject.id}`,
+            kind: 'field-officer-event',
+            projectId: eventProject.id,
+            title: eventProject.title,
+            description: eventProject.description || '',
+          })
+        }
+      >
+        <View style={styles.fieldOfficerEventTopRow}>
+          <View style={styles.fieldOfficerEventCopy}>
+            <View style={styles.fieldOfficerEventTitleRow}>
+              <Text style={styles.fieldOfficerEventTitle}>{eventProject.title}</Text>
+              <View style={styles.fieldOfficerEventStatusBadge}>
+                <Text style={styles.fieldOfficerEventStatusText}>{eventBucket}</Text>
+              </View>
+            </View>
+            {parentProgramTitle ? (
+              <Text style={styles.fieldOfficerEventProgram} numberOfLines={1}>
+                Program: {parentProgramTitle}
+              </Text>
+            ) : null}
+            <Text style={styles.fieldOfficerEventMeta}>
+              {formatEventDateLabel(eventProject.startDate, eventProject.endDate)}
+            </Text>
+            <Text style={styles.fieldOfficerEventMeta} numberOfLines={1}>
+              {eventProject.location.address}
+            </Text>
+          </View>
+          <MaterialIcons name="supervisor-account" size={22} color="#166534" />
+        </View>
+
+        <View style={styles.fieldOfficerMetricsRow}>
+          <View style={styles.fieldOfficerMetricCard}>
+            <Text style={styles.fieldOfficerMetricValue}>{eventProject.volunteers.length}</Text>
+            <Text style={styles.fieldOfficerMetricLabel}>joined volunteers</Text>
+          </View>
+          <View style={styles.fieldOfficerMetricCard}>
+            <Text style={styles.fieldOfficerMetricValue}>{assignedTaskCount}</Text>
+            <Text style={styles.fieldOfficerMetricLabel}>assigned tasks</Text>
+          </View>
+          <View style={styles.fieldOfficerMetricCard}>
+            <Text style={styles.fieldOfficerMetricValue}>{unassignedTaskCount}</Text>
+            <Text style={styles.fieldOfficerMetricLabel}>open tasks</Text>
+          </View>
+        </View>
+
+        <View style={styles.fieldOfficerOpenRow}>
+          <Text style={styles.fieldOfficerOpenText}>Open assignment board</Text>
+          <MaterialIcons name="chevron-right" size={20} color="#166534" />
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderTaskGroupCard = (group: AssignedTaskGroup) => {
+    const project = allProjects.find(entry => entry.id === group.projectId) || null;
+    const joinedVolunteerCount = project?.volunteers?.length || 0;
+    const eventAddress = project?.location.address || 'Event details available inside';
+    const eventLogs = allVolunteerTimeLogs.filter(log => log.projectId === group.projectId);
+    const attendanceCount = eventLogs.filter(log => Boolean(log.timeOut || log.attendanceConfirmedAt)).length;
+    const totalVolunteerMinutes = eventLogs.reduce(
+      (sum, log) => sum + getCompletedLogMinutes(log),
+      0
+    );
+    const eventStatus = project ? getProjectDisplayStatus(project) : 'Planning';
+
+    return (
+      <TouchableOpacity
+        key={group.projectId}
+        style={styles.taskGroupCard}
+        activeOpacity={0.88}
+        onPress={() =>
+          handleOpenTaskSectionItem({
+            id: `task-group-${group.projectId}`,
+            kind: 'task-group',
+            projectId: group.projectId,
+            title: group.projectTitle,
+            description: project?.description || '',
+          })
+        }
+      >
+        <View style={styles.taskGroupHeader}>
+          <View style={styles.taskGroupCopy}>
+            <Text style={styles.taskGroupTitle} numberOfLines={2}>{group.projectTitle}</Text>
+            <Text style={styles.taskGroupMeta} numberOfLines={1}>
+              {group.tasks.length} task{group.tasks.length === 1 ? '' : 's'} in this event
+            </Text>
+          </View>
+          <View style={styles.taskGroupBadge}>
+            <Text style={styles.taskGroupBadgeText}>Open</Text>
+          </View>
+        </View>
+
+        <View style={styles.taskGroupMetaRow}>
+          <View style={styles.taskGroupMetaChip}>
+            <MaterialIcons name="calendar-month" size={14} color="#166534" />
+            <Text style={styles.taskGroupMetaChipText} numberOfLines={1}>
+              {project
+                ? formatEventDateLabel(project.startDate, project.endDate)
+                : 'Schedule pending'}
+            </Text>
+          </View>
+          <View style={styles.taskGroupMetaChip}>
+            <MaterialIcons name="groups" size={14} color="#166534" />
+            <Text style={styles.taskGroupMetaChipText} numberOfLines={1}>
+              {joinedVolunteerCount} volunteer{joinedVolunteerCount === 1 ? '' : 's'}
+            </Text>
+          </View>
+          <View style={styles.taskGroupMetaChip}>
+            <MaterialIcons name="location-on" size={14} color="#166534" />
+            <Text style={styles.taskGroupMetaChipText} numberOfLines={1}>
+              {eventAddress}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.taskGroupStatRow}>
+          <View style={styles.taskGroupStatCard}>
+            <Text
+              style={styles.taskGroupStatValue}
+              numberOfLines={2}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              {attendanceCount}
+            </Text>
+            <Text style={styles.taskGroupStatLabel}>Attendance</Text>
+          </View>
+          <View style={styles.taskGroupStatCard}>
+            <Text
+              style={styles.taskGroupStatValue}
+              numberOfLines={2}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              {formatVolunteerTime(totalVolunteerMinutes)}
+            </Text>
+            <Text style={styles.taskGroupStatLabel}>Volunteer Time</Text>
+          </View>
+          <View style={styles.taskGroupStatCard}>
+            <Text
+              style={styles.taskGroupStatValue}
+              numberOfLines={2}
+              adjustsFontSizeToFit
+              minimumFontScale={0.65}
+            >
+              {eventStatus}
+            </Text>
+            <Text style={styles.taskGroupStatLabel}>Event Status</Text>
+          </View>
+        </View>
+
+        <View style={styles.taskGroupFooter}>
+          <Text style={styles.taskGroupFooterText}>Tap to view this event page</Text>
+          <MaterialIcons name="chevron-right" size={18} color="#166534" />
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   if (loading) {
     return (
@@ -903,6 +1503,14 @@ export default function VolunteerTasksScreen({ navigation }: any) {
 
   return (
     <View style={styles.container}>
+      {attendanceNotice ? (
+        <View pointerEvents="none" style={styles.attendanceNoticeOverlay}>
+          <View style={styles.attendanceNoticeCard}>
+            <MaterialIcons name="check-circle" size={18} color="#166534" />
+            <Text style={styles.attendanceNoticeText}>{attendanceNotice}</Text>
+          </View>
+        </View>
+      ) : null}
       <ScrollView style={styles.scrollContent} contentContainerStyle={styles.scrollContentContainer} showsVerticalScrollIndicator={true}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>My Assigned Tasks</Text>
@@ -965,128 +1573,11 @@ export default function VolunteerTasksScreen({ navigation }: any) {
               </Text>
             </View>
           </View>
-
-          <View style={styles.fieldOfficerFilterRow}>
-            {(['All', 'Active', 'Upcoming', 'Completed'] as const).map(option => (
-              <TouchableOpacity
-                key={option}
-                style={[
-                  styles.fieldOfficerFilterButton,
-                  fieldOfficerFilter === option && styles.fieldOfficerFilterButtonActive,
-                ]}
-                onPress={() => setFieldOfficerFilter(option)}
-              >
-                <Text
-                  style={[
-                    styles.fieldOfficerFilterButtonText,
-                    fieldOfficerFilter === option && styles.fieldOfficerFilterButtonTextActive,
-                  ]}
-                >
-                  {option} ({fieldOfficerEventCounts[option]})
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
           <Text style={styles.fieldOfficerSectionSummary}>
-            Showing {visibleFieldOfficerEvents.length} of {filteredFieldOfficerEvents.length} event
-            {filteredFieldOfficerEvents.length === 1 ? '' : 's'} in this view.
+            Filter: {fieldOfficerFilter} ({fieldOfficerEventCounts[fieldOfficerFilter] || 0})
           </Text>
 
-          {visibleFieldOfficerEvents.map(eventProject => {
-            const eventTasks = eventProject.internalTasks || [];
-            const assignableTasks = eventTasks.filter(task => !task.isFieldOfficer);
-            const assignedTaskCount = assignableTasks.filter(task => task.assignedVolunteerId).length;
-            const unassignedTaskCount = assignableTasks.length - assignedTaskCount;
-            const parentProgramTitle = eventProject.parentProjectId
-              ? parentProjectTitleById.get(eventProject.parentProjectId)
-              : null;
-            const eventBucket = getFieldOfficerEventBucket(eventProject);
-
-            return (
-              <TouchableOpacity
-                key={eventProject.id}
-                style={styles.fieldOfficerEventCard}
-                onPress={() => {
-                  setSelectedManagedEventId(eventProject.id);
-                  setShowFieldOfficerBoard(true);
-                }}
-              >
-                <View style={styles.fieldOfficerEventTopRow}>
-                  <View style={styles.fieldOfficerEventCopy}>
-                    <View style={styles.fieldOfficerEventTitleRow}>
-                      <Text style={styles.fieldOfficerEventTitle}>{eventProject.title}</Text>
-                      <View style={styles.fieldOfficerEventStatusBadge}>
-                        <Text style={styles.fieldOfficerEventStatusText}>{eventBucket}</Text>
-                      </View>
-                    </View>
-                    {parentProgramTitle ? (
-                      <Text style={styles.fieldOfficerEventProgram} numberOfLines={1}>
-                        Program: {parentProgramTitle}
-                      </Text>
-                    ) : null}
-                    <Text style={styles.fieldOfficerEventMeta}>
-                      {formatEventDateLabel(eventProject.startDate, eventProject.endDate)}
-                    </Text>
-                    <Text style={styles.fieldOfficerEventMeta} numberOfLines={1}>
-                      {eventProject.location.address}
-                    </Text>
-                  </View>
-                  <MaterialIcons name="supervisor-account" size={22} color="#166534" />
-                </View>
-
-                <View style={styles.fieldOfficerMetricsRow}>
-                  <View style={styles.fieldOfficerMetricCard}>
-                    <Text style={styles.fieldOfficerMetricValue}>{eventProject.volunteers.length}</Text>
-                    <Text style={styles.fieldOfficerMetricLabel}>joined volunteers</Text>
-                  </View>
-                  <View style={styles.fieldOfficerMetricCard}>
-                    <Text style={styles.fieldOfficerMetricValue}>{assignedTaskCount}</Text>
-                    <Text style={styles.fieldOfficerMetricLabel}>assigned tasks</Text>
-                  </View>
-                  <View style={styles.fieldOfficerMetricCard}>
-                    <Text style={styles.fieldOfficerMetricValue}>{unassignedTaskCount}</Text>
-                    <Text style={styles.fieldOfficerMetricLabel}>open tasks</Text>
-                  </View>
-                </View>
-
-                <View style={styles.fieldOfficerOpenRow}>
-                  <Text style={styles.fieldOfficerOpenText}>Open assignment board</Text>
-                  <MaterialIcons name="chevron-right" size={20} color="#166534" />
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-
-          {filteredFieldOfficerEvents.length === 0 ? (
-            <View style={styles.fieldOfficerEmptyState}>
-              <Text style={styles.fieldOfficerEmptyTitle}>No events in this filter</Text>
-              <Text style={styles.fieldOfficerEmptyText}>
-                Try another filter to review the rest of your field officer events.
-              </Text>
-            </View>
-          ) : null}
-
-          {hiddenFieldOfficerEventCount > 0 ? (
-            <TouchableOpacity
-              style={styles.fieldOfficerToggleButton}
-              onPress={() => setShowAllFieldOfficerEvents(true)}
-            >
-              <Text style={styles.fieldOfficerToggleButtonText}>
-                Show {hiddenFieldOfficerEventCount} more event
-                {hiddenFieldOfficerEventCount === 1 ? '' : 's'}
-              </Text>
-            </TouchableOpacity>
-          ) : null}
-
-          {showAllFieldOfficerEvents && filteredFieldOfficerEvents.length > 3 ? (
-            <TouchableOpacity
-              style={styles.fieldOfficerToggleButton}
-              onPress={() => setShowAllFieldOfficerEvents(false)}
-            >
-              <Text style={styles.fieldOfficerToggleButtonText}>Show fewer events</Text>
-            </TouchableOpacity>
-          ) : null}
+          {renderTaskSectionCard(fieldOfficerEventsSection)}
         </View>
       ) : null}
 
@@ -1135,133 +1626,132 @@ export default function VolunteerTasksScreen({ navigation }: any) {
         </View>
       ) : (
         <>
-          <View style={styles.filterContainer}>
-            {(['All', 'Assigned', 'In Progress', 'Completed'] as const).map(status => (
-              <TouchableOpacity
-                key={status}
-                style={[styles.filterButton, filterStatus === status && styles.filterButtonActive]}
-                onPress={() => setFilterStatus(status as any)}
-              >
-                <Text
-                  style={[
-                    styles.filterButtonText,
-                    filterStatus === status && styles.filterButtonTextActive,
-                  ]}
-                >
-                  {filterOptionLabels[status]}
-                </Text>
-              </TouchableOpacity>
-            ))}
+          <View style={styles.taskFilterSummaryCard}>
+            <Text style={styles.taskFilterSummaryTitle}>Current Task Filter</Text>
+            <Text style={styles.taskFilterSummaryText}>
+              {FILTER_OPTION_LABELS[filterStatus]} ({groupedFilteredTasks.length})
+            </Text>
           </View>
 
           <View style={styles.taskListContent}>
-            {groupedFilteredTasks.map(group => {
-              const project = allProjects.find(entry => entry.id === group.projectId) || null;
-              const assignedTaskCount = group.tasks.filter(task => task.status === 'Assigned').length;
-              const joinedVolunteerCount = project?.volunteers?.length || 0;
-              const eventAddress = project?.location.address || 'Event details available inside';
-              const eventLogs = allVolunteerTimeLogs.filter(log => log.projectId === group.projectId);
-              const attendanceCount = eventLogs.filter(log => Boolean(log.timeOut)).length;
-              const totalVolunteerMinutes = eventLogs.reduce(
-                (sum, log) => sum + getCompletedLogMinutes(log),
-                0
-              );
-              const eventStatus = project ? getProjectDisplayStatus(project) : 'Planning';
-
-              return (
-                <TouchableOpacity
-                  key={group.projectId}
-                  style={styles.taskGroupCard}
-                  activeOpacity={0.88}
-                  onPress={() => {
-                    setSelectedTaskGroupProjectId(group.projectId);
-                    setShowTaskGroupDetails(true);
-                  }}
-                >
-                  <View style={styles.taskGroupHeader}>
-                    <View style={styles.taskGroupCopy}>
-                      <Text style={styles.taskGroupTitle} numberOfLines={2}>{group.projectTitle}</Text>
-                      <Text style={styles.taskGroupMeta} numberOfLines={1}>
-                        {group.tasks.length} task{group.tasks.length === 1 ? '' : 's'} in this event
-                      </Text>
-                    </View>
-                    <View style={styles.taskGroupBadge}>
-                      <Text style={styles.taskGroupBadgeText}>Open</Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.taskGroupMetaRow}>
-                    <View style={styles.taskGroupMetaChip}>
-                      <MaterialIcons name="calendar-month" size={14} color="#166534" />
-                      <Text style={styles.taskGroupMetaChipText} numberOfLines={1}>
-                        {project
-                          ? formatEventDateLabel(project.startDate, project.endDate)
-                          : 'Schedule pending'}
-                      </Text>
-                    </View>
-                    <View style={styles.taskGroupMetaChip}>
-                      <MaterialIcons name="groups" size={14} color="#166534" />
-                      <Text style={styles.taskGroupMetaChipText} numberOfLines={1}>
-                        {joinedVolunteerCount} volunteer{joinedVolunteerCount === 1 ? '' : 's'}
-                      </Text>
-                    </View>
-                    <View style={styles.taskGroupMetaChip}>
-                      <MaterialIcons name="location-on" size={14} color="#166534" />
-                      <Text style={styles.taskGroupMetaChipText} numberOfLines={1}>
-                        {eventAddress}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.taskGroupStatRow}>
-                    <View style={styles.taskGroupStatCard}>
-                      <Text
-                        style={styles.taskGroupStatValue}
-                        numberOfLines={2}
-                        adjustsFontSizeToFit
-                        minimumFontScale={0.7}
-                      >
-                        {attendanceCount}
-                      </Text>
-                      <Text style={styles.taskGroupStatLabel}>Attendance</Text>
-                    </View>
-                    <View style={styles.taskGroupStatCard}>
-                      <Text
-                        style={styles.taskGroupStatValue}
-                        numberOfLines={2}
-                        adjustsFontSizeToFit
-                        minimumFontScale={0.7}
-                      >
-                        {formatVolunteerTime(totalVolunteerMinutes)}
-                      </Text>
-                      <Text style={styles.taskGroupStatLabel}>Volunteer Time</Text>
-                    </View>
-                    <View style={styles.taskGroupStatCard}>
-                      <Text
-                        style={styles.taskGroupStatValue}
-                        numberOfLines={2}
-                        adjustsFontSizeToFit
-                        minimumFontScale={0.65}
-                      >
-                        {eventStatus}
-                      </Text>
-                      <Text style={styles.taskGroupStatLabel}>Event Status</Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.taskGroupFooter}>
-                    <Text style={styles.taskGroupFooterText}>Tap to view this event page</Text>
-                    <MaterialIcons name="chevron-right" size={18} color="#166534" />
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
+            {renderTaskSectionCard(taskGroupsSection)}
           </View>
         </>
       )}
       </>
       ) : null}
       </ScrollView>
+
+      <Modal
+        animationType="slide"
+        transparent
+        visible={Boolean(selectedTaskSection)}
+        onRequestClose={() => setSelectedTaskSection(null)}
+      >
+        <View style={styles.centeredView}>
+          <View style={styles.modalView}>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => setSelectedTaskSection(null)}
+            >
+              <MaterialIcons name="close" size={28} color="#333" />
+            </TouchableOpacity>
+
+            <ScrollView style={styles.modalContent} contentContainerStyle={styles.sectionModalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalEyebrow}>
+                  {selectedTaskSection?.eyebrow || 'Task List'}
+                </Text>
+                <Text style={styles.modalTitle}>{selectedTaskSection?.title || 'Items'}</Text>
+                <Text style={styles.taskSectionModalDescription}>
+                  {selectedTaskSection?.items.length
+                    ? selectedTaskSection.subtitle
+                    : selectedTaskSection?.emptyText || 'No items available.'}
+                </Text>
+              </View>
+
+              {selectedTaskSection?.id === 'assigned-events' ? (
+                <View style={styles.filterContainer}>
+                  {(['All', 'Assigned', 'In Progress', 'Completed'] as const).map(status => (
+                    <TouchableOpacity
+                      key={status}
+                      style={[styles.filterButton, filterStatus === status && styles.filterButtonActive]}
+                      onPress={() => setFilterStatus(status)}
+                    >
+                      <Text
+                        style={[
+                          styles.filterButtonText,
+                          filterStatus === status && styles.filterButtonTextActive,
+                        ]}
+                      >
+                        {FILTER_OPTION_LABELS[status]}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+
+              {selectedTaskSection?.id === 'field-officer-events' ? (
+                <View style={styles.fieldOfficerFilterRow}>
+                  {(['All', 'Active', 'Upcoming', 'Completed'] as const).map(option => (
+                    <TouchableOpacity
+                      key={option}
+                      style={[
+                        styles.fieldOfficerFilterButton,
+                        fieldOfficerFilter === option && styles.fieldOfficerFilterButtonActive,
+                      ]}
+                      onPress={() => setFieldOfficerFilter(option)}
+                    >
+                      <Text
+                        style={[
+                          styles.fieldOfficerFilterButtonText,
+                          fieldOfficerFilter === option && styles.fieldOfficerFilterButtonTextActive,
+                        ]}
+                      >
+                        {option} ({fieldOfficerEventCounts[option]})
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+
+              {selectedTaskSection?.id === 'assigned-events' ? (
+                groupedFilteredTasks.length ? (
+                  <View style={styles.taskListContent}>
+                    {groupedFilteredTasks.map(group => renderTaskGroupCard(group))}
+                  </View>
+                ) : (
+                  <View style={styles.fieldOfficerEmptyState}>
+                    <Text style={styles.fieldOfficerEmptyTitle}>
+                      {selectedTaskSection.emptyTitle}
+                    </Text>
+                    <Text style={styles.fieldOfficerEmptyText}>
+                      {selectedTaskSection.emptyText}
+                    </Text>
+                  </View>
+                )
+              ) : null}
+
+              {selectedTaskSection?.id === 'field-officer-events' ? (
+                filteredFieldOfficerEvents.length ? (
+                  <View style={styles.taskListContent}>
+                    {filteredFieldOfficerEvents.map(eventProject => renderFieldOfficerEventCard(eventProject))}
+                  </View>
+                ) : (
+                  <View style={styles.fieldOfficerEmptyState}>
+                    <Text style={styles.fieldOfficerEmptyTitle}>
+                      {selectedTaskSection.emptyTitle}
+                    </Text>
+                    <Text style={styles.fieldOfficerEmptyText}>
+                      {selectedTaskSection.emptyText}
+                    </Text>
+                  </View>
+                )
+              ) : null}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         animationType="slide"
@@ -1314,18 +1804,14 @@ export default function VolunteerTasksScreen({ navigation }: any) {
                           <View
                             style={[
                               styles.attendanceStatusBadge,
-                              attendanceState.canTimeOut
+                              attendanceState.hasConfirmedToday
                                 ? styles.attendanceStatusBadgeActive
-                                : attendanceState.hasLoggedToday
-                                ? styles.attendanceStatusBadgeDone
                                 : styles.attendanceStatusBadgeIdle,
                             ]}
                           >
                             <Text style={styles.attendanceStatusText}>
-                              {attendanceState.canTimeOut
-                                ? 'Timed In'
-                                : attendanceState.hasLoggedToday
-                                ? 'Done Today'
+                              {attendanceState.hasConfirmedToday
+                                ? 'Confirmed'
                                 : attendanceState.eventHasEnded
                                 ? 'Closed'
                                 : 'Ready'}
@@ -1342,18 +1828,22 @@ export default function VolunteerTasksScreen({ navigation }: any) {
                             <Text style={styles.attendanceLogLabel}>Latest activity</Text>
                             <Text style={styles.attendanceLogValue}>
                               {attendanceState.latestLog
-                                ? attendanceState.latestLog.timeOut
-                                  ? `Time out ${formatTimestamp(attendanceState.latestLog.timeOut)}`
-                                  : `Time in ${formatTimestamp(attendanceState.latestLog.timeIn)}`
+                                ? `Confirmed ${formatTimestamp(
+                                    attendanceState.latestLog.attendanceConfirmedAt ||
+                                      attendanceState.latestLog.timeIn
+                                  )}`
                                 : 'No attendance yet'}
                             </Text>
                           </View>
                           <View style={styles.attendanceLogItem}>
                             <Text style={styles.attendanceLogLabel}>Today</Text>
                             <Text style={styles.attendanceLogValue}>
-                              {attendanceState.activeLog
-                                ? `Active since ${formatTimestamp(attendanceState.activeLog.timeIn)}`
-                                : attendanceState.hasLoggedToday
+                              {attendanceState.todayLog
+                                ? `Confirmed ${formatTimestamp(
+                                    attendanceState.todayLog.attendanceConfirmedAt ||
+                                      attendanceState.todayLog.timeIn
+                                  )}`
+                                : attendanceState.hasConfirmedToday
                                 ? 'Completed for today'
                                 : 'Not started'}
                             </Text>
@@ -1365,35 +1855,20 @@ export default function VolunteerTasksScreen({ navigation }: any) {
                             style={[
                               styles.attendanceButton,
                               styles.timeInButton,
-                              !attendanceState.canTimeIn && styles.attendanceButtonDisabled,
+                              !attendanceState.canConfirmAttendance && styles.attendanceButtonDisabled,
                             ]}
-                            onPress={() => void handleTimeInForProject(selectedTaskGroup.projectId)}
-                            disabled={!attendanceState.canTimeIn}
+                            onPress={() => void handleConfirmAttendanceForProject(selectedTaskGroup.projectId)}
+                            disabled={!attendanceState.canConfirmAttendance}
                           >
-                            <MaterialIcons name="login" size={18} color="#fff" />
+                            <MaterialIcons name="verified-user" size={18} color="#fff" />
                             <Text style={styles.attendanceButtonText}>
                               {attendanceState.eventHasNotStarted
                                 ? 'Await Start'
-                                : attendanceState.hasLoggedToday
+                                : attendanceState.hasConfirmedToday
                                 ? 'Done Today'
                                 : attendanceState.eventHasEnded
                                 ? 'Closed'
-                                : 'Time In'}
-                            </Text>
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            style={[
-                              styles.attendanceButton,
-                              styles.timeOutButton,
-                              !attendanceState.canTimeOut && styles.attendanceButtonDisabled,
-                            ]}
-                            onPress={() => handleOpenTimeOutReport(selectedTaskGroup.projectId)}
-                            disabled={!attendanceState.canTimeOut}
-                          >
-                            <MaterialIcons name="logout" size={18} color="#fff" />
-                            <Text style={styles.attendanceButtonText}>
-                              {attendanceState.canTimeOut ? 'Time Out' : 'Report First'}
+                                : 'Confirm Attendance'}
                             </Text>
                           </TouchableOpacity>
                         </View>
@@ -1670,68 +2145,280 @@ export default function VolunteerTasksScreen({ navigation }: any) {
                 </View>
 
                 <View style={styles.infoSection}>
-                  <Text style={styles.infoLabel}>Volunteer Task Assignments</Text>
+                  <Text style={styles.infoLabel}>Attendance Checker</Text>
                   <Text style={styles.descriptionText}>
-                    You can assign joined volunteers to event tasks from your mobile side. Field officer role tasks stay locked for admin control.
+                    Review attendance uploads for this event here. Only the assigned field officer can mark each record.
                   </Text>
 
-                  {(selectedManagedEvent.internalTasks || []).map(eventTask => (
-                    <View key={eventTask.id} style={styles.assignmentCard}>
-                      <View style={styles.assignmentHeader}>
-                        <View style={styles.assignmentCopy}>
-                          <Text style={styles.assignmentTitle}>{eventTask.title}</Text>
-                          <Text style={styles.assignmentMeta}>
-                            {eventTask.assignedVolunteerName || 'Unassigned'}
-                          </Text>
-                          <Text style={styles.assignmentMeta}>{eventTask.status}</Text>
-                        </View>
-                        {eventTask.isFieldOfficer ? (
-                          <View style={styles.assignmentLockBadge}>
-                            <MaterialIcons name="lock" size={14} color="#92400e" />
-                            <Text style={styles.assignmentLockText}>Admin controlled</Text>
-                          </View>
-                        ) : null}
-                      </View>
-
-                      {eventTask.isFieldOfficer ? (
-                        <Text style={styles.fieldOfficerHintText}>
-                          This task marks the volunteer who manages the event team.
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.attendanceDatePickerRow}
+                  >
+                    {managedEventAttendanceDateKeys.map(dateKey => (
+                      <TouchableOpacity
+                        key={`managed-attendance-date-${dateKey}`}
+                        style={[
+                          styles.attendanceDateChip,
+                          resolvedManagedAttendanceDateKey === dateKey && styles.attendanceDateChipActive,
+                        ]}
+                        onPress={() => setSelectedManagedAttendanceDateKey(dateKey)}
+                        activeOpacity={0.85}
+                      >
+                        <Text
+                          style={[
+                            styles.attendanceDateChipText,
+                            resolvedManagedAttendanceDateKey === dateKey && styles.attendanceDateChipTextActive,
+                          ]}
+                        >
+                          {new Date(`${dateKey}T00:00:00`).toLocaleDateString(undefined, {
+                            month: 'short',
+                            day: 'numeric',
+                          })}
                         </Text>
-                      ) : (
-                        <View style={styles.assignmentButtonGroup}>
-                          <TouchableOpacity
-                            style={styles.assignmentButton}
-                            onPress={() => void handleAssignEventTask(selectedManagedEvent, eventTask.id)}
-                          >
-                            <Text style={styles.assignmentButtonText}>Unassign</Text>
-                          </TouchableOpacity>
-                          {managedEventVolunteerOptions.map(volunteer => (
-                            <TouchableOpacity
-                              key={`${eventTask.id}-${volunteer.id}`}
-                              style={[
-                                styles.assignmentButton,
-                                eventTask.assignedVolunteerId === volunteer.id &&
-                                  styles.assignmentButtonActive,
-                              ]}
-                              onPress={() =>
-                                void handleAssignEventTask(selectedManagedEvent, eventTask.id, volunteer.id)
-                              }
-                            >
-                              <Text
-                                style={[
-                                  styles.assignmentButtonText,
-                                  eventTask.assignedVolunteerId === volunteer.id &&
-                                    styles.assignmentButtonTextActive,
-                                ]}
-                              >
-                                {volunteer.name}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      )}
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  <View style={styles.attendanceBoardSummaryRow}>
+                    <View style={styles.attendanceBoardSummaryCard}>
+                      <Text style={styles.attendanceBoardSummaryLabel}>Selected Day</Text>
+                      <Text style={styles.attendanceBoardSummaryValue}>
+                        {new Date(`${resolvedManagedAttendanceDateKey}T00:00:00`).toLocaleDateString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                        })}
+                      </Text>
                     </View>
-                  ))}
+                    <View style={styles.attendanceBoardSummaryCard}>
+                      <Text style={styles.attendanceBoardSummaryLabel}>Uploads</Text>
+                      <Text style={styles.attendanceBoardSummaryValue}>{managedEventSelectedDateUploadCount}</Text>
+                    </View>
+                    <View style={styles.attendanceBoardSummaryCard}>
+                      <Text style={styles.attendanceBoardSummaryLabel}>Marked</Text>
+                      <Text style={styles.attendanceBoardSummaryValue}>{managedEventSelectedDateCheckedCount}</Text>
+                    </View>
+                  </View>
+
+                  {managedEventAttendanceEntries.length ? (
+                    managedEventAttendanceEntries.map(entry => (
+                      <View key={`attendance-${entry.volunteer.id}`} style={styles.attendanceReviewCard}>
+                        <View style={styles.assignmentHeader}>
+                          <View style={styles.assignmentCopy}>
+                            <Text style={styles.assignmentTitle}>{entry.volunteer.name}</Text>
+                            <Text style={styles.assignmentMeta}>
+                              {entry.volunteer.email || 'No email on file'}
+                            </Text>
+                            <Text style={styles.assignmentMeta}>
+                              Selected day records: {entry.logs.length}
+                            </Text>
+                          </View>
+                          <View style={styles.attendanceReviewStatusBadge}>
+                            <MaterialIcons name="verified-user" size={16} color="#166534" />
+                            <Text style={styles.attendanceReviewStatusBadgeText}>
+                              {entry.logs.some(log => Boolean(log.attendanceCheckedAt))
+                                ? 'Marked'
+                                : entry.logs.length
+                                ? 'Needs Review'
+                                : 'No Upload'}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {entry.logs.length ? (
+                          entry.logs.map(log => (
+                            <View key={log.id} style={styles.attendanceReviewLogCard}>
+                              <Text style={styles.attendanceReviewLabel}>Confirmed At</Text>
+                              <Text style={styles.attendanceReviewValue}>
+                                {formatTimestamp(log.attendanceConfirmedAt || log.timeIn)}
+                              </Text>
+                              <Text style={styles.attendanceReviewLabel}>Marked Status</Text>
+                              <Text style={styles.attendanceReviewValue}>
+                                {log.attendanceCheckedAt
+                                  ? `Marked by ${log.attendanceCheckedByName || 'Field Officer'} on ${formatTimestamp(
+                                      log.attendanceCheckedAt
+                                    )}`
+                                  : 'Not marked yet'}
+                              </Text>
+
+                              {(log.attendancePhoto || log.completionPhoto) &&
+                              isImageMediaUri(log.attendancePhoto || log.completionPhoto) ? (
+                                <Image
+                                  source={{ uri: log.attendancePhoto || log.completionPhoto || '' }}
+                                  style={styles.attendanceReviewImage}
+                                  resizeMode="cover"
+                                />
+                              ) : (
+                                <Text style={styles.attendanceReviewEmptyPhoto}>No photo available</Text>
+                              )}
+
+                              <TouchableOpacity
+                                style={[
+                                  styles.attendanceReviewButton,
+                                  log.attendanceCheckedAt && styles.attendanceReviewButtonActive,
+                                ]}
+                                onPress={() =>
+                                  void handleToggleAttendanceCheck(log, !Boolean(log.attendanceCheckedAt))
+                                }
+                                activeOpacity={0.85}
+                              >
+                                {actionLoadingKey === `attendance-check-${log.id}` ? (
+                                  <ActivityIndicator size="small" color="#ffffff" />
+                                ) : (
+                                  <Text style={styles.attendanceReviewButtonText}>
+                                    {log.attendanceCheckedAt ? 'Remove Mark' : 'Mark Attendance'}
+                                  </Text>
+                                )}
+                              </TouchableOpacity>
+                            </View>
+                          ))
+                        ) : (
+                          <Text style={styles.fieldOfficerHintText}>
+                            No attendance upload yet for this volunteer.
+                          </Text>
+                        )}
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.fieldOfficerHintText}>
+                      No joined volunteers are available for attendance marking yet.
+                    </Text>
+                  )}
+                </View>
+
+                <View style={styles.infoSection}>
+                  <Text style={styles.infoLabel}>Volunteer Task Assignments</Text>
+                  <Text style={styles.descriptionText}>
+                    Open one task card at a time to manage assignments. Single tap a volunteer to assign. Tap an assigned volunteer again to remove.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.sectionSummaryCard}
+                    activeOpacity={0.88}
+                    onPress={() => setShowManagedTaskAssignments(current => !current)}
+                  >
+                    <View style={styles.sectionSummaryHeader}>
+                      <View style={styles.sectionSummaryHeaderCopy}>
+                        <Text style={styles.sectionSummaryEyebrow}>Assignments</Text>
+                        <Text style={styles.sectionSummaryTitle}>Volunteer Task Assignments</Text>
+                      </View>
+                      <View style={styles.sectionSummaryCountBadge}>
+                        <Text style={styles.sectionSummaryCountText}>
+                          {(selectedManagedEvent.internalTasks || []).length} task{(selectedManagedEvent.internalTasks || []).length === 1 ? '' : 's'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <Text style={styles.sectionSummarySubtitle}>
+                      Tap to {showManagedTaskAssignments ? 'hide' : 'open'} the task assignment details for this event.
+                    </Text>
+
+                    <View style={styles.sectionSummaryFooter}>
+                      <Text style={styles.sectionSummaryFooterText}>
+                        {showManagedTaskAssignments ? 'Tap to collapse details' : 'Tap to view details'}
+                      </Text>
+                      <MaterialIcons
+                        name={showManagedTaskAssignments ? 'expand-less' : 'chevron-right'}
+                        size={18}
+                        color="#166534"
+                      />
+                    </View>
+                  </TouchableOpacity>
+
+                  {showManagedTaskAssignments ? (
+                    (selectedManagedEvent.internalTasks || []).map(eventTask => (
+                      <TouchableOpacity
+                        key={eventTask.id}
+                        style={styles.assignmentCard}
+                        activeOpacity={0.88}
+                        onPress={() =>
+                          setExpandedManagedTaskId(current => (current === eventTask.id ? null : eventTask.id))
+                        }
+                      >
+                        <View style={styles.assignmentHeader}>
+                          <View style={styles.assignmentCopy}>
+                            <Text style={styles.assignmentTitle}>{eventTask.title}</Text>
+                            <Text style={styles.assignmentMeta}>
+                              {getTaskAssignedVolunteerNames(eventTask).length
+                                ? getTaskAssignedVolunteerNames(eventTask).join(', ')
+                                : 'Unassigned'}
+                            </Text>
+                            <Text style={styles.assignmentMeta}>{eventTask.status}</Text>
+                          </View>
+                          <View style={styles.assignmentHeaderActions}>
+                            {eventTask.isFieldOfficer ? (
+                              <View style={styles.assignmentLockBadge}>
+                                <MaterialIcons name="lock" size={14} color="#92400e" />
+                                <Text style={styles.assignmentLockText}>Admin controlled</Text>
+                              </View>
+                            ) : (
+                              <View style={styles.assignmentCountBadge}>
+                                <Text style={styles.assignmentCountBadgeText}>
+                                  {getTaskAssignedVolunteerIds(eventTask).length} assigned
+                                </Text>
+                              </View>
+                            )}
+                            <MaterialIcons
+                              name={expandedManagedTaskId === eventTask.id ? 'expand-less' : 'expand-more'}
+                              size={20}
+                              color="#166534"
+                            />
+                          </View>
+                        </View>
+
+                        {expandedManagedTaskId === eventTask.id ? (
+                          eventTask.isFieldOfficer ? (
+                            <Text style={styles.fieldOfficerHintText}>
+                              This task marks the volunteer who manages the event team.
+                            </Text>
+                          ) : (
+                            <View style={styles.assignmentDetailsPanel}>
+                              <Text style={styles.assignmentDetailLabel}>Task Description</Text>
+                              <Text style={styles.descriptionText}>
+                                {eventTask.description || 'No task description provided.'}
+                              </Text>
+                              <Text style={styles.assignmentDetailLabel}>Assigned Volunteers</Text>
+                              <Text style={styles.assignmentMeta}>
+                                {getTaskAssignedVolunteerNames(eventTask).length
+                                  ? getTaskAssignedVolunteerNames(eventTask).join(', ')
+                                  : 'No volunteers assigned yet.'}
+                              </Text>
+                              <View style={styles.assignmentButtonGroup}>
+                                {managedEventVolunteerOptions.map(volunteer => {
+                                  const isAssigned = isVolunteerAssignedToTask(eventTask, volunteer.id);
+                                  return (
+                                    <TouchableOpacity
+                                      key={`${eventTask.id}-${volunteer.id}`}
+                                      style={[
+                                        styles.assignmentButton,
+                                        isAssigned && styles.assignmentButtonActive,
+                                      ]}
+                                      onPress={() => handleTaskVolunteerChipPress(eventTask, volunteer)}
+                                    >
+                                      <Text
+                                        style={[
+                                          styles.assignmentButtonText,
+                                          isAssigned && styles.assignmentButtonTextActive,
+                                        ]}
+                                      >
+                                        {volunteer.name}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  );
+                                })}
+                              </View>
+                              <Text style={styles.fieldOfficerHintText}>
+                                Single tap adds the volunteer. Tap an assigned volunteer chip again to remove that volunteer from this task.
+                              </Text>
+                            </View>
+                          )
+                        ) : (
+                          <View style={styles.assignmentCardFooter}>
+                            <Text style={styles.fieldOfficerHintText}>Tap to open assignment details</Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                    ))
+                  ) : null}
                 </View>
               </ScrollView>
             ) : null}
@@ -1746,6 +2433,35 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
+  },
+  attendanceNoticeOverlay: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    right: 12,
+    zIndex: 40,
+    alignItems: 'center',
+  },
+  attendanceNoticeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#86efac',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    shadowColor: '#166534',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  attendanceNoticeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#166534',
   },
   scrollContent: {
     flex: 1,
@@ -2065,6 +2781,69 @@ const styles = StyleSheet.create({
     lineHeight: 11,
     textAlign: 'center',
   },
+  sectionSummaryCard: {
+    borderRadius: 18,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#dbe7df',
+    padding: 12,
+    gap: 10,
+  },
+  sectionSummaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  sectionSummaryHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  sectionSummaryEyebrow: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#166534',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  sectionSummaryTitle: {
+    marginTop: 4,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  sectionSummaryCountBadge: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    backgroundColor: '#f0fdf4',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  sectionSummaryCountText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#166534',
+  },
+  sectionSummarySubtitle: {
+    fontSize: 11,
+    lineHeight: 17,
+    color: '#475569',
+  },
+  sectionSummaryFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    paddingTop: 10,
+  },
+  sectionSummaryFooterText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#166534',
+  },
   centerContainer: {
     flex: 1,
     alignItems: 'center',
@@ -2133,6 +2912,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     gap: 10,
+  },
+  taskFilterSummaryCard: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    borderRadius: 14,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#d7e3dc',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  taskFilterSummaryTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  taskFilterSummaryText: {
+    marginTop: 6,
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#166534',
   },
   taskGroupCard: {
     borderRadius: 18,
@@ -2533,6 +3335,9 @@ const styles = StyleSheet.create({
   modalContent: {
     paddingHorizontal: 20,
   },
+  sectionModalContent: {
+    paddingBottom: 18,
+  },
   modalHeader: {
     marginBottom: 16,
   },
@@ -2549,6 +3354,11 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#0f172a',
     marginBottom: 12,
+  },
+  taskSectionModalDescription: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#475569',
   },
   modalHeaderBadges: {
     flexDirection: 'row',
@@ -2667,6 +3477,60 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     color: '#64748b',
   },
+  attendanceDatePickerRow: {
+    gap: 8,
+    paddingTop: 12,
+    paddingBottom: 4,
+    paddingRight: 8,
+  },
+  attendanceDateChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#9fb4a6',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  attendanceDateChipActive: {
+    backgroundColor: '#166534',
+    borderColor: '#166534',
+  },
+  attendanceDateChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  attendanceDateChipTextActive: {
+    color: '#ffffff',
+  },
+  attendanceBoardSummaryRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 12,
+  },
+  attendanceBoardSummaryCard: {
+    minWidth: 96,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#dbe5ef',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  attendanceBoardSummaryLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.35,
+    marginBottom: 4,
+  },
+  attendanceBoardSummaryValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
   statusButtonGroup: {
     flexDirection: 'row',
     gap: 10,
@@ -2723,6 +3587,78 @@ const styles = StyleSheet.create({
     padding: 14,
     backgroundColor: '#f8fafc',
   },
+  attendanceReviewCard: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#b8cabc',
+    borderRadius: 16,
+    padding: 14,
+    backgroundColor: '#f8fafc',
+  },
+  attendanceReviewStatusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 999,
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  attendanceReviewStatusBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  attendanceReviewLogCard: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#dbe5ef',
+    borderRadius: 14,
+    padding: 12,
+    backgroundColor: '#ffffff',
+  },
+  attendanceReviewLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.35,
+    marginBottom: 4,
+  },
+  attendanceReviewValue: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#0f172a',
+    marginBottom: 10,
+  },
+  attendanceReviewImage: {
+    width: '100%',
+    height: 180,
+    borderRadius: 12,
+    backgroundColor: '#e2e8f0',
+    marginBottom: 12,
+  },
+  attendanceReviewEmptyPhoto: {
+    fontSize: 12,
+    color: '#64748b',
+    marginBottom: 12,
+  },
+  attendanceReviewButton: {
+    borderRadius: 12,
+    backgroundColor: '#166534',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attendanceReviewButtonActive: {
+    backgroundColor: '#0f766e',
+  },
+  attendanceReviewButtonText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
   assignmentTitle: {
     fontSize: 13,
     fontWeight: '700',
@@ -2733,6 +3669,10 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 12,
+  },
+  assignmentHeaderActions: {
+    alignItems: 'flex-end',
+    gap: 8,
   },
   assignmentCopy: {
     flex: 1,
@@ -2755,6 +3695,34 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: '#92400e',
+  },
+  assignmentCountBadge: {
+    borderRadius: 999,
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  assignmentCountBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  assignmentDetailsPanel: {
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#dbe7df',
+    paddingTop: 12,
+  },
+  assignmentDetailLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.35,
+    marginBottom: 4,
+  },
+  assignmentCardFooter: {
+    marginTop: 6,
   },
   assignmentButtonGroup: {
     flexDirection: 'row',

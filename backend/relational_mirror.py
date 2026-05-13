@@ -389,10 +389,20 @@ RELATIONAL_TABLE_DDL = [
       time_in text,
       time_out text,
       note text,
+      attendance_photo text,
+      attendance_confirmed_at text,
+      attendance_checked_at text,
+      attendance_checked_by text,
+      attendance_checked_by_name text,
       completion_photo text,
       completion_report text
     )
     """,
+    "alter table volunteer_time_logs add column if not exists attendance_photo text",
+    "alter table volunteer_time_logs add column if not exists attendance_confirmed_at text",
+    "alter table volunteer_time_logs add column if not exists attendance_checked_at text",
+    "alter table volunteer_time_logs add column if not exists attendance_checked_by text",
+    "alter table volunteer_time_logs add column if not exists attendance_checked_by_name text",
     "create index if not exists volunteer_time_logs_volunteer_id_idx on volunteer_time_logs (volunteer_id)",
     "create index if not exists volunteer_time_logs_project_id_idx on volunteer_time_logs (project_id)",
     "create index if not exists volunteer_time_logs_time_in_idx on volunteer_time_logs (time_in)",
@@ -779,6 +789,11 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             ("time_in", False),
             ("time_out", False),
             ("note", False),
+            ("attendance_photo", False),
+            ("attendance_confirmed_at", False),
+            ("attendance_checked_at", False),
+            ("attendance_checked_by", False),
+            ("attendance_checked_by_name", False),
             ("completion_photo", False),
             ("completion_report", False),
         ],
@@ -964,6 +979,11 @@ FIELD_NAME_MAPS: dict[str, dict[str, str]] = {
         "projectId": "project_id",
         "timeIn": "time_in",
         "timeOut": "time_out",
+        "attendancePhoto": "attendance_photo",
+        "attendanceConfirmedAt": "attendance_confirmed_at",
+        "attendanceCheckedAt": "attendance_checked_at",
+        "attendanceCheckedBy": "attendance_checked_by",
+        "attendanceCheckedByName": "attendance_checked_by_name",
         "completionPhoto": "completion_photo",
         "completionReport": "completion_report",
     },
@@ -1428,6 +1448,11 @@ def _normalize_row(key: str, item: dict[str, Any]) -> tuple[Any, ...]:
             item.get("timeIn"),
             item.get("timeOut"),
             item.get("note"),
+            item.get("attendancePhoto"),
+            item.get("attendanceConfirmedAt"),
+            item.get("attendanceCheckedAt"),
+            item.get("attendanceCheckedBy"),
+            item.get("attendanceCheckedByName"),
             item.get("completionPhoto"),
             item.get("completionReport"),
         )
@@ -1780,6 +1805,11 @@ def _row_to_item(key: str, row: dict[str, Any]) -> dict[str, Any]:
             "timeIn": row["time_in"],
             "timeOut": row["time_out"],
             "note": row["note"],
+            "attendancePhoto": row["attendance_photo"],
+            "attendanceConfirmedAt": row["attendance_confirmed_at"],
+            "attendanceCheckedAt": row["attendance_checked_at"],
+            "attendanceCheckedBy": row["attendance_checked_by"],
+            "attendanceCheckedByName": row["attendance_checked_by_name"],
             "completionPhoto": row["completion_photo"],
             "completionReport": row["completion_report"],
         }
@@ -2055,6 +2085,59 @@ def ensure_named_primary_key_columns(connection: Any) -> None:
                     )
 
 
+def ensure_volunteer_time_logs_table_shape(connection: Any) -> None:
+    primary_key_column = _table_primary_key_column("volunteer_time_logs")
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            create table if not exists volunteer_time_logs (
+              {primary_key_column} text primary key,
+              volunteer_id text,
+              project_id text,
+              time_in text,
+              time_out text,
+              note text,
+              attendance_photo text,
+              attendance_confirmed_at text,
+              attendance_checked_at text,
+              attendance_checked_by text,
+              attendance_checked_by_name text,
+              completion_photo text,
+              completion_report text
+            )
+            """
+        )
+        cursor.execute(
+            """
+            select column_name, data_type
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'volunteer_time_logs'
+              and column_name in ('id', %s)
+            """,
+            (primary_key_column,),
+        )
+        rows = cursor.fetchall()
+        columns = {row[0]: row[1] for row in rows}
+        if "id" in columns and primary_key_column not in columns:
+            cursor.execute("alter table volunteer_time_logs alter column id drop identity if exists")
+            if columns.get("id") != "text":
+                cursor.execute("alter table volunteer_time_logs alter column id type text using id::text")
+            cursor.execute(f"alter table volunteer_time_logs rename column id to {primary_key_column}")
+        elif primary_key_column in columns and columns.get(primary_key_column) != "text":
+            cursor.execute(
+                f"""
+                alter table volunteer_time_logs
+                alter column {primary_key_column} type text using {primary_key_column}::text
+                """
+            )
+        cursor.execute("alter table volunteer_time_logs add column if not exists attendance_photo text")
+        cursor.execute("alter table volunteer_time_logs add column if not exists attendance_confirmed_at text")
+        cursor.execute("alter table volunteer_time_logs add column if not exists attendance_checked_at text")
+        cursor.execute("alter table volunteer_time_logs add column if not exists attendance_checked_by text")
+        cursor.execute("alter table volunteer_time_logs add column if not exists attendance_checked_by_name text")
+
+
 def ensure_relational_mirror_tables(connection: Any) -> None:
     import time as _time
     with connection.cursor() as cursor:
@@ -2135,13 +2218,18 @@ def get_relational_collection(connection: Any, key: str) -> list[dict[str, Any]]
             _trace(f"[TRACE] get_relational_collection: columns selected: {len(column_names)}")
             cursor.execute(query)
         except (UndefinedColumn, UndefinedTable) as exc:
-            # Schema mismatch - return empty list
+            # Schema mismatch - repair the table definition and retry once.
             try:
                 connection.rollback()
             except Exception:
                 pass
-            _trace(f"[WARN] get_relational_collection: schema mismatch for {spec['table']}: {exc}; returning empty list")
-            return []
+            _trace(f"[WARN] get_relational_collection: schema mismatch for {spec['table']}: {exc}; repairing and retrying")
+            if key == "volunteerTimeLogs":
+                ensure_volunteer_time_logs_table_shape(connection)
+            else:
+                ensure_relational_mirror_tables(connection)
+            connection.commit()
+            cursor.execute(query)
         except Exception as exc:
             # Query timeout or other errors - return empty list so app can continue
             try:
@@ -2247,6 +2335,8 @@ def upsert_relational_item(connection: Any, key: str, item: dict[str, Any]) -> d
     if not spec:
         raise KeyError(f"Unsupported relational mirror key: {key}")
 
+    from psycopg.errors import UndefinedColumn, UndefinedTable
+
     item_id = item.get("id")
     if not isinstance(item_id, str) or not item_id:
         raise ValueError(f"Relational storage key '{key}' expects an object with an id.")
@@ -2260,15 +2350,25 @@ def upsert_relational_item(connection: Any, key: str, item: dict[str, Any]) -> d
     ]
 
     with connection.cursor() as cursor:
-        cursor.execute(
-            f"""
+        statement = f"""
             insert into {spec['table']} ({', '.join(column_names)})
             values ({', '.join(placeholders)})
             on conflict ({primary_key_column}) do update set
               {', '.join(update_assignments)}
-            """,
-            row,
-        )
+            """
+        try:
+            cursor.execute(statement, row)
+        except (UndefinedColumn, UndefinedTable):
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+            if key == "volunteerTimeLogs":
+                ensure_volunteer_time_logs_table_shape(connection)
+            else:
+                ensure_relational_mirror_tables(connection)
+            connection.commit()
+            cursor.execute(statement, row)
     if key in {"programTracks", "projects", "events"}:
         refresh_program_rows_from_tracks(connection)
     if key in {"projects", "events"}:

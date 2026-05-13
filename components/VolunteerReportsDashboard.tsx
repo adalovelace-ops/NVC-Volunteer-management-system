@@ -112,6 +112,7 @@ export function VolunteerReportsDashboard({
           </View>
           <TouchableOpacity style={styles.uploadButton} onPress={onUploadReport}>
             <MaterialIcons name="add" size={20} color="#fff" />
+            <Text style={styles.uploadButtonText}>Add Report</Text>
           </TouchableOpacity>
         </View>
 
@@ -299,6 +300,7 @@ export function PartnerReportsDashboard({
             </TouchableOpacity>
             <TouchableOpacity style={styles.uploadButton} onPress={onUploadReport}>
               <MaterialIcons name="add" size={20} color="#fff" />
+              <Text style={styles.uploadButtonText}>Add Report</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -566,12 +568,19 @@ const styles = StyleSheet.create({
     color: '#64748b',
   },
   uploadButton: {
-    width: 44,
-    height: 44,
+    minHeight: 44,
     borderRadius: 10,
     backgroundColor: '#166534',
+    paddingHorizontal: 14,
     alignItems: 'center',
     justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  uploadButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
   },
   secondaryHeaderButton: {
     flexDirection: 'row',

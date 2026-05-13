@@ -14,7 +14,6 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  getAllProjects,
   getAllVolunteerTimeLogs,
   getProjectsScreenSnapshot,
   subscribeToStorageChanges,
@@ -67,12 +66,11 @@ export default function PartnerProjectsScreen({ route }: any) {
     }
 
     try {
-      const [allProjects, snapshot, allVolunteerTimeLogs] = await Promise.all([
-        getAllProjects(),
-        getProjectsScreenSnapshot(user, ['partnerApplications']),
+      const [snapshot, allVolunteerTimeLogs] = await Promise.all([
+        getProjectsScreenSnapshot(user, ['projects', 'partnerApplications']),
         getAllVolunteerTimeLogs(),
       ]);
-      setProjects(allProjects || []);
+      setProjects(snapshot.projects || []);
       setPartnerApplications(snapshot.partnerApplications || []);
       setVolunteerTimeLogs(allVolunteerTimeLogs || []);
       setLoadError(null);

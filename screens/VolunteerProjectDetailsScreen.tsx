@@ -16,15 +16,16 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import {
   getProject,
+  getVolunteerByUserId,
   getVolunteerProjectMatches,
-  getAllVolunteerTimeLogs,
+  getVolunteerTimeLogs,
   startVolunteerTimeLog,
-  endVolunteerTimeLog,
   subscribeToStorageChanges,
 } from '../models/storage';
 import { Project, Volunteer, VolunteerProjectMatch, VolunteerTimeLog } from '../models/types';
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
 import { getRequestErrorMessage } from '../utils/requestErrors';
+import { pickImageFromDevice } from '../utils/media';
 
 const PROGRAM_IMAGE_BY_CATEGORY: Record<Project['category'], ImageSourcePropType> = {
   Nutrition: require('../assets/programs/nutrition.jpg'),
@@ -52,6 +53,58 @@ function getLocalDateKey(value?: string, now: Date = new Date()): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function isVolunteerAssignedToTask(
+  task: { assignedVolunteerId?: string; assignedVolunteerIds?: string[] },
+  volunteerId?: string | null
+): boolean {
+  if (!volunteerId) {
+    return false;
+  }
+
+  const assignedVolunteerIds = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(task.assignedVolunteerIds) ? task.assignedVolunteerIds : []),
+        task.assignedVolunteerId,
+      ]
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+    )
+  );
+
+  return assignedVolunteerIds.includes(volunteerId);
+}
+
+function hasEventStartedForToday(startValue?: string, now: Date = new Date()): boolean {
+  if (!startValue) {
+    return true;
+  }
+
+  const startDate = new Date(startValue);
+  if (Number.isNaN(startDate.getTime())) {
+    return true;
+  }
+
+  const attendanceStart = new Date(startDate);
+  attendanceStart.setHours(9, 0, 0, 0);
+  return now >= attendanceStart;
+}
+
+function hasEventEndedForToday(endValue?: string, now: Date = new Date()): boolean {
+  if (!endValue) {
+    return false;
+  }
+
+  const endDate = new Date(endValue);
+  if (Number.isNaN(endDate.getTime())) {
+    return false;
+  }
+
+  const endOfDay = new Date(endDate);
+  endOfDay.setHours(23, 59, 59, 999);
+  return now > endOfDay;
 }
 
 export default function VolunteerProjectDetailsScreen({
@@ -85,24 +138,29 @@ export default function VolunteerProjectDetailsScreen({
       if (shouldShowBlockingLoader) {
         setLoading(true);
       }
-      const [projectData, matches, timeLogs] = await Promise.all([
+      const [projectData, volunteerData] = await Promise.all([
         getProject(projectId),
-        getVolunteerProjectMatches(user.id).catch(() => []),
-        getAllVolunteerTimeLogs().catch(() => []),
+        getVolunteerByUserId(user.id).catch(() => null),
       ]);
 
       setProject(projectData);
+      setVolunteerProfile(volunteerData);
+
+      const [matches, volunteerLogs] = volunteerData
+        ? await Promise.all([
+            getVolunteerProjectMatches(volunteerData.id).catch(() => []),
+            getVolunteerTimeLogs(volunteerData.id).catch(() => []),
+          ])
+        : [[], []];
+
       setVolunteerMatches(matches);
 
-      // Find any active time log for this project
-      const projectTimeLogs = timeLogs.filter(
-        (log) => log.projectId === projectId && log.volunteerId === user.id
-      );
+      const projectTimeLogs = volunteerLogs.filter(log => log.projectId === projectId);
       setTimeLogs(projectTimeLogs);
 
       const todayKey = getLocalDateKey();
       const active = projectTimeLogs.find(
-        (log) => !log.timeOut && getLocalDateKey(log.timeIn) === todayKey
+        log => getLocalDateKey(log.attendanceConfirmedAt || log.timeIn) === todayKey
       );
       setActiveTimeLog(active || null);
       hasLoadedOnceRef.current = true;
@@ -126,39 +184,30 @@ export default function VolunteerProjectDetailsScreen({
   );
 
   const handleStartTimeLog = async () => {
-    if (!user?.id || !project) return;
+    if (!user?.id || !project || !volunteerProfile) return;
 
     try {
       setLoadingAction('startTime');
-      const timeLog = await startVolunteerTimeLog(project.id, user.id);
+      const attendancePhoto = await pickImageFromDevice();
+      if (!attendancePhoto) {
+        setLoadingAction(null);
+        return;
+      }
+
+      const timeLog = await startVolunteerTimeLog(
+        volunteerProfile.id,
+        project.id,
+        undefined,
+        attendancePhoto
+      );
       setActiveTimeLog(timeLog);
       setTimeLogs((prev) => [...prev, timeLog]);
-      Alert.alert('Success', 'Time logging started');
+      Alert.alert('Success', 'Attendance confirmed for today.');
     } catch (error) {
       Alert.alert(
         'Error',
-        getRequestErrorMessage(error, 'Unable to start time log.')
+        getRequestErrorMessage(error, 'Unable to confirm attendance.')
       );
-    } finally {
-      setLoadingAction(null);
-    }
-  };
-
-  const handleEndTimeLog = async () => {
-    if (!activeTimeLog || !user?.id || !project) return;
-
-    try {
-      setLoadingAction('endTime');
-      const result = await endVolunteerTimeLog(user.id, project.id);
-      if (result.log) {
-        setTimeLogs((prev) =>
-          prev.map((log) => (log.id === result.log!.id ? result.log! : log))
-        );
-      }
-      setActiveTimeLog(null);
-      Alert.alert('Success', 'Time logging stopped');
-    } catch (error) {
-      Alert.alert('Error', getRequestErrorMessage(error, 'Unable to end time log.'));
     } finally {
       setLoadingAction(null);
     }
@@ -192,9 +241,23 @@ export default function VolunteerProjectDetailsScreen({
   }
 
   const currentMatch = volunteerMatches.find((m) => m.projectId === project.id);
-  const isJoined = !!currentMatch;
+  const isAssignedToTask = Boolean(
+    volunteerProfile &&
+      (project.internalTasks || []).some(task => isVolunteerAssignedToTask(task, volunteerProfile.id))
+  );
+  const isJoined =
+    !!currentMatch ||
+    Boolean(volunteerProfile && project.volunteers.includes(volunteerProfile.id)) ||
+    isAssignedToTask;
   const isPending = currentMatch?.status === 'Requested';
   const isEventRecord = Boolean(project.isEvent);
+  const eventHasStarted = hasEventStartedForToday(project.startDate);
+  const eventHasEnded =
+    hasEventEndedForToday(project.endDate || project.startDate) ||
+    getProjectDisplayStatus(project) === 'Completed' ||
+    getProjectDisplayStatus(project) === 'Cancelled';
+  const canConfirmAttendance =
+    isEventRecord && isJoined && !isPending && isAssignedToTask && !activeTimeLog && eventHasStarted && !eventHasEnded;
 
   return (
     <View style={styles.container}>
@@ -285,70 +348,73 @@ export default function VolunteerProjectDetailsScreen({
             )}
           </View>
 
-          {/* Time Logging */}
+          {/* Daily Attendance */}
           {isEventRecord && isJoined && !isPending && (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Time Logging</Text>
+              <Text style={styles.sectionTitle}>Daily Attendance</Text>
 
               {activeTimeLog ? (
                 <View style={styles.timeLogActive}>
                   <MaterialIcons
-                    name="access-time"
+                    name="verified-user"
                     size={24}
-                    color="#f59e0b"
+                    color="#166534"
                   />
                   <View style={styles.timeLogContent}>
-                    <Text style={styles.timeLogStatus}>Time logging active</Text>
+                    <Text style={styles.timeLogStatus}>Attendance already confirmed today</Text>
                     <Text style={styles.timeLogTime}>
-                      Started at{' '}
-                      {format(new Date(activeTimeLog.timeIn), 'h:mm a')}
+                      Confirmed at {format(new Date(activeTimeLog.attendanceConfirmedAt || activeTimeLog.timeIn), 'h:mm a')}
                     </Text>
                   </View>
-                  <TouchableOpacity
-                    style={styles.timeLogButton}
-                    onPress={handleEndTimeLog}
-                    disabled={loadingAction === 'endTime'}
-                  >
-                    <Text style={styles.timeLogButtonText}>
-                      {loadingAction === 'endTime' ? 'Stopping...' : 'Stop'}
-                    </Text>
-                  </TouchableOpacity>
                 </View>
               ) : (
                 <TouchableOpacity
                   style={styles.timeLogStartButton}
                   onPress={handleStartTimeLog}
-                  disabled={loadingAction === 'startTime'}
+                  disabled={loadingAction === 'startTime' || !canConfirmAttendance}
                 >
-                  <MaterialIcons name="play-arrow" size={20} color="#fff" />
+                  <MaterialIcons name="photo-camera" size={20} color="#fff" />
                   <Text style={styles.timeLogStartButtonText}>
                     {loadingAction === 'startTime'
-                      ? 'Starting...'
-                      : 'Start Time Logging'}
+                      ? 'Confirming...'
+                      : !isAssignedToTask
+                      ? 'Task Assignment Required'
+                      : !eventHasStarted
+                      ? 'Available at 9:00 AM'
+                      : eventHasEnded
+                      ? 'Attendance Closed'
+                      : 'Confirm Attendance'}
                   </Text>
                 </TouchableOpacity>
               )}
 
+              <Text style={styles.timeLogTime}>
+                {!isAssignedToTask
+                  ? 'You need an assigned event task before attendance opens.'
+                  : !eventHasStarted
+                  ? 'Attendance opens at 9:00 AM on the event start date.'
+                  : eventHasEnded
+                  ? 'Attendance is closed because the event already ended.'
+                  : activeTimeLog
+                  ? 'Your attendance is already recorded for today.'
+                  : 'Upload your on-site photo to confirm attendance for today.'}
+              </Text>
+
               {timeLogs.length > 0 && (
                 <View style={styles.timeLogsHistory}>
                   <Text style={styles.timeLogsHistoryTitle}>
-                    Logged time ({timeLogs.length} {timeLogs.length === 1 ? 'entry' : 'entries'})
+                    Attendance history ({timeLogs.length} {timeLogs.length === 1 ? 'record' : 'records'})
                   </Text>
                   {timeLogs.map((log) => (
                     <View key={log.id} style={styles.timeLogEntry}>
                       <Text style={styles.timeLogEntryDate}>
-                        {format(new Date(log.timeIn), 'MMM d, h:mm a')}
+                        {format(new Date(log.attendanceConfirmedAt || log.timeIn), 'MMM d, h:mm a')}
                       </Text>
-                      {log.timeOut && (
-                        <Text style={styles.timeLogEntryDuration}>
-                          Duration: {Math.round(
-                            (new Date(log.timeOut).getTime() -
-                              new Date(log.timeIn).getTime()) /
-                              (1000 * 60)
-                          )}{' '}
-                          minutes
-                        </Text>
-                      )}
+                      <Text style={styles.timeLogEntryDuration}>
+                        {log.attendanceCheckedAt
+                          ? `Checked by admin on ${format(new Date(log.attendanceCheckedAt), 'MMM d, h:mm a')}`
+                          : 'Waiting for admin review'}
+                      </Text>
                     </View>
                   ))}
                 </View>
@@ -367,7 +433,7 @@ export default function VolunteerProjectDetailsScreen({
                 {isPending
                   ? 'Your event join request is pending admin approval.'
                   : isJoined
-                    ? 'You already joined this event. Use the time logging section here once you are approved and active.'
+                    ? 'You already joined this event. Use the attendance section here to confirm your presence each day after 9:00 AM.'
                     : 'Join this event from the volunteer event list.'
                 }
               </Text>
@@ -487,9 +553,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: '#fffbeb',
+    backgroundColor: '#f0fdf4',
     borderWidth: 1,
-    borderColor: '#fcd34d',
+    borderColor: '#bbf7d0',
     borderRadius: 8,
     padding: 10,
     marginBottom: 12,
@@ -500,23 +566,12 @@ const styles = StyleSheet.create({
   timeLogStatus: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#f59e0b',
+    color: '#166534',
   },
   timeLogTime: {
     fontSize: 11,
     color: '#999',
     marginTop: 2,
-  },
-  timeLogButton: {
-    backgroundColor: '#ef4444',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 6,
-  },
-  timeLogButtonText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '600',
   },
   timeLogStartButton: {
     flexDirection: 'row',

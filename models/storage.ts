@@ -736,7 +736,7 @@ export async function notifyVolunteerAboutTaskUpdate(params: {
   }
 }
 
-// Notifies a volunteer that their event time in was recorded successfully.
+// Notifies a volunteer that their event attendance was recorded successfully.
 export async function notifyVolunteerAboutTimeIn(params: {
   event: Pick<Project, 'id' | 'title'>;
   volunteer: Pick<Volunteer, 'userId' | 'name'>;
@@ -759,10 +759,10 @@ export async function notifyVolunteerAboutTimeIn(params: {
     await sendSystemMessage(
       senderId,
       params.volunteer.userId,
-      `Time in recorded for "${params.event.title}" at ${formattedTimeIn}. You can submit your event report when you are ready to time out.`
+      `Attendance confirmed for "${params.event.title}" at ${formattedTimeIn}.`
     );
   } catch (error) {
-    console.error('Failed to send time in notification:', error);
+    console.error('Failed to send attendance confirmation notification:', error);
   }
 }
 
@@ -1787,6 +1787,10 @@ export async function getProjectsScreenSnapshot(
     normalizedFields.length === 0 ||
     requestedFieldSet.has('programTracks') ||
     requestedFieldSet.has('programCatalog');
+  const shouldLoadPartnerApplications =
+    normalizedFields.length === 0 ||
+    requestedFieldSet.has('partnerApplications') ||
+    requestedFieldSet.has('partnerProjectApplications');
 
   const params = new URLSearchParams();
   if (user?.id) params.set('user_id', user.id);
@@ -1815,11 +1819,16 @@ export async function getProjectsScreenSnapshot(
   const buildSnapshotFallback = async (
     seed?: Partial<ProjectsScreenSnapshot>
   ): Promise<ProjectsScreenSnapshot> => {
-    const [fallbackProjects, fallbackProgramTracks] = await Promise.all([
+    const [fallbackProjects, fallbackProgramTracks, fallbackPartnerApplications] = await Promise.all([
       shouldLoadProjects ? getAllProjects().catch(() => []) : Promise.resolve([] as Project[]),
       shouldLoadProgramTracks
         ? getAllProgramTracks().catch(() => [])
         : Promise.resolve([] as ProgramTrack[]),
+      shouldLoadPartnerApplications && user?.role === 'partner' && user.id
+        ? getPartnerProjectApplicationsByUser(user.id).catch(() => [])
+        : shouldLoadPartnerApplications && user?.role === 'admin'
+          ? getAllPartnerProjectApplications().catch(() => [])
+          : Promise.resolve([] as PartnerProjectApplication[]),
     ]);
 
     return {
@@ -1834,7 +1843,10 @@ export async function getProjectsScreenSnapshot(
       volunteerProfile: seed?.volunteerProfile || null,
       volunteerMatches: Array.isArray(seed?.volunteerMatches) ? seed?.volunteerMatches : undefined,
       timeLogs: seed?.timeLogs || [],
-      partnerApplications: seed?.partnerApplications || [],
+      partnerApplications:
+        shouldLoadPartnerApplications && fallbackPartnerApplications.length > 0
+          ? fallbackPartnerApplications
+          : seed?.partnerApplications || [],
       volunteerJoinRecords: seed?.volunteerJoinRecords || [],
     };
   };
@@ -1867,7 +1879,8 @@ export async function getProjectsScreenSnapshot(
 
         const recoveredResult =
           (shouldLoadProjects && result.projects.length === 0) ||
-          (shouldLoadProgramTracks && result.programTracks.length === 0)
+          (shouldLoadProgramTracks && result.programTracks.length === 0) ||
+          (shouldLoadPartnerApplications && user?.id && result.partnerApplications.length === 0)
             ? await buildSnapshotFallback(result)
             : result;
 
@@ -1978,6 +1991,10 @@ export async function validateDswdAccreditationNo(value: string): Promise<{valid
     console.error("Error validating DSWD accreditation number:", error);
     return {valid: false, reason: "Network error"};
   }
+}
+
+function hasDswdAccreditationNo(value: string): boolean {
+  return value.trim().length > 0;
 }
 
 function isValidEmailAddress(value: string): boolean {
@@ -2211,6 +2228,26 @@ function normalizeProjectInternalTask(
   projectId: string
 ): ProjectInternalTask {
   const now = new Date().toISOString();
+  const assignedVolunteerIds = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(task.assignedVolunteerIds) ? task.assignedVolunteerIds : []),
+        task.assignedVolunteerId,
+      ]
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+    )
+  );
+  const assignedVolunteerNames = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(task.assignedVolunteerNames) ? task.assignedVolunteerNames : []),
+        task.assignedVolunteerName,
+      ]
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+    )
+  );
   return {
     ...task,
     id: task.id || `task-${projectId}-${Date.now()}`,
@@ -2218,9 +2255,11 @@ function normalizeProjectInternalTask(
     description: task.description?.trim() || '',
     category: task.category?.trim() || 'General',
     priority: task.priority || 'Medium',
-    status: task.status || (task.assignedVolunteerId ? 'Assigned' : 'Unassigned'),
-    assignedVolunteerId: task.assignedVolunteerId?.trim() || undefined,
-    assignedVolunteerName: task.assignedVolunteerName?.trim() || undefined,
+    status: task.status || (assignedVolunteerIds.length ? 'Assigned' : 'Unassigned'),
+    assignedVolunteerId: assignedVolunteerIds[0] || undefined,
+    assignedVolunteerName: assignedVolunteerNames[0] || undefined,
+    assignedVolunteerIds: assignedVolunteerIds.length ? assignedVolunteerIds : undefined,
+    assignedVolunteerNames: assignedVolunteerNames.length ? assignedVolunteerNames : undefined,
     isFieldOfficer: Boolean(task.isFieldOfficer),
     skillsNeeded: task.skillsNeeded || [],
     createdAt: task.createdAt || now,
@@ -2427,7 +2466,7 @@ export async function createUserAccount(input: {
       !input.partnerRegistration.province.trim() ||
       !input.partnerRegistration.cityMunicipality.trim() ||
       (requiresDswdAccreditationNo(input.partnerRegistration.sectorType) &&
-        !isValidDswdAccreditationNo(input.partnerRegistration.dswdAccreditationNo)) ||
+        !hasDswdAccreditationNo(input.partnerRegistration.dswdAccreditationNo)) ||
       input.partnerRegistration.advocacyFocus.length === 0)
   ) {
     throw new Error('Complete the organization application details before submitting.');
@@ -3384,6 +3423,7 @@ export async function deleteProject(projectId: string): Promise<void> {
       (projectGroupMessages || []).filter(message => !relatedProjectIds.has(message.projectId))
     ),
   ]);
+  invalidateProjectsSnapshotCache();
 }
 
 // Deletes one event and cleans up records that reference it.
@@ -3443,6 +3483,7 @@ export async function deleteEvent(eventId: string): Promise<void> {
       (projectGroupMessages || []).filter(message => message.projectId !== eventId)
     ),
   ]);
+  invalidateProjectsSnapshotCache();
 }
 
 // Looks up a single project by id.
@@ -3643,7 +3684,8 @@ export async function getAllVolunteerTimeLogs(): Promise<VolunteerTimeLog[]> {
 export async function startVolunteerTimeLog(
   volunteerId: string,
   projectId: string,
-  note?: string
+  note?: string,
+  attendancePhoto?: string
 ): Promise<VolunteerTimeLog> {
   const payload = await requestApiJson<{ log?: VolunteerTimeLog | null }>(
     `/volunteers/${encodeURIComponent(volunteerId)}/time-logs/start`,
@@ -3655,12 +3697,13 @@ export async function startVolunteerTimeLog(
       body: JSON.stringify({
         projectId,
         note,
+        attendancePhoto,
       }),
     }
   );
 
   if (!payload.log) {
-    throw new Error('Time in did not complete.');
+    throw new Error('Attendance confirmation did not complete.');
   }
 
   try {
@@ -3677,9 +3720,36 @@ export async function startVolunteerTimeLog(
       });
     }
   } catch (error) {
-    console.error('Failed to send volunteer time in notification:', error);
+    console.error('Failed to send volunteer attendance confirmation notification:', error);
   }
 
+  return payload.log;
+}
+
+export async function setVolunteerAttendanceChecked(
+  logId: string,
+  checked: boolean,
+  checkedByUserId: string
+): Promise<VolunteerTimeLog> {
+  const payload = await requestApiJson<{ log?: VolunteerTimeLog | null }>(
+    `/volunteer-time-logs/${encodeURIComponent(logId)}/attendance-check`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        checked,
+        checkedByUserId,
+      }),
+    }
+  );
+
+  if (!payload.log) {
+    throw new Error('Attendance check update did not complete.');
+  }
+
+  await saveVolunteerTimeLog(payload.log);
   return payload.log;
 }
 
@@ -4381,15 +4451,42 @@ export async function leaveVolunteerEventGroup(
   }
 
   const nextTasks = (project.internalTasks || []).map(task => {
-    if (task.assignedVolunteerId !== volunteer.id || task.isFieldOfficer) {
+    const assignedVolunteerIds = Array.from(
+      new Set(
+        [
+          ...(Array.isArray(task.assignedVolunteerIds) ? task.assignedVolunteerIds : []),
+          task.assignedVolunteerId,
+        ]
+          .map(value => String(value || '').trim())
+          .filter(Boolean)
+      )
+    );
+    const assignedVolunteerNames = Array.from(
+      new Set(
+        [
+          ...(Array.isArray(task.assignedVolunteerNames) ? task.assignedVolunteerNames : []),
+          task.assignedVolunteerName,
+        ]
+          .map(value => String(value || '').trim())
+          .filter(Boolean)
+      )
+    );
+    const volunteerIndex = assignedVolunteerIds.indexOf(volunteer.id);
+
+    if (volunteerIndex < 0 || task.isFieldOfficer) {
       return task;
     }
 
+    const nextAssignedVolunteerIds = assignedVolunteerIds.filter(id => id !== volunteer.id);
+    const nextAssignedVolunteerNames = assignedVolunteerNames.filter((_, index) => index !== volunteerIndex);
+
     return {
       ...task,
-      assignedVolunteerId: undefined,
-      assignedVolunteerName: undefined,
-      status: 'Unassigned' as const,
+      assignedVolunteerId: nextAssignedVolunteerIds[0] || undefined,
+      assignedVolunteerName: nextAssignedVolunteerNames[0] || undefined,
+      assignedVolunteerIds: nextAssignedVolunteerIds.length ? nextAssignedVolunteerIds : undefined,
+      assignedVolunteerNames: nextAssignedVolunteerNames.length ? nextAssignedVolunteerNames : undefined,
+      status: nextAssignedVolunteerIds.length ? ('Assigned' as const) : ('Unassigned' as const),
       updatedAt: new Date().toISOString(),
     };
   });
@@ -4885,7 +4982,7 @@ async function validateVolunteerReportEligibility(input: {
   );
 
   if (!hasTimedIn) {
-    throw new Error('You must time in to this event before submitting a report.');
+    throw new Error('You must confirm attendance for this event before submitting a report.');
   }
 }
 

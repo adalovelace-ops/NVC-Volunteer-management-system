@@ -54,7 +54,7 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
 
     const timer = setTimeout(() => {
       setActionNotice(null);
-    }, 1500);
+    }, 1000);
 
     return () => clearTimeout(timer);
   }, [actionNotice]);

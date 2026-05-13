@@ -32,10 +32,8 @@ import {
   getApiBaseUrl,
   getCachedStorageItem,
   getUserByEmailOrPhone,
-  isValidDswdAccreditationNo,
   loginWithCredentials,
   subscribeToStorageChanges,
-  validateDswdAccreditationNo,
 } from '../models/storage';
 import { useAuth } from '../contexts/AuthContext';
 import AppLogo from '../components/AppLogo';
@@ -1028,30 +1026,12 @@ export default function LoginScreen() {
         return;
       }
 
-      if (signupPartnerApplication.sectorType === 'NGO') {
-        // Only NGO registrations require a DSWD accreditation number.
-        const dswdValidation = await validateDswdAccreditationNo(
-          signupPartnerApplication.dswdAccreditationNo
-        );
-        if (!dswdValidation.valid) {
-          let errorTitle = 'Validation Error';
-          let errorMessage = 'Enter a valid DSWD accreditation number.';
-          if (dswdValidation.reason === 'Accreditation number not found in database') {
-            errorTitle = 'DSWD Accreditation Number Not Found';
-            errorMessage = 'The DSWD accreditation number does not exist in the system.';
-          } else if (dswdValidation.reason === 'Accreditation number already assigned') {
-            errorMessage =
-              'This DSWD accreditation number is already assigned to another partner. Please use an unassigned number.';
-          } else if (dswdValidation.reason === 'Invalid format') {
-            errorMessage =
-              'Invalid DSWD accreditation number format. Please check the format and try again.';
-          } else if (dswdValidation.reason === 'Network error') {
-            errorMessage =
-              'Unable to verify the DSWD accreditation number right now. Please try again.';
-          }
-          Alert.alert(errorTitle, errorMessage);
-          return;
-        }
+      if (
+        signupPartnerApplication.sectorType === 'NGO' &&
+        !signupPartnerApplication.dswdAccreditationNo.trim()
+      ) {
+        Alert.alert('Validation Error', 'DSWD accreditation number is required for NGO registrations.');
+        return;
       }
 
       if (signupPartnerApplication.advocacyFocus.length === 0) {
@@ -1751,11 +1731,11 @@ export default function LoginScreen() {
                       <>
                         <Text style={styles.fieldLabel}>DSWD Accreditation Number</Text>
                         <Text style={styles.fieldHelpText}>
-                          Enter one of the unassigned DSWD accreditation numbers. Contact admin if you need an assigned number.
+                          Required for NGO registrations. Any input will be accepted.
                         </Text>
                         <TextInput
                           style={styles.input}
-                          placeholder="DSWD Accreditation No. (must be unassigned)"
+                          placeholder="Enter DSWD Accreditation No."
                           placeholderTextColor="#999"
                           value={signupPartnerApplication.dswdAccreditationNo}
                           onChangeText={value => updateSignupPartnerApplication('dswdAccreditationNo', value)}
@@ -1798,7 +1778,7 @@ export default function LoginScreen() {
                     <View style={styles.partnerLockNotice}>
                       <MaterialIcons name="verified-user" size={18} color="#92400e" />
                       <Text style={styles.partnerLockNoticeText}>
-                        Admin will review your application and unlock partner login after approval. DSWD accreditation is only checked for NGO registrations.
+                        Admin will review your application and unlock partner login after approval. DSWD accreditation number is still required for NGO registrations.
                       </Text>
                     </View>
                   </>
@@ -1998,7 +1978,11 @@ export default function LoginScreen() {
                       />
                     </TouchableOpacity>
                     {showSkillsDropdown ? (
-                      <View style={styles.dropdownMenu}>
+                      <ScrollView
+                        style={styles.dropdownMenu}
+                        nestedScrollEnabled
+                        keyboardShouldPersistTaps="handled"
+                      >
                         {availableSkills.map(skill => {
                           const isSelected = signupVolunteerSheet.skills.includes(skill);
                           return (
@@ -2026,7 +2010,7 @@ export default function LoginScreen() {
                             </TouchableOpacity>
                           );
                         })}
-                      </View>
+                      </ScrollView>
                     ) : null}
                   </View>
 

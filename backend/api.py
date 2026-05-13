@@ -36,6 +36,7 @@ from .db import (
 from .field_rules import normalize_comparable_phone
 from .image_compression import compress_base64_image, get_image_size_kb
 from .relational_mirror import (
+    ensure_volunteer_time_logs_table_shape,
     get_relational_item_by_id,
     get_relational_items_by_field,
     upsert_relational_item,
@@ -151,6 +152,12 @@ class ProjectJoinPayload(BaseModel):
 class VolunteerTimeLogStartPayload(BaseModel):
     projectId: str
     note: str | None = None
+    attendancePhoto: str | None = None
+
+
+class VolunteerTimeLogAttendanceCheckPayload(BaseModel):
+    checked: bool = True
+    checkedByUserId: str | None = None
 
 
 # Request payload for ending a volunteer time log.
@@ -275,8 +282,13 @@ def _event_attendance_window_has_started(project: dict[str, Any], now: datetime 
         return True
 
     current_time = (now or datetime.now(timezone.utc)).astimezone(APP_TIMEZONE)
-    start_of_day = start_date.astimezone(APP_TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
-    return current_time >= start_of_day
+    attendance_open_time = start_date.astimezone(APP_TIMEZONE).replace(
+        hour=9,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    return current_time >= attendance_open_time
 
 
 def _event_attendance_window_has_ended(project: dict[str, Any], now: datetime | None = None) -> bool:
@@ -950,6 +962,11 @@ def _volunteer_is_assigned_to_event_task(
     tasks = project.get("internalTasks") or []
     return any(
         str(task.get("assignedVolunteerId") or "").strip() == volunteer_id
+        or volunteer_id in [
+            str(value or "").strip()
+            for value in (task.get("assignedVolunteerIds") or [])
+            if str(value or "").strip()
+        ]
         for task in tasks
     )
 
@@ -965,9 +982,64 @@ def _volunteer_is_field_officer_for_event(
 
     tasks = project.get("internalTasks") or []
     return any(
-        str(task.get("assignedVolunteerId") or "").strip() == volunteer_id
+        (
+            str(task.get("assignedVolunteerId") or "").strip() == volunteer_id
+            or volunteer_id in [
+                str(value or "").strip()
+                for value in (task.get("assignedVolunteerIds") or [])
+                if str(value or "").strip()
+            ]
+        )
         and bool(task.get("isFieldOfficer"))
         for task in tasks
+    )
+
+
+def _user_is_field_officer_for_event(
+    connection: Any,
+    user_id: str,
+    project_id: str,
+) -> bool:
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        return False
+
+    project, _ = _postgres_get_project_like_item_by_id(connection, project_id)
+    if not project or not bool(project.get("isEvent")):
+        return False
+
+    tasks = project.get("internalTasks") or []
+    for task in tasks:
+        if not bool(task.get("isFieldOfficer")):
+            continue
+
+        assigned_ids = [
+            str(task.get("assignedVolunteerId") or "").strip(),
+            *[
+                str(value or "").strip()
+                for value in (task.get("assignedVolunteerIds") or [])
+                if str(value or "").strip()
+            ],
+        ]
+        normalized_assigned_ids = [value for value in assigned_ids if value]
+        if normalized_user_id in normalized_assigned_ids:
+            return True
+
+        for assigned_id in normalized_assigned_ids:
+            volunteer = _postgres_get_hot_item_by_id(connection, "volunteers", assigned_id)
+            if volunteer is None:
+                continue
+            if str(volunteer.get("userId") or "").strip() == normalized_user_id:
+                return True
+
+    linked_volunteer = _postgres_get_volunteer_by_user_id(connection, normalized_user_id)
+    if linked_volunteer is None:
+        return False
+
+    return _volunteer_is_field_officer_for_event(
+        connection,
+        str(linked_volunteer.get("id") or "").strip(),
+        project_id,
     )
 
 
@@ -1040,37 +1112,7 @@ def _postgres_reset_stale_daily_time_logs(
     volunteer_id: str,
     now: datetime | None = None,
 ) -> list[dict[str, Any]]:
-    reference_now = now or datetime.now(timezone.utc)
-    today_key = _get_local_date_key(reference_now.isoformat())
-    logs = _postgres_get_volunteer_time_logs(connection, volunteer_id)
-    changed = False
-    normalized_logs: list[dict[str, Any]] = []
-
-    for log in logs:
-        if log.get("timeOut"):
-            normalized_logs.append(log)
-            continue
-
-        if _get_local_date_key(log.get("timeIn")) == today_key:
-            normalized_logs.append(log)
-            continue
-
-        updated_log = {
-            **log,
-            "timeOut": log.get("timeIn"),
-            "note": (
-                f"{str(log.get('note') or '').strip()} "
-                "[Auto-reset after day rollover]"
-            ).strip(),
-        }
-        _postgres_upsert_hot_item(connection, "volunteerTimeLogs", updated_log)
-        normalized_logs.append(updated_log)
-        changed = True
-
-    if changed:
-        connection.commit()
-
-    return _sort_iso_desc(normalized_logs, "timeIn")
+    return _sort_iso_desc(_postgres_get_volunteer_time_logs(connection, volunteer_id), "timeIn")
 
 
 # Ensures a volunteer-project join record exists after approval or assignment.
@@ -1442,6 +1484,14 @@ def _build_projects_snapshot(
 def startup() -> None:
     # Initialize connection pool for better performance
     init_postgres_pool()
+
+    try:
+        with get_connection() as connection:
+            ensure_volunteer_time_logs_table_shape(connection)
+            connection.commit()
+        print("[OK] Volunteer time logs schema ensured.")
+    except Exception as error:
+        print(f"[WARN] Volunteer time logs schema ensure skipped: {error}")
 
     # Auto-cleanup: Compress oversized base64 images to prevent slow API responses
     # TEMPORARILY DISABLED - was causing backend to hang on startup
@@ -2335,18 +2385,14 @@ async def start_volunteer_log(volunteer_id: str, payload: VolunteerTimeLogStartP
                 detail="This event attendance window has already ended.",
             )
 
-        existing_logs = _postgres_reset_stale_daily_time_logs(connection, volunteer_id, now)
-        active_log = next(
-            (
-                log
-                for log in existing_logs
-                if log.get("projectId") == payload.projectId and not log.get("timeOut")
-            ),
-            None,
-        )
-        if active_log is not None:
-            raise HTTPException(status_code=409, detail="You already have an active time log for this project.")
+        attendance_photo = str(payload.attendancePhoto or "").strip()
+        if not attendance_photo:
+            raise HTTPException(
+                status_code=400,
+                detail="Upload an attendance photo to confirm you are on site.",
+            )
 
+        existing_logs = _postgres_reset_stale_daily_time_logs(connection, volunteer_id, now)
         today_log = next(
             (
                 log
@@ -2367,12 +2413,57 @@ async def start_volunteer_log(volunteer_id: str, payload: VolunteerTimeLogStartP
             "volunteerId": volunteer_id,
             "projectId": payload.projectId,
             "timeIn": now.isoformat(),
+            "attendanceConfirmedAt": now.isoformat(),
+            "attendancePhoto": attendance_photo,
+            "completionPhoto": attendance_photo,
             "note": payload.note,
         }
         _postgres_upsert_hot_item(connection, "volunteerTimeLogs", new_log)
         connection.commit()
     await connection_manager.broadcast_storage_event(["volunteerTimeLogs"])
     return {"log": new_log}
+
+
+@app.post("/volunteer-time-logs/{log_id}/attendance-check")
+async def set_volunteer_attendance_check(log_id: str, payload: VolunteerTimeLogAttendanceCheckPayload) -> dict[str, Any]:
+    _require_postgres()
+    with get_connection() as connection:
+        log = _postgres_get_hot_item_by_id(connection, "volunteerTimeLogs", log_id)
+        if log is None:
+            raise HTTPException(status_code=404, detail="Attendance record not found.")
+
+        checked_by_user_id = str(payload.checkedByUserId or "").strip()
+        checked_by_name = None
+        if checked_by_user_id:
+            checked_by_user = _postgres_get_hot_item_by_id(connection, "users", checked_by_user_id)
+            if checked_by_user is None:
+                raise HTTPException(status_code=404, detail="Field officer account not found.")
+            checked_by_volunteer = _postgres_get_volunteer_by_user_id(connection, checked_by_user_id)
+            if not _user_is_field_officer_for_event(
+                connection,
+                checked_by_user_id,
+                str(log.get("projectId") or "").strip(),
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only the assigned field officer for this event can mark attendance.",
+                )
+            checked_by_name = (
+                str((checked_by_volunteer or {}).get("name") or "").strip()
+                or str(checked_by_user.get("name") or "").strip()
+                or "Field Officer"
+            )
+
+        updated_log = {
+            **log,
+            "attendanceCheckedAt": datetime.now(timezone.utc).isoformat() if payload.checked else None,
+            "attendanceCheckedBy": checked_by_user_id if payload.checked else None,
+            "attendanceCheckedByName": checked_by_name if payload.checked else None,
+        }
+        _postgres_upsert_hot_item(connection, "volunteerTimeLogs", updated_log)
+        connection.commit()
+    await connection_manager.broadcast_storage_event(["volunteerTimeLogs"])
+    return {"log": updated_log}
 
 
 @app.post("/volunteers/{volunteer_id}/time-logs/end")
@@ -2392,7 +2483,7 @@ async def end_volunteer_log(volunteer_id: str, payload: VolunteerTimeLogEndPaylo
         if active_log is None:
             raise HTTPException(
                 status_code=400,
-                detail="You must time in before you can time out.",
+                detail="You must confirm attendance before you can complete sign-out.",
             )
 
         completion_report = str(payload.completionReport or "").strip()
@@ -3255,7 +3346,7 @@ async def submit_report(payload: ReportSubmitPayload) -> dict[str, Any]:
                 if not _volunteer_has_time_in_for_project(connection, str(volunteer.get("id") or ""), project_id):
                     raise HTTPException(
                         status_code=400,
-                        detail="Volunteers must time in to this event before submitting a report.",
+                        detail="Volunteers must confirm attendance for this event before submitting a report.",
                     )
 
                 volunteer_id = str(volunteer.get("id") or "")

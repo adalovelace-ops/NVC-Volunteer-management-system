@@ -26,7 +26,7 @@ import {
 export type AdminTabParamList = {
   Dashboard: undefined;
   Partners: { partnerId?: string } | undefined;
-  Projects: { projectId?: string } | undefined;
+  Projects: { projectId?: string; programSuiteView?: 'programs' | 'projects' | 'events' } | undefined;
   Volunteers: { volunteerId?: string } | undefined;
   Map: undefined;
   Messages: { projectId?: string } | undefined;
@@ -83,6 +83,7 @@ type SidebarProps = BottomTabBarProps & {
 };
 
 function SidebarTabBar({ state, descriptors, navigation, collapsed, onToggle }: SidebarProps) {
+  const [programMenuOpen, setProgramMenuOpen] = useState(false);
   const systemsRoutes = state.routes.filter(
     route => !['Partners', 'Volunteers', 'Users', 'Settings', 'Profile'].includes(route.name)
   );
@@ -100,10 +101,18 @@ function SidebarTabBar({ state, descriptors, navigation, collapsed, onToggle }: 
     const label = typeof rawLabel === 'function' ? rawLabel({ focused, color: focused ? '#166534' : '#4d7c0f', position: 'beside-icon', children: '' }) : rawLabel;
     const badgeValue = typeof options.tabBarBadge === 'number' ? options.tabBarBadge : 0;
 
+    const isProgramRoute = route.name === 'Projects';
+
     return (
+      <React.Fragment key={route.key}>
       <TouchableOpacity
-        key={route.key}
-        onPress={() => navigation.navigate(route.name)}
+        onPress={() => {
+          if (isProgramRoute && !collapsed) {
+            setProgramMenuOpen(current => !current);
+            return;
+          }
+          navigation.navigate(route.name);
+        }}
         style={[styles.sidebarItem, focused && styles.sidebarItemActive, collapsed && styles.sidebarItemCollapsed]}
       >
         <View style={styles.sidebarIconWrap}>
@@ -127,9 +136,42 @@ function SidebarTabBar({ state, descriptors, navigation, collapsed, onToggle }: 
                 <Text style={styles.sidebarBadgeText}>{badgeValue > 99 ? '99+' : badgeValue}</Text>
               </View>
             )}
+            {isProgramRoute && (
+              <MaterialIcons
+                name={programMenuOpen ? 'expand-less' : 'expand-more'}
+                size={18}
+                color={focused ? '#166534' : '#65a30d'}
+              />
+            )}
           </View>
         )}
       </TouchableOpacity>
+      {isProgramRoute && !collapsed && programMenuOpen ? (
+        <View style={styles.sidebarSubmenu}>
+          <TouchableOpacity
+            style={styles.sidebarSubmenuItem}
+            onPress={() => navigation.navigate('Projects', { programSuiteView: 'programs' })}
+          >
+            <MaterialIcons name="work" size={16} color="#15803d" />
+            <Text style={styles.sidebarSubmenuText}>Programs</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.sidebarSubmenuItem}
+            onPress={() => navigation.navigate('Projects', { programSuiteView: 'projects' })}
+          >
+            <MaterialIcons name="folder" size={16} color="#15803d" />
+            <Text style={styles.sidebarSubmenuText}>Projects</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.sidebarSubmenuItem}
+            onPress={() => navigation.navigate('Projects', { programSuiteView: 'events' })}
+          >
+            <MaterialIcons name="event" size={16} color="#15803d" />
+            <Text style={styles.sidebarSubmenuText}>Events</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+      </React.Fragment>
     );
   };
 
@@ -287,4 +329,7 @@ const styles = StyleSheet.create({
   sidebarBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   sidebarIconBadge: { position: 'absolute', top: -10, right: -12, minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 999, backgroundColor: '#dc2626', borderWidth: 2, borderColor: '#d9f99d', alignItems: 'center', justifyContent: 'center' },
   sidebarIconBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800', lineHeight: 12 },
+  sidebarSubmenu: { marginLeft: 28, marginBottom: 8, gap: 4 },
+  sidebarSubmenuItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.45)' },
+  sidebarSubmenuText: { fontSize: 13, color: '#15803d', fontWeight: '700' },
 });
