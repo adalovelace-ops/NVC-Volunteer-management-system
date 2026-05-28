@@ -187,9 +187,13 @@ export function loadGoogleMaps(apiKey: string) {
 }
 
 // Builds the custom project pin used by the browser Google Maps markers.
-export function createGoogleMapsMarkerIcon(googleMaps: GoogleMapsGlobal, accentColor: string) {
+export function createGoogleMapsMarkerIcon(
+  googleMaps: GoogleMapsGlobal,
+  accentColor: string,
+  countLabel?: string | number
+) {
   return {
-    url: createWebMapMarkerIcon({ accentColor }),
+    url: createWebMapMarkerIcon({ accentColor, countLabel }),
     scaledSize: new googleMaps.maps.Size(40, 48),
     anchor: new googleMaps.maps.Point(20, 48),
   };

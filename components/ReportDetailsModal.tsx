@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Modal,
   View,
@@ -28,6 +28,7 @@ interface ReportDetailsModalProps {
   onClose: () => void;
   onApprove?: (reportId: string, notes: string) => void;
   onReject?: (reportId: string, notes: string) => void;
+  onRevise?: (report: SubmittedReport) => void;
   userRole?: 'admin' | 'volunteer' | 'partner';
   showModerationActions?: boolean;
 }
@@ -38,6 +39,7 @@ export default function ReportDetailsModal({
   onClose,
   onApprove,
   onReject,
+  onRevise,
   userRole,
   showModerationActions = false,
 }: ReportDetailsModalProps) {
@@ -45,6 +47,21 @@ export default function ReportDetailsModal({
   const [showApprovalForm, setShowApprovalForm] = useState(false);
   const [actionType, setActionType] = useState<'approve' | 'reject' | null>(null);
   const { width } = useWindowDimensions();
+
+  const canApprove =
+    Boolean(report) &&
+    showModerationActions &&
+    userRole === 'admin' &&
+    report?.status === 'Submitted' &&
+    !report?.approvedBy;
+
+  useEffect(() => {
+    if (!canApprove) {
+      setApprovalNotes('');
+      setShowApprovalForm(false);
+      setActionType(null);
+    }
+  }, [canApprove, report?.id]);
 
   if (!report) return null;
 
@@ -71,7 +88,6 @@ export default function ReportDetailsModal({
     onClose();
   };
 
-  const canApprove = showModerationActions && userRole === 'admin' && report.status === 'Submitted';
   const isWideLayout = Platform.OS === 'web' && width >= 960;
   const attachmentPreviews = getAttachmentUris([
     report.mediaFile || '',
@@ -88,7 +104,7 @@ export default function ReportDetailsModal({
   };
   const handleDownloadReport = () => {
     void downloadPdfFile(
-      `${report.title}-${new Date(report.submittedAt).toISOString().slice(0, 10)}.pdf`,
+      `${report.title}-${formatDateForFilename(report.submittedAt)}.pdf`,
       buildTextPdf(report.title, buildReportDownloadContent(report))
     );
   };
@@ -141,11 +157,7 @@ export default function ReportDetailsModal({
                 <View style={styles.dateInfo}>
                   <MaterialIcons name="calendar-today" size={14} color="#64748b" />
                   <Text style={styles.dateText}>
-                    {new Date(report.submittedAt).toLocaleDateString(undefined, {
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric',
-                    })}
+                    {formatDisplayDate(report.submittedAt, 'Unknown date')}
                   </Text>
                 </View>
               </View>
@@ -315,7 +327,7 @@ export default function ReportDetailsModal({
             )}
 
             {/* Approval Form */}
-            {showApprovalForm && (
+            {canApprove && showApprovalForm && (
               <View style={styles.sectionCard}>
                 <Text style={styles.sectionTitle}>
                   {actionType === 'approve' ? 'Approve Report' : 'Reject Report'}
@@ -384,7 +396,7 @@ export default function ReportDetailsModal({
                       <Text style={styles.approvalHistoryBy}>by {report.approvedBy}</Text>
                       {report.approvedAt && (
                         <Text style={styles.approvalHistoryDate}>
-                          {new Date(report.approvedAt).toLocaleDateString()}
+                          {formatDisplayDate(report.approvedAt, 'Unknown date')}
                         </Text>
                       )}
                     </View>
@@ -402,6 +414,18 @@ export default function ReportDetailsModal({
 
           {/* Footer */}
           <View style={styles.footer}>
+            {report.status === 'Rejected' && onRevise && (
+              <TouchableOpacity
+                style={styles.reviseButton}
+                onPress={() => {
+                  onRevise(report);
+                  handleClose();
+                }}
+              >
+                <MaterialIcons name="edit" size={16} color="#166534" />
+                <Text style={styles.reviseButtonText}>Revise</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
               <Text style={styles.closeButtonText}>Close</Text>
             </TouchableOpacity>
@@ -429,7 +453,7 @@ function buildReportDownloadContent(report: SubmittedReport): string {
     `Submitted By: ${report.submitterName}`,
     `Role: ${report.submitterRole}`,
     `Status: ${report.status}`,
-    `Submitted At: ${new Date(report.submittedAt).toLocaleString()}`,
+    `Submitted At: ${formatDisplayDateTime(report.submittedAt, 'Unknown date')}`,
     `Report Type: ${formatReportType(report.reportType)}`,
     report.projectTitle
       ? `${report.projectKind === 'event' ? 'Event' : 'Project'}: ${report.projectTitle}`
@@ -447,11 +471,37 @@ function buildReportDownloadContent(report: SubmittedReport): string {
     report.approvedBy ? '' : null,
     report.approvedBy ? 'Approval History' : null,
     report.approvedBy ? `Reviewed By: ${report.approvedBy}` : null,
-    report.approvedAt ? `Reviewed At: ${new Date(report.approvedAt).toLocaleString()}` : null,
+    report.approvedAt ? `Reviewed At: ${formatDisplayDateTime(report.approvedAt, 'Unknown date')}` : null,
     report.approvalNotes ? `Approval Notes: ${report.approvalNotes}` : null,
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function parseValidDate(value?: string): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDisplayDate(value?: string, fallback = 'N/A'): string {
+  const date = parseValidDate(value);
+  if (!date) return fallback;
+  return date.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
+function formatDisplayDateTime(value?: string, fallback = 'N/A'): string {
+  const date = parseValidDate(value);
+  return date ? date.toLocaleString() : fallback;
+}
+
+function formatDateForFilename(value?: string): string {
+  const date = parseValidDate(value) || new Date();
+  return date.toISOString().slice(0, 10);
 }
 
 function formatReportType(type: string): string {
@@ -471,7 +521,8 @@ function formatReportType(type: string): string {
 
 function formatMetricKey(key: string): string {
   const labels: Record<string, string> = {
-    volunteerHours: 'Volunteer Hours',
+    volunteerHours: 'Volunteer Event Joins',
+    volunteerEventJoins: 'Volunteer Event Joins',
     verifiedAttendance: 'Verified Attendance',
     activeVolunteers: 'Active Volunteers',
     beneficiariesServed: 'Beneficiaries Served',
@@ -584,62 +635,62 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
   },
   title: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: '800',
     color: '#0f172a',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   submitter: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#64748b',
   },
   content: {
     flex: 1,
   },
   contentContainer: {
-    paddingBottom: 20,
+    paddingBottom: 16,
   },
   heroCard: {
-    padding: 16,
-    borderRadius: 18,
+    padding: 10,
+    borderRadius: 12,
     backgroundColor: '#f8fafc',
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    marginBottom: 14,
+    marginBottom: 8,
   },
   heroTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 14,
+    gap: 8,
+    marginBottom: 8,
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 999,
   },
   statusText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   dateInfo: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 999,
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
   dateText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#64748b',
   },
   metadataSection: {
@@ -648,16 +699,16 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   metadataSectionWide: {
-    gap: 12,
+    gap: 10,
   },
   metadataItem: {
     width: '100%',
-    borderRadius: 14,
+    borderRadius: 10,
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   metadataItemWide: {
     flex: 1,
@@ -670,14 +721,14 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   metadataValue: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     color: '#0f172a',
   },
   sectionCard: {
-    marginBottom: 14,
-    padding: 16,
-    borderRadius: 18,
+    marginBottom: 8,
+    padding: 10,
+    borderRadius: 12,
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderBottomColor: '#e2e8f0',
@@ -688,10 +739,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 6,
   },
   sectionTitle: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '700',
     color: '#0f172a',
   },
@@ -734,28 +785,28 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   attachmentPreviewCard: {
-    borderRadius: 12,
+    borderRadius: 10,
     overflow: 'hidden',
     backgroundColor: '#f8fafc',
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    padding: 12,
+    padding: 8,
   },
   attachmentPreviewCardWide: {
     width: '100%',
   },
   attachmentPreview: {
     width: '100%',
-    height: Platform.select({ web: 360, default: 220 }),
-    borderRadius: 12,
+    height: Platform.select({ web: 260, default: 160 }),
+    borderRadius: 10,
     backgroundColor: '#e2e8f0',
   },
   attachmentPreviewMeta: {
-    paddingTop: 10,
-    gap: 4,
+    paddingTop: 6,
+    gap: 2,
   },
   attachmentPreviewTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: '#0f172a',
   },
@@ -765,18 +816,18 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   attachmentOpenText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: '#166534',
   },
   attachmentFileCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    borderRadius: 10,
+    gap: 8,
+    borderRadius: 8,
     backgroundColor: '#f1f5f9',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     borderWidth: 1,
     borderColor: '#dbe4ee',
   },
@@ -793,21 +844,21 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   attachmentFileTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: '#0f172a',
   },
   attachmentFileText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#475569',
   },
   metricCard: {
     flex: Platform.select({ web: 0, default: 1 }),
-    minWidth: 220,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
+    minWidth: 180,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
     backgroundColor: '#f1f5f9',
-    borderRadius: 14,
+    borderRadius: 10,
     borderLeftWidth: 4,
     borderLeftColor: '#166534',
   },
@@ -818,7 +869,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   metricCardValue: {
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '800',
     color: '#166534',
   },
@@ -963,6 +1014,24 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
+    gap: 10,
+  },
+  reviseButton: {
+    minHeight: 48,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: '#ffffff',
+    borderWidth: 2,
+    borderColor: '#166534',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  reviseButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#166534',
   },
   closeButton: {
     minHeight: 48,

@@ -2,6 +2,7 @@ import { Image, ImageSourcePropType } from 'react-native';
 
 type WebMapMarkerOptions = {
   accentColor: string;
+  countLabel?: string | number;
 };
 
 export function getMarkerInitials(value?: string, fallback = '?') {
@@ -33,12 +34,23 @@ export function resolveMarkerImageUri(source?: ImageSourcePropType | string | nu
 
 export function createWebMapMarkerIcon({
   accentColor,
+  countLabel,
 }: WebMapMarkerOptions) {
+  const normalizedCountLabel = String(countLabel ?? '').trim();
+  const safeCountLabel = normalizedCountLabel ? normalizedCountLabel.slice(0, 3) : '';
+  const badge = safeCountLabel
+    ? `
+      <circle cx="47" cy="16" r="13" fill="#ffffff"/>
+      <circle cx="47" cy="16" r="11" fill="#166534"/>
+      <text x="47" y="20" text-anchor="middle" font-family="Arial, sans-serif" font-size="${safeCountLabel.length > 2 ? 9 : 11}" font-weight="700" fill="#ffffff">${escapeXml(safeCountLabel)}</text>
+    `
+    : '';
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="64" height="76" viewBox="0 0 64 76">
       <path d="M32 74c-2.5 0-4.5-1.1-5.8-3.2L14.8 52.1C11 46.8 9 40.6 9 34.1 9 21 19.5 10 32 10s23 11 23 24.1c0 6.5-2 12.7-5.8 18L37.8 70.8C36.5 72.9 34.5 74 32 74z" fill="${escapeXml(accentColor)}"/>
       <circle cx="32" cy="30" r="22" fill="${escapeXml(accentColor)}"/>
       <circle cx="32" cy="30" r="7" fill="#ffffff"/>
+      ${badge}
     </svg>
   `;
 

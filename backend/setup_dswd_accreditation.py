@@ -46,7 +46,7 @@ def setup_dswd_accreditation() -> None:
             print("Creating dswd_accreditation_numbers table...")
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS dswd_accreditation_numbers (
-                    dswd_accreditation_numbers_id SERIAL PRIMARY KEY,
+                    id SERIAL PRIMARY KEY,
                     accreditation_no TEXT NOT NULL UNIQUE,
                     is_assigned BOOLEAN NOT NULL DEFAULT FALSE,
                     assigned_to_partner_id TEXT,
@@ -56,28 +56,6 @@ def setup_dswd_accreditation() -> None:
                 )
             """)
             print("✓ Table created successfully")
-
-            cursor.execute("""
-                DO $$
-                BEGIN
-                  IF EXISTS (
-                    SELECT 1
-                    FROM information_schema.columns
-                    WHERE table_schema = 'public'
-                      AND table_name = 'dswd_accreditation_numbers'
-                      AND column_name = 'id'
-                  ) AND NOT EXISTS (
-                    SELECT 1
-                    FROM information_schema.columns
-                    WHERE table_schema = 'public'
-                      AND table_name = 'dswd_accreditation_numbers'
-                      AND column_name = 'dswd_accreditation_numbers_id'
-                  ) THEN
-                    ALTER TABLE dswd_accreditation_numbers
-                    RENAME COLUMN id TO dswd_accreditation_numbers_id;
-                  END IF;
-                END $$;
-            """)
 
             # Create index on accreditation_no for fast lookups
             cursor.execute("""
@@ -116,7 +94,7 @@ def setup_dswd_accreditation() -> None:
             # Get all partners and assign accreditation numbers
             print("\nAssigning accreditation numbers to partners...")
             cursor.execute("""
-                SELECT partners_id, name, dswd_accreditation_no 
+                SELECT id, name, dswd_accreditation_no 
                 FROM partners 
                 ORDER BY created_at ASC
             """)
@@ -134,7 +112,7 @@ def setup_dswd_accreditation() -> None:
                     cursor.execute("""
                         UPDATE partners 
                         SET dswd_accreditation_no = %s
-                        WHERE partners_id = %s
+                        WHERE id = %s
                     """, (new_accred_no, partner_id))
                     
                     # Mark accreditation number as assigned

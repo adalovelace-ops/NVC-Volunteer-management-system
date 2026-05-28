@@ -417,16 +417,38 @@ function resolveProjectMapPlacement(project: Project, projects: Project[]): Proj
   }
 
   const inferredPlacement = inferCoordinatesFromRelatedProject(project, projects);
-  if (!inferredPlacement) {
-    return project;
+  if (inferredPlacement) {
+    return {
+      ...project,
+      location: {
+        address: getProjectLocationAddress(project) || inferredPlacement.address || 'Location to be finalized',
+        latitude: inferredPlacement.coordinates.latitude,
+        longitude: inferredPlacement.coordinates.longitude,
+      },
+    };
   }
 
+  // Last resort: try to infer from the project's own address string against known places
+  const addressOnly = inferCoordinatesFromPlace(getProjectLocationAddress(project), []);
+  if (addressOnly) {
+    return {
+      ...project,
+      location: {
+        address: getProjectLocationAddress(project) || 'Location to be finalized',
+        latitude: addressOnly.latitude,
+        longitude: addressOnly.longitude,
+      },
+    };
+  }
+
+  // Final fallback: place unmapped projects at the Negros Occidental center so they
+  // still appear on the map with a visible warning in the callout instead of disappearing.
   return {
     ...project,
     location: {
-      address: getProjectLocationAddress(project) || inferredPlacement.address || 'Location to be finalized',
-      latitude: inferredPlacement.coordinates.latitude,
-      longitude: inferredPlacement.coordinates.longitude,
+      address: getProjectLocationAddress(project) || 'Location to be finalized',
+      latitude: NEGROS_REGION.latitude,
+      longitude: NEGROS_REGION.longitude,
     },
   };
 }
@@ -576,6 +598,21 @@ export function getMappedProjects(projects: Project[]): Project[] {
     .filter(project => hasUsableCoordinates(project.location));
 
   return spreadOverlappingProjectMarkers(resolvedProjects);
+}
+
+// Returns projects that could not be placed on the map (no coordinates and no resolvable address).
+export function getUnmappedProjects(projects: Project[]): Project[] {
+  return projects.filter(project => {
+    const resolved = resolveProjectMapPlacement(project, projects);
+    // A project is truly unmapped only if it still has no usable coordinates after all resolution
+    // attempts AND its address is a placeholder (meaning the user never entered a real location).
+    const address = getProjectLocationAddress(resolved);
+    const isPlaceholder =
+      !address ||
+      address === 'Location to be finalized' ||
+      address === 'Program location to be finalized';
+    return isPlaceholder && !hasUsableCoordinates(project.location);
+  });
 }
 
 // Computes an initial map region that keeps all known projects in view.

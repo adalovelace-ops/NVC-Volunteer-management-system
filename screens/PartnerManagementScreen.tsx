@@ -19,6 +19,7 @@ import {
   savePartner,
   subscribeToStorageChanges,
 } from '../models/storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import InlineLoadError from '../components/InlineLoadError';
 import { getProjectDisplayStatus } from '../utils/projectStatus';
@@ -30,6 +31,7 @@ const advocacyOptions: AdvocacyFocus[] = ['Nutrition', 'Education', 'Livelihood'
 // Lets admins inspect approved partners, update their details, and view associated projects.
 export default function PartnerManagementScreen({ navigation, route }: any) {
   const { user, isAdmin } = useAuth();
+  const insets = useSafeAreaInsets();
   const [loadError, setLoadError] = useState<{ title: string; message: string } | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -45,6 +47,13 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
   const [contactEmailDraft, setContactEmailDraft] = useState('');
   const [contactPhoneDraft, setContactPhoneDraft] = useState('');
   const [addressDraft, setAddressDraft] = useState('');
+
+  useEffect(() => {
+    if (navigation) {
+      const showHeader = view === 'list';
+      navigation.setOptions({ headerShown: showHeader });
+    }
+  }, [view, navigation]);
 
   useEffect(() => {
     if (!actionNotice) {
@@ -235,7 +244,7 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
     const partnerProjects = getPartnerProjects();
 
     return (
-      <ScrollView style={styles.container}>
+      <View style={[styles.container, { paddingTop: insets.top }]}>
         <View style={styles.header}>
           <TouchableOpacity onPress={handleCloseDetail}>
             <MaterialIcons name="arrow-back" size={24} color="#333" />
@@ -245,6 +254,7 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
             <MaterialIcons name="edit" size={24} color="#4CAF50" />
           </TouchableOpacity>
         </View>
+        <ScrollView style={{ flex: 1 }}>
 
         {actionNotice ? (
           <View style={styles.noticeBanner}>
@@ -438,7 +448,8 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
             </ScrollView>
           </View>
         </Modal>
-      </ScrollView>
+        </ScrollView>
+      </View>
     );
   }
 
@@ -580,8 +591,8 @@ const styles = StyleSheet.create({
     color: '#64748b',
   },
   header: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
@@ -591,9 +602,9 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: '#fff',
-    margin: 16,
-    borderRadius: 12,
-    padding: 16,
+    margin: 6,
+    borderRadius: 10,
+    padding: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -608,46 +619,46 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   partnerName: {
-    fontSize: 20,
+    fontSize: 15,
     fontWeight: '700',
     color: '#0f172a',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   partnerSector: {
-    fontSize: 14,
+    fontSize: 11,
     color: '#64748b',
     marginBottom: 2,
   },
   partnerMeta: {
-    fontSize: 13,
+    fontSize: 11,
     color: '#64748b',
-    lineHeight: 20,
+    lineHeight: 16,
   },
   statsGrid: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    marginTop: 16,
+    marginTop: 6,
   },
   stat: {
     alignItems: 'center',
   },
   statValue: {
-    fontSize: 18,
+    fontSize: 13,
     fontWeight: '700',
     color: '#0f172a',
-    marginTop: 4,
+    marginTop: 2,
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 10,
     color: '#64748b',
     marginTop: 2,
   },
   section: {
     backgroundColor: '#fff',
-    marginHorizontal: 16,
-    marginBottom: 16,
-    borderRadius: 12,
-    padding: 16,
+    marginHorizontal: 6,
+    marginBottom: 6,
+    borderRadius: 10,
+    padding: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -655,54 +666,54 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 12,
     fontWeight: '700',
     color: '#0f172a',
-    marginBottom: 12,
+    marginBottom: 4,
   },
   descriptionText: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#374151',
-    lineHeight: 20,
+    lineHeight: 18,
   },
   contactInfo: {
-    gap: 8,
+    gap: 4,
   },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   infoLabel: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '600',
     color: '#374151',
-    width: 80,
+    width: 70,
   },
   infoValue: {
-    fontSize: 13,
+    fontSize: 11,
     color: '#6b7280',
     flex: 1,
   },
   focusContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 6,
   },
   focusTag: {
     backgroundColor: '#dbeafe',
     borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
   focusTagText: {
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: '600',
     color: '#1e40af',
   },
   projectItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#e5e7eb',
   },
@@ -710,16 +721,16 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   projectName: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#0f172a',
   },
   projectCategory: {
-    fontSize: 13,
+    fontSize: 11,
     color: '#64748b',
   },
   projectMeta: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#9ca3af',
     marginTop: 2,
   },

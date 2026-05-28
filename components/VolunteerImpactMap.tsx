@@ -82,6 +82,8 @@ const MapContent = React.memo<MapContentProps>(
     if (prevProps.mapRegion.longitude !== nextProps.mapRegion.longitude) return false;
     if (prevProps.mapRegion.latitudeDelta !== nextProps.mapRegion.latitudeDelta) return false;
     if (prevProps.mapRegion.longitudeDelta !== nextProps.mapRegion.longitudeDelta) return false;
+    if (prevProps.volunteerAccounts !== nextProps.volunteerAccounts) return false;
+    if (prevProps.partnerAccounts !== nextProps.partnerAccounts) return false;
     return true;
   }
 );
@@ -122,7 +124,7 @@ const MapMarker = React.memo<MapMarkerProps>(
       description={project.location.address}
       onPress={() => onPress(project)}
     >
-      <PhotoMapMarker accentColor={getProjectMarkerColor(project)} />
+      <PhotoMapMarker accentColor={getProjectMarkerColor(project)} count={volunteerHits.length} />
       <Callout tooltip>
         <View style={styles.calloutCard}>
           <Text style={styles.calloutTitle} numberOfLines={2}>
@@ -180,6 +182,8 @@ const MapMarker = React.memo<MapMarkerProps>(
   if (prevProps.project.title !== nextProps.project.title) return false;
   if (prevProps.project.description !== nextProps.project.description) return false;
   if (prevProps.project.location.address !== nextProps.project.location.address) return false;
+  if (prevProps.volunteerAccounts !== nextProps.volunteerAccounts) return false;
+  if (prevProps.partnerAccounts !== nextProps.partnerAccounts) return false;
   
   return true; // Project data hasn't changed, skip re-render
 });
@@ -291,16 +295,17 @@ function getMapEmptyStateMessage(
   }
 
   const targetLabel = selectedMapStyleKey === 'volunteer-view' ? 'volunteer' : 'partner';
+  const itemLabel = selectedMapStyleKey === 'volunteer-view' ? 'events' : 'projects';
 
   if (currentAccountOptions.length === 0) {
-    return `No ${targetLabel} accounts with mapped projects are available yet.`;
+    return `No ${targetLabel} accounts with mapped ${itemLabel} are available yet.`;
   }
 
   if (!selectedAccountOption) {
     return `Pick a ${targetLabel} account to load its map.`;
   }
 
-  return `No mapped projects were found for ${selectedAccountOption.label}.`;
+  return `No mapped ${itemLabel} were found for ${selectedAccountOption.label}.`;
 }
 
 function getAccountPickerLabel(
@@ -328,6 +333,14 @@ function getNativeMapType(selectedMapStyle: MapStylePreset) {
   }
 
   return selectedMapStyle.mapType;
+}
+
+function getMappedCountLabel(selectedMapStyleKey: MapStylePresetKey, count: number) {
+  if (selectedMapStyleKey === 'volunteer-view') {
+    return `${count} mapped ${count === 1 ? 'event' : 'events'}`;
+  }
+
+  return `${count} mapped ${count === 1 ? 'project' : 'projects'}`;
 }
 
 // Displays a native map of projects and supports admin, volunteer, and partner views.
@@ -561,8 +574,7 @@ export default function VolunteerImpactMap({
         <View style={styles.selectionSummary}>
           <Text style={styles.selectionSummaryTitle}>{selectedAccountOption.label}</Text>
           <Text style={styles.selectionSummaryText}>
-            {selectedAccountOption.projectCount} mapped
-            {selectedAccountOption.projectCount === 1 ? ' project' : ' projects'}
+            {getMappedCountLabel(selectedMapStyleKey, selectedAccountOption.projectCount)}
           </Text>
         </View>
       ) : null}
@@ -649,8 +661,7 @@ export default function VolunteerImpactMap({
                     <View style={styles.menuItemTextWrap}>
                       <Text style={styles.menuItemTitle}>{option.label}</Text>
                       <Text style={styles.menuItemDescription}>
-                        {option.projectCount} mapped
-                        {option.projectCount === 1 ? ' project' : ' projects'}
+                        {getMappedCountLabel(selectedMapStyleKey, option.projectCount)}
                       </Text>
                     </View>
                     {isActive ? <MaterialIcons name="check" size={20} color="#2563eb" /> : null}

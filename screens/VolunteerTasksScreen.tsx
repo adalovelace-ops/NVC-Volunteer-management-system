@@ -9,6 +9,7 @@ import {
   Modal,
   ScrollView,
   Image,
+  Pressable,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -22,6 +23,7 @@ import {
   getVolunteerProjectJoinRecords,
   getVolunteerTimeLogs,
   subscribeToStorageChanges,
+  clearStorageCache,
   saveEvent,
   startVolunteerTimeLog,
   notifyVolunteerAboutTaskUnassignment,
@@ -444,6 +446,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
   const [showTaskGroupDetails, setShowTaskGroupDetails] = useState(false);
   const [selectedManagedEventId, setSelectedManagedEventId] = useState<string | null>(null);
   const [showFieldOfficerBoard, setShowFieldOfficerBoard] = useState(false);
+  const [showManagedAttendanceDateDropdown, setShowManagedAttendanceDateDropdown] = useState(false);
   const [selectedManagedAttendanceDateKey, setSelectedManagedAttendanceDateKey] = useState<string | null>(null);
   const [expandedManagedTaskId, setExpandedManagedTaskId] = useState<string | null>(null);
   const [showManagedTaskAssignments, setShowManagedTaskAssignments] = useState(false);
@@ -477,22 +480,16 @@ export default function VolunteerTasksScreen({ navigation }: any) {
         return;
       }
 
-      // Load projects and current volunteer quickly; defer full volunteer list
-      const [projects, currentVolunteerProfile] = await Promise.all([
+      clearStorageCache(['projects', 'events', 'volunteers', 'volunteerTimeLogs', 'volunteerProjectJoins']);
+
+      const [projects, currentVolunteerProfile, volunteers] = await Promise.all([
         getAllProjects(),
         getVolunteerByUserId(user.id),
+        getAllVolunteers(),
       ]);
       setAllProjects(projects);
       setVolunteerProfile(currentVolunteerProfile || null);
-
-      // defer loading full volunteers list
-      setAllVolunteers([]);
-      setTimeout(async () => {
-        try {
-          const volunteers = await getAllVolunteers();
-          setAllVolunteers(volunteers);
-        } catch {}
-      }, 50);
+      setAllVolunteers(volunteers);
 
       let nextVolunteerTimeLogs: VolunteerTimeLog[] = [];
       let nextAllVolunteerTimeLogs: VolunteerTimeLog[] = [];
@@ -979,6 +976,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
       const nextProjects = allProjects.map(project =>
         project.id === updatedProject.id ? updatedProject : project
       );
+      clearStorageCache(['projects', 'events']);
       const nextTasks = collectAssignedTasks(
         nextProjects,
         volunteerProfile,
@@ -994,7 +992,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
 
         return nextTasks.find(task => task.id === current.id && task.projectId === current.projectId) || null;
       });
-      void loadVolunteerTasks();
+      void loadVolunteerTasksCoalesced();
       const actionLabel =
         !volunteerId
           ? 'cleared'
@@ -2150,35 +2148,59 @@ export default function VolunteerTasksScreen({ navigation }: any) {
                     Review attendance uploads for this event here. Only the assigned field officer can mark each record.
                   </Text>
 
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.attendanceDatePickerRow}
+                  <TouchableOpacity
+                    style={styles.attendanceDateDropdownTrigger}
+                    onPress={() => setShowManagedAttendanceDateDropdown(true)}
+                    activeOpacity={0.85}
                   >
-                    {managedEventAttendanceDateKeys.map(dateKey => (
-                      <TouchableOpacity
-                        key={`managed-attendance-date-${dateKey}`}
-                        style={[
-                          styles.attendanceDateChip,
-                          resolvedManagedAttendanceDateKey === dateKey && styles.attendanceDateChipActive,
-                        ]}
-                        onPress={() => setSelectedManagedAttendanceDateKey(dateKey)}
-                        activeOpacity={0.85}
-                      >
-                        <Text
-                          style={[
-                            styles.attendanceDateChipText,
-                            resolvedManagedAttendanceDateKey === dateKey && styles.attendanceDateChipTextActive,
-                          ]}
-                        >
-                          {new Date(`${dateKey}T00:00:00`).toLocaleDateString(undefined, {
-                            month: 'short',
-                            day: 'numeric',
-                          })}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
+                    <Text style={styles.attendanceDateDropdownText}>
+                      {new Date(`${resolvedManagedAttendanceDateKey}T00:00:00`).toLocaleDateString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                    </Text>
+                    <MaterialIcons name="arrow-drop-down" size={20} color="#166534" />
+                  </TouchableOpacity>
+
+                  <Modal
+                    visible={showManagedAttendanceDateDropdown}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() => setShowManagedAttendanceDateDropdown(false)}
+                  >
+                    <Pressable style={styles.dropdownBackdrop} onPress={() => setShowManagedAttendanceDateDropdown(false)}>
+                      <View style={styles.dropdownCard}>
+                        <ScrollView>
+                          {managedEventAttendanceDateKeys.map(dateKey => (
+                            <TouchableOpacity
+                              key={`managed-attendance-date-${dateKey}`}
+                              style={[
+                                styles.dropdownItem,
+                                resolvedManagedAttendanceDateKey === dateKey && styles.dropdownItemActive,
+                              ]}
+                              onPress={() => {
+                                setSelectedManagedAttendanceDateKey(dateKey);
+                                setShowManagedAttendanceDateDropdown(false);
+                              }}
+                              activeOpacity={0.85}
+                            >
+                              <Text
+                                style={[
+                                  styles.dropdownItemText,
+                                  resolvedManagedAttendanceDateKey === dateKey && styles.dropdownItemTextActive,
+                                ]}
+                              >
+                                {new Date(`${dateKey}T00:00:00`).toLocaleDateString(undefined, {
+                                  month: 'short',
+                                  day: 'numeric',
+                                })}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </ScrollView>
+                      </View>
+                    </Pressable>
+                  </Modal>
 
                   <View style={styles.attendanceBoardSummaryRow}>
                     <View style={styles.attendanceBoardSummaryCard}>
@@ -2470,42 +2492,42 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   header: {
-    paddingHorizontal: 20,
-    paddingVertical: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: 'bold',
     color: '#0f172a',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   headerSubtitle: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#666',
   },
   topTabBar: {
     flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 20,
-    paddingTop: 14,
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 10,
     paddingBottom: 4,
   },
   topTabButton: {
     flex: 1,
-    minHeight: 48,
-    borderRadius: 16,
+    minHeight: 40,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#bbf7d0',
     backgroundColor: '#ffffff',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 6,
   },
   topTabButtonActive: {
     backgroundColor: '#166534',
@@ -2540,38 +2562,38 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   fieldOfficerSection: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    gap: 12,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    gap: 8,
   },
   fieldOfficerSectionHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: 12,
+    gap: 10,
   },
   fieldOfficerSectionTitleWrap: {
     flex: 1,
   },
   fieldOfficerSectionTitle: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '800',
     color: '#0f172a',
   },
   fieldOfficerSectionSubtitle: {
-    marginTop: 4,
-    fontSize: 12,
-    lineHeight: 17,
+    marginTop: 2,
+    fontSize: 11,
+    lineHeight: 16,
     color: '#64748b',
   },
   fieldOfficerSectionBadge: {
     borderRadius: 999,
     backgroundColor: '#dcfce7',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
   },
   fieldOfficerSectionBadgeText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     color: '#166534',
   },
@@ -2607,30 +2629,30 @@ const styles = StyleSheet.create({
   },
   fieldOfficerEventCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#dbe7df',
-    padding: 16,
-    gap: 12,
+    padding: 10,
+    gap: 8,
   },
   fieldOfficerEventTopRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 8,
     alignItems: 'flex-start',
   },
   fieldOfficerEventCopy: {
     flex: 1,
-    gap: 4,
+    gap: 3,
   },
   fieldOfficerEventTitleRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: 10,
+    gap: 8,
   },
   fieldOfficerEventTitle: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '800',
     color: '#0f172a',
   },
@@ -2639,48 +2661,48 @@ const styles = StyleSheet.create({
     backgroundColor: '#ecfdf5',
     borderWidth: 1,
     borderColor: '#bbf7d0',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
   },
   fieldOfficerEventStatusText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '800',
     color: '#166534',
   },
   fieldOfficerEventProgram: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     color: '#1d4ed8',
   },
   fieldOfficerEventMeta: {
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 10,
+    lineHeight: 14,
     color: '#64748b',
   },
   fieldOfficerMetricsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: 6,
   },
   fieldOfficerMetricCard: {
-    minWidth: 92,
+    minWidth: 80,
     flexGrow: 1,
     flexShrink: 1,
-    borderRadius: 12,
+    borderRadius: 10,
     backgroundColor: '#f8fafc',
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    paddingHorizontal: 10,
-    paddingVertical: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
   },
   fieldOfficerMetricValue: {
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: '800',
     color: '#166534',
   },
   fieldOfficerMetricLabel: {
-    marginTop: 2,
-    fontSize: 10,
+    marginTop: 1,
+    fontSize: 9,
     color: '#64748b',
   },
   fieldOfficerOpenRow: {
@@ -2689,30 +2711,30 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
-    paddingTop: 12,
+    paddingTop: 8,
   },
   fieldOfficerOpenText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: '#166534',
   },
   fieldOfficerEmptyState: {
-    borderRadius: 14,
+    borderRadius: 12,
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#dbe7df',
-    paddingHorizontal: 14,
-    paddingVertical: 16,
-    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 3,
   },
   fieldOfficerEmptyTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
     color: '#0f172a',
   },
   fieldOfficerEmptyText: {
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 10,
+    lineHeight: 14,
     color: '#64748b',
   },
   fieldOfficerToggleButton: {
@@ -2721,11 +2743,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#bbf7d0',
     backgroundColor: '#ecfdf5',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
   },
   fieldOfficerToggleButtonText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     color: '#166534',
   },
@@ -2755,30 +2777,30 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   taskSummaryIconWrap: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#ecfdf5',
     borderWidth: 1,
     borderColor: '#bbf7d0',
-    marginBottom: 8,
+    marginBottom: 5,
   },
   taskSummaryValue: {
-    fontSize: 17,
+    fontSize: 14,
     fontWeight: '800',
     color: '#166534',
     textAlign: 'center',
   },
   taskSummaryLabel: {
-    marginTop: 3,
-    fontSize: 8,
+    marginTop: 2,
+    fontSize: 7,
     fontWeight: '700',
     color: '#64748b',
     textTransform: 'uppercase',
     letterSpacing: 0.2,
-    lineHeight: 11,
+    lineHeight: 9,
     textAlign: 'center',
   },
   sectionSummaryCard: {
@@ -2937,17 +2959,17 @@ const styles = StyleSheet.create({
     color: '#166534',
   },
   taskGroupCard: {
-    borderRadius: 18,
+    borderRadius: 14,
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#dbe5ef',
-    padding: 14,
-    gap: 12,
+    padding: 10,
+    gap: 8,
     shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
   },
   taskGroupHeader: {
     flexDirection: 'row',
@@ -2955,9 +2977,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   taskGroupIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
+    width: 34,
+    height: 34,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#ecfdf5',
@@ -3026,13 +3048,13 @@ const styles = StyleSheet.create({
   taskGroupStatCard: {
     flex: 1,
     minWidth: 0,
-    borderRadius: 14,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     backgroundColor: '#f8fafc',
-    minHeight: 64,
-    paddingVertical: 8,
-    paddingHorizontal: 6,
+    minHeight: 48,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3066,12 +3088,12 @@ const styles = StyleSheet.create({
     color: '#166534',
   },
   attendanceCard: {
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#d9f99d',
     backgroundColor: '#f7fee7',
-    padding: 14,
-    gap: 12,
+    padding: 10,
+    gap: 8,
   },
   attendanceCardHeader: {
     flexDirection: 'row',
@@ -3147,18 +3169,18 @@ const styles = StyleSheet.create({
   attendanceActionRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: 8,
   },
   attendanceButton: {
-    minHeight: 46,
-    minWidth: 140,
+    minHeight: 38,
+    minWidth: 120,
     flexGrow: 1,
-    borderRadius: 12,
+    borderRadius: 10,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingHorizontal: 14,
+    gap: 6,
+    paddingHorizontal: 12,
   },
   timeInButton: {
     backgroundColor: '#166534',
@@ -3502,6 +3524,52 @@ const styles = StyleSheet.create({
   },
   attendanceDateChipTextActive: {
     color: '#ffffff',
+  },
+  attendanceDateDropdownTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#dbe5ef',
+    backgroundColor: '#fff',
+    alignSelf: 'flex-start',
+  },
+  attendanceDateDropdownText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  dropdownBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  dropdownCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    maxHeight: '60%',
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#e6eef0',
+  },
+  dropdownItem: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  dropdownItemActive: {
+    backgroundColor: '#ecfdf5',
+  },
+  dropdownItemText: {
+    fontSize: 13,
+    color: '#0f172a',
+  },
+  dropdownItemTextActive: {
+    color: '#166534',
+    fontWeight: '800',
   },
   attendanceBoardSummaryRow: {
     flexDirection: 'row',

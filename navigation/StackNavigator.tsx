@@ -51,7 +51,7 @@ export default function StackNavigator() {
       <View style={styles.loadingScreen}>
         <View style={styles.loadingCard}>
           <AppLogo width={120} />
-          <Text style={styles.loadingTitle}>NVC CONNECT</Text>
+          <Text style={styles.loadingTitle}>NVC</Text>
           <Text style={styles.loadingSubtitle}>Preparing your workspace</Text>
           <ActivityIndicator size="small" color="#4CAF50" style={styles.loadingSpinner} />
         </View>

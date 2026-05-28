@@ -41,6 +41,32 @@ export interface User {
   approvedAt?: string; // When the account was approved
   rejectionReason?: string; // Reason if rejected
   createdAt: string;
+  partnerRegistration?: {
+    organizationName: string;
+    stakeholderName: string;
+    sectorType: PartnerSectorType;
+    dswdAccreditationNo: string;
+    secRegistrationNo?: string;
+    region: string;
+    province: string;
+    cityMunicipality: string;
+    advocacyFocus: AdvocacyFocus[];
+  };
+  volunteerMembershipSheet?: {
+    gender: string;
+    dateOfBirth: string;
+    civilStatus: string;
+    homeAddress: string;
+    homeAddressRegion?: string;
+    homeAddressCityMunicipality?: string;
+    homeAddressBarangay?: string;
+    occupation?: string;
+    workplaceOrSchool?: string;
+    collegeCourse?: string;
+    certificationsOrTrainings?: string;
+    hobbiesAndInterests?: string;
+    specialSkills?: string;
+  };
 }
 
 // Represents a partner organization profile submitted to the system.
@@ -338,6 +364,7 @@ export interface PartnerProjectProposalDetails {
   targetProjectTitle?: string;
   targetProjectDescription?: string;
   targetProjectAddress?: string;
+  previousApplicationId?: string;
   requestedProgramModule?: AdvocacyFocus;
   proposedTitle: string;
   proposedDescription: string;
@@ -367,6 +394,7 @@ export interface PartnerProjectApplication {
   requestedAt: string;
   reviewedAt?: string;
   reviewedBy?: string;
+  reviewNotes?: string;
 }
 
 // Represents a partner-submitted operational or impact report for a project.

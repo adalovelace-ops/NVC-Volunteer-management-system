@@ -1,0 +1,526 @@
+﻿models/storage.ts(222,28): error TS2802: Type 'MapIterator<StorageChangeSubscriber>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+models/storage.ts(3820,23): error TS2802: Type 'MapIterator<string>' can only be iterated through when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+node_modules/@expo/vector-icons/build/createIconSet.d.ts(1,8): error TS1259: Module '"C:/Users/ACER/OneDrive/Desktop/volunteer-system/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/@expo/vector-icons/build/createIconSet.d.ts(25,18): error TS2320: Interface 'IconButtonProps<GLYPHS>' cannot simultaneously extend types 'IconProps<GLYPHS>' and 'TouchableHighlightProps'.
+  Named property 'pressRetentionOffset' of types 'IconProps<GLYPHS>' and 'TouchableHighlightProps' are not identical.
+node_modules/@react-native-picker/picker/typings/Picker.d.ts(135,52): error TS2302: Static members cannot reference class type parameters.
+node_modules/@react-navigation/core/lib/typescript/src/PreventRemoveProvider.d.ts(8,69): error TS2503: Cannot find namespace 'JSX'.
+node_modules/@react-navigation/core/lib/typescript/src/types.d.ts(293,15): error TS2503: Cannot find namespace 'JSX'.
+node_modules/@react-navigation/core/lib/typescript/src/useNavigationBuilder.d.ts(174,11): error TS2503: Cannot find namespace 'JSX'.
+node_modules/@react-navigation/native/lib/typescript/src/theming/ThemeProvider.d.ts(7,68): error TS2503: Cannot find namespace 'JSX'.
+node_modules/@types/node/module.d.ts(804,13): error TS2403: Subsequent variable declarations must have the same type.  Variable 'require' must be of type 'NodeRequire', but here has type 'Require'.
+node_modules/expo-constants/build/Constants.types.d.ts(2,326): error TS2307: Cannot find module 'expo-manifests' or its corresponding type declarations.
+node_modules/expo-modules-core/build/NativeViewManagerAdapter.d.ts(1,8): error TS1259: Module '"C:/Users/ACER/OneDrive/Desktop/volunteer-system/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+node_modules/react-native/src/types/globals.d.ts(10,1): error TS6200: Definitions of the following identifiers conflict with those in another file: EndingType, BlobPart, BufferSource, FormData, RequestInfo, XMLHttpRequestResponseType, AbortSignal, AbortController
+node_modules/react-native/src/types/globals.d.ts(166,7): error TS2403: Subsequent variable declarations must have the same type.  Variable 'Blob' must be of type '{ new (blobParts?: BlobPart[], options?: BlobPropertyBag): Blob; prototype: Blob; }', but here has type '{ new (blobParts?: (string | Blob)[], options?: BlobOptions): Blob; prototype: Blob; }'.
+node_modules/react-native/src/types/globals.d.ts(180,7): error TS2403: Subsequent variable declarations must have the same type.  Variable 'File' must be of type '{ new (fileBits: BlobPart[], fileName: string, options?: FilePropertyBag): File; prototype: File; }', but here has type '{ new (fileParts: BlobPart[], name: string, options?: FilePropertyBag): File; prototype: File; }'.
+node_modules/react-native/src/types/globals.d.ts(266,5): error TS2717: Subsequent property declarations must have the same type.  Property 'body' must be of type 'BodyInit', but here has type 'BodyInit_'.
+node_modules/react-native/src/types/globals.d.ts(275,5): error TS2717: Subsequent property declarations must have the same type.  Property 'signal' must be of type 'AbortSignal', but here has type 'AbortSignal'.
+node_modules/react-native/src/types/globals.d.ts(285,14): error TS2717: Subsequent property declarations must have the same type.  Property 'signal' must be of type 'AbortSignal', but here has type 'AbortSignal'.
+node_modules/react-native/src/types/globals.d.ts(289,7): error TS2403: Subsequent variable declarations must have the same type.  Variable 'Request' must be of type '{ new (input: RequestInfo | URL, init?: RequestInit): Request; prototype: Request; }', but here has type '{ new (input: string | Request, init?: RequestInit): Request; prototype: Request; }'.
+node_modules/react-native/src/types/globals.d.ts(313,7): error TS2403: Subsequent variable declarations must have the same type.  Variable 'Response' must be of type '{ new (body?: BodyInit, init?: ResponseInit): Response; prototype: Response; error(): Response; json(data: any, init?: ResponseInit): Response; redirect(url: string | URL, status?: number): Response; }', but here has type '{ new (body?: BodyInit_, init?: ResponseInit): Response; prototype: Response; error(): Response; json(data: any, init?: ResponseInit): Response; redirect: (url: string | URL, status?: number) => Response; }'.
+node_modules/react-native/src/types/globals.d.ts(398,5): error TS2717: Subsequent property declarations must have the same type.  Property 'abort' must be of type 'ProgressEvent<XMLHttpRequestEventTarget>', but here has type 'ProgressEvent<EventTarget>'.
+node_modules/react-native/src/types/globals.d.ts(399,5): error TS2717: Subsequent property declarations must have the same type.  Property 'error' must be of type 'ProgressEvent<XMLHttpRequestEventTarget>', but here has type 'ProgressEvent<EventTarget>'.
+node_modules/react-native/src/types/globals.d.ts(400,5): error TS2717: Subsequent property declarations must have the same type.  Property 'load' must be of type 'ProgressEvent<XMLHttpRequestEventTarget>', but here has type 'ProgressEvent<EventTarget>'.
+node_modules/react-native/src/types/globals.d.ts(401,5): error TS2717: Subsequent property declarations must have the same type.  Property 'loadend' must be of type 'ProgressEvent<XMLHttpRequestEventTarget>', but here has type 'ProgressEvent<EventTarget>'.
+node_modules/react-native/src/types/globals.d.ts(402,5): error TS2717: Subsequent property declarations must have the same type.  Property 'loadstart' must be of type 'ProgressEvent<XMLHttpRequestEventTarget>', but here has type 'ProgressEvent<EventTarget>'.
+node_modules/react-native/src/types/globals.d.ts(403,5): error TS2717: Subsequent property declarations must have the same type.  Property 'progress' must be of type 'ProgressEvent<XMLHttpRequestEventTarget>', but here has type 'ProgressEvent<EventTarget>'.
+node_modules/react-native/src/types/globals.d.ts(404,5): error TS2717: Subsequent property declarations must have the same type.  Property 'timeout' must be of type 'ProgressEvent<XMLHttpRequestEventTarget>', but here has type 'ProgressEvent<EventTarget>'.
+node_modules/react-native/src/types/globals.d.ts(471,7): error TS2403: Subsequent variable declarations must have the same type.  Variable 'URL' must be of type '{ new (url: string | URL, base?: string | URL): URL; prototype: URL; canParse(url: string | URL, base?: string | URL): boolean; createObjectURL(obj: Blob | MediaSource): string; parse(url: string | URL, base?: string | URL): URL; revokeObjectURL(url: string): void; }', but here has type '{ new (url: string | URL, base?: string | URL): URL; prototype: URL; createObjectURL(obj: Blob): string; revokeObjectURL(url: string): void; }'.
+node_modules/react-native/src/types/globals.d.ts(534,5): error TS2717: Subsequent property declarations must have the same type.  Property 'onopen' must be of type '(this: WebSocket, ev: Event) => any', but here has type '() => void'.
+node_modules/react-native/src/types/globals.d.ts(535,5): error TS2717: Subsequent property declarations must have the same type.  Property 'onmessage' must be of type '(this: WebSocket, ev: MessageEvent<any>) => any', but here has type '(event: WebSocketMessageEvent) => void'.
+node_modules/react-native/src/types/globals.d.ts(536,5): error TS2717: Subsequent property declarations must have the same type.  Property 'onerror' must be of type '(this: WebSocket, ev: Event) => any', but here has type '(event: WebSocketErrorEvent) => void'.
+node_modules/react-native/src/types/globals.d.ts(537,5): error TS2717: Subsequent property declarations must have the same type.  Property 'onclose' must be of type '(this: WebSocket, ev: CloseEvent) => any', but here has type '(event: WebSocketCloseEvent) => void'.
+node_modules/react-native/src/types/globals.d.ts(538,5): error TS2717: Subsequent property declarations must have the same type.  Property 'addEventListener' must be of type '{ <K extends keyof WebSocketEventMap>(type: K, listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void; (type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void; }', but here has type 'WebsocketEventListener'.
+node_modules/react-native/src/types/globals.d.ts(539,5): error TS2717: Subsequent property declarations must have the same type.  Property 'removeEventListener' must be of type '{ <K extends keyof WebSocketEventMap>(type: K, listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any, options?: boolean | EventListenerOptions): void; (type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void; }', but here has type 'WebsocketEventListener'.
+node_modules/react-native/src/types/globals.d.ts(542,7): error TS2403: Subsequent variable declarations must have the same type.  Variable 'WebSocket' must be of type '{ new (url: string | URL, protocols?: string | string[]): WebSocket; prototype: WebSocket; readonly CONNECTING: 0; readonly OPEN: 1; readonly CLOSING: 2; readonly CLOSED: 3; }', but here has type '{ new (uri: string, protocols?: string | string[], options?: { [optionName: string]: any; headers: { [headerName: string]: string; }; }): WebSocket; prototype: WebSocket; readonly CLOSED: number; readonly CLOSING: number; readonly CONNECTING: number; readonly OPEN: number; }'.
+node_modules/react-native/src/types/globals.d.ts(627,14): error TS2717: Subsequent property declarations must have the same type.  Property 'error' must be of type 'DOMException', but here has type 'Error'.
+node_modules/react-native/src/types/globals.d.ts(640,14): error TS2717: Subsequent property declarations must have the same type.  Property 'readyState' must be of type '0 | 2 | 1', but here has type 'number'.
+node_modules/typescript/lib/lib.dom.d.ts(23,1): error TS6200: Definitions of the following identifiers conflict with those in another file: EndingType, BlobPart, BufferSource, FormData, RequestInfo, XMLHttpRequestResponseType, AbortSignal, AbortController
+node_modules/typescript/lib/lib.dom.d.ts(32640,11): error TS2430: Interface 'URL' incorrectly extends interface 'import("node:url").URL'.
+  The types returned by 'searchParams[Symbol.iterator]()' are incompatible between these types.
+    Property '[Symbol.dispose]' is missing in type 'IterableIterator<[string, string]>' but required in type 'URLSearchParamsIterator<[string, string]>'.
+node_modules/typescript/lib/lib.dom.d.ts(32759,11): error TS2430: Interface 'URLSearchParams' incorrectly extends interface 'import("node:url").URLSearchParams'.
+  The types returned by '[Symbol.iterator]()' are incompatible between these types.
+    Property '[Symbol.dispose]' is missing in type 'IterableIterator<[string, string]>' but required in type 'URLSearchParamsIterator<[string, string]>'.
+screens/CommunicationHubScreen.tsx(1,8): error TS1259: Module '"C:/Users/ACER/OneDrive/Desktop/volunteer-system/node_modules/@types/react/index"' can only be default-imported using the 'esModuleInterop' flag
+screens/CommunicationHubScreen.tsx(41,25): error TS6142: Module '../contexts/AuthContext' was resolved to 'C:/Users/ACER/OneDrive/Desktop/volunteer-system/contexts/AuthContext.tsx', but '--jsx' is not set.
+screens/CommunicationHubScreen.tsx(123,26): error TS6142: Module '../components/ProposalCard' was resolved to 'C:/Users/ACER/OneDrive/Desktop/volunteer-system/components/ProposalCard.tsx', but '--jsx' is not set.
+screens/CommunicationHubScreen.tsx(133,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(135,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(183,10): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2101,5): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2113,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2117,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2121,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2127,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2129,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2131,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2139,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2141,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2149,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2165,5): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2167,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2169,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2171,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2173,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2181,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2183,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2185,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2205,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2213,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2223,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2225,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2237,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2245,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2247,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2279,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2283,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2285,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2305,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2327,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2339,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2341,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2363,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2379,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2381,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2429,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2445,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2447,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2467,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2493,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2495,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2499,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2501,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2507,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2509,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2511,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2519,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2521,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2523,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2525,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2527,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2529,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2531,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2539,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2541,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2543,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2559,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2561,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2563,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2581,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2583,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2585,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2587,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2595,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2597,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2607,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2629,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2631,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2633,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2641,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2643,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2653,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2679,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2681,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2683,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2685,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2687,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2689,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2691,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2717,25): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2719,45): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2719,58): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: PickerItemProps<T>, context?: any): string | number | bigint | boolean | ReactElement<unknown, string | JSXElementConstructor<any>> | Iterable<...> | Promise<...> | Component<...>', gave the following error.
+    Type '{ key: string; label: string; value: string; }' is not assignable to type 'PickerItemProps<T>'.
+      Property 'key' does not exist on type 'PickerItemProps<T>'.
+  Overload 2 of 2, '(props: PickerItemProps<T>): string | number | bigint | boolean | ReactElement<unknown, string | JSXElementConstructor<any>> | Iterable<...> | Promise<...> | Component<...>', gave the following error.
+    Type '{ key: string; label: string; value: string; }' is not assignable to type 'PickerItemProps<T>'.
+      Property 'key' does not exist on type 'PickerItemProps<T>'.
+screens/CommunicationHubScreen.tsx(2729,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2731,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2733,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2735,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2759,25): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2761,50): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2761,63): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: PickerItemProps<T>, context?: any): string | number | bigint | boolean | ReactElement<unknown, string | JSXElementConstructor<any>> | Iterable<...> | Promise<...> | Component<...>', gave the following error.
+    Type '{ key: string; label: string; value: string; }' is not assignable to type 'PickerItemProps<T>'.
+      Property 'key' does not exist on type 'PickerItemProps<T>'.
+  Overload 2 of 2, '(props: PickerItemProps<T>): string | number | bigint | boolean | ReactElement<unknown, string | JSXElementConstructor<any>> | Iterable<...> | Promise<...> | Component<...>', gave the following error.
+    Type '{ key: string; label: string; value: string; }' is not assignable to type 'PickerItemProps<T>'.
+      Property 'key' does not exist on type 'PickerItemProps<T>'.
+screens/CommunicationHubScreen.tsx(2771,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2773,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2775,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2777,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2789,25): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2791,53): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2791,66): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: PickerItemProps<T>, context?: any): string | number | bigint | boolean | ReactElement<unknown, string | JSXElementConstructor<any>> | Iterable<...> | Promise<...> | Component<...>', gave the following error.
+    Type '{ key: string; label: string; value: string; }' is not assignable to type 'PickerItemProps<T>'.
+      Property 'key' does not exist on type 'PickerItemProps<T>'.
+  Overload 2 of 2, '(props: PickerItemProps<T>): string | number | bigint | boolean | ReactElement<unknown, string | JSXElementConstructor<any>> | Iterable<...> | Promise<...> | Component<...>', gave the following error.
+    Type '{ key: string; label: string; value: string; }' is not assignable to type 'PickerItemProps<T>'.
+      Property 'key' does not exist on type 'PickerItemProps<T>'.
+screens/CommunicationHubScreen.tsx(2805,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2807,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2809,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2815,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2816,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2817,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2818,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2819,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2824,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2825,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2826,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2827,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2833,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2835,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2837,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2873,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2875,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2879,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2881,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2887,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2889,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2891,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2899,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2901,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2903,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2905,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2907,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2917,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2919,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2921,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2933,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2937,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2939,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2941,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2943,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2947,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2949,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2951,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2963,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2965,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2967,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2969,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2977,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2979,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2981,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2989,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2991,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2993,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(2995,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3003,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3005,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3007,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3015,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3017,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3019,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3025,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3027,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3029,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3035,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3037,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3039,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3045,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3047,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3051,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3055,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3055,29): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: ViewProps): View', gave the following error.
+    Type '{ key: string; style: { paddingHorizontal: number; paddingVertical: number; borderRadius: number; backgroundColor: string; borderWidth: number; borderColor: string; }; }' is not assignable to type 'ViewProps'.
+      Property 'key' does not exist on type 'ViewProps'.
+  Overload 2 of 2, '(props: ViewProps, context: any): View', gave the following error.
+    Type '{ key: string; style: { paddingHorizontal: number; paddingVertical: number; borderRadius: number; backgroundColor: string; borderWidth: number; borderColor: string; }; }' is not assignable to type 'ViewProps'.
+      Property 'key' does not exist on type 'ViewProps'.
+screens/CommunicationHubScreen.tsx(3057,25): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3067,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3075,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3077,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3081,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3101,25): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3101,31): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: ViewProps): View', gave the following error.
+    Type '{ key: string; style: { borderWidth: number; borderColor: string; borderRadius: number; overflow: "hidden"; backgroundColor: string; }; }' is not assignable to type 'ViewProps'.
+      Property 'key' does not exist on type 'ViewProps'.
+  Overload 2 of 2, '(props: ViewProps, context: any): View', gave the following error.
+    Type '{ key: string; style: { borderWidth: number; borderColor: string; borderRadius: number; overflow: "hidden"; backgroundColor: string; }; }' is not assignable to type 'ViewProps'.
+      Property 'key' does not exist on type 'ViewProps'.
+screens/CommunicationHubScreen.tsx(3105,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3109,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3111,31): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3117,27): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3119,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3121,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3127,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3137,31): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3139,31): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3159,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3169,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3171,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3173,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3177,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3179,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3191,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3193,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3201,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3213,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3215,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3217,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3239,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3241,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3243,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3247,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3249,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3283,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3285,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3289,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3291,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3297,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3299,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3301,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3305,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3307,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3309,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3315,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3317,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3327,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3333,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3335,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3345,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3351,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3353,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3363,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3365,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3369,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3379,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3381,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3387,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3401,27): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3405,27): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3409,25): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3417,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3427,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3429,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3449,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3451,11): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: ScrollViewProps): ScrollView', gave the following error.
+    Type '{ ref: RefObject<ScrollView>; style: { flex: number; }; contentContainerStyle: { padding: number; gap: number; }; }' is not assignable to type 'ScrollViewProps'.
+      Property 'ref' does not exist on type 'ScrollViewProps'.
+  Overload 2 of 2, '(props: ScrollViewProps, context: any): ScrollView', gave the following error.
+    Type '{ ref: RefObject<ScrollView>; style: { flex: number; }; contentContainerStyle: { padding: number; gap: number; }; }' is not assignable to type 'ScrollViewProps'.
+      Property 'ref' does not exist on type 'ScrollViewProps'.
+screens/CommunicationHubScreen.tsx(3475,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3477,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3481,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3503,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3505,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3537,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3537,25): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: ViewProps): View', gave the following error.
+    Type '{ key: string; style: ({ maxWidth: "80%"; gap: number; } | { alignSelf: "flex-end"; alignItems: "flex-end"; } | { alignSelf: "flex-start"; } | { maxWidth: "90%"; })[]; }' is not assignable to type 'ViewProps'.
+      Property 'key' does not exist on type 'ViewProps'.
+  Overload 2 of 2, '(props: ViewProps, context: any): View', gave the following error.
+    Type '{ key: string; style: ({ maxWidth: "80%"; gap: number; } | { alignSelf: "flex-end"; alignItems: "flex-end"; } | { alignSelf: "flex-start"; } | { maxWidth: "90%"; })[]; }' is not assignable to type 'ViewProps'.
+      Property 'key' does not exist on type 'ViewProps'.
+screens/CommunicationHubScreen.tsx(3539,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3553,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3555,25): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3557,27): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3561,25): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3563,27): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3565,27): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3571,27): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3573,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3575,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3585,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3587,25): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3595,25): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3597,27): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3599,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3601,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3605,27): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3607,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3609,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3613,27): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3615,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3617,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3625,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3629,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3649,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3649,23): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: ViewProps): View', gave the following error.
+    Type '{ key: string; style: ({ maxWidth: "80%"; gap: number; } | { alignSelf: "flex-end"; alignItems: "flex-end"; } | { alignSelf: "flex-start"; })[]; }' is not assignable to type 'ViewProps'.
+      Property 'key' does not exist on type 'ViewProps'.
+  Overload 2 of 2, '(props: ViewProps, context: any): View', gave the following error.
+    Type '{ key: string; style: ({ maxWidth: "80%"; gap: number; } | { alignSelf: "flex-end"; alignItems: "flex-end"; } | { alignSelf: "flex-start"; })[]; }' is not assignable to type 'ViewProps'.
+      Property 'key' does not exist on type 'ViewProps'.
+screens/CommunicationHubScreen.tsx(3651,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3655,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3661,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3673,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3701,33): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3705,33): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3707,35): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3713,31): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3743,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3761,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3765,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3767,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3777,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3779,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3783,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3785,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3787,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3793,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3803,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3805,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3809,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3811,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3813,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3827,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3831,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3831,23): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: ViewProps): View', gave the following error.
+    Type '{ key: string; style: { maxWidth: number; flexDirection: "row"; alignItems: "center"; gap: number; paddingHorizontal: number; paddingVertical: number; borderRadius: number; backgroundColor: string; borderWidth: number; borderColor: string; }; }' is not assignable to type 'ViewProps'.
+      Property 'key' does not exist on type 'ViewProps'.
+  Overload 2 of 2, '(props: ViewProps, context: any): View', gave the following error.
+    Type '{ key: string; style: { maxWidth: number; flexDirection: "row"; alignItems: "center"; gap: number; paddingHorizontal: number; paddingVertical: number; borderRadius: number; backgroundColor: string; borderWidth: number; borderColor: string; }; }' is not assignable to type 'ViewProps'.
+      Property 'key' does not exist on type 'ViewProps'.
+screens/CommunicationHubScreen.tsx(3833,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3843,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3849,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3851,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3865,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3867,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3877,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3881,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3883,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3901,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3919,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3923,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3943,5): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3957,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3969,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3981,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3983,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3995,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3997,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(3999,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4003,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4011,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4023,5): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4041,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4042,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4044,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4045,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4046,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4048,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4049,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4052,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4053,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4054,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4057,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4061,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4062,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4066,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4069,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4070,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4071,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4076,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4078,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4079,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4080,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4084,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4085,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4086,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4090,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4091,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4092,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4099,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4100,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4101,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4107,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4108,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4109,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4114,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4115,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4116,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4126,27): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4126,33): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: ViewProps): View', gave the following error.
+    Type '{ key: string; style: { borderWidth: number; borderColor: string; borderRadius: number; overflow: "hidden"; backgroundColor: string; }; }' is not assignable to type 'ViewProps'.
+      Property 'key' does not exist on type 'ViewProps'.
+  Overload 2 of 2, '(props: ViewProps, context: any): View', gave the following error.
+    Type '{ key: string; style: { borderWidth: number; borderColor: string; borderRadius: number; overflow: "hidden"; backgroundColor: string; }; }' is not assignable to type 'ViewProps'.
+      Property 'key' does not exist on type 'ViewProps'.
+screens/CommunicationHubScreen.tsx(4128,31): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4130,31): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4131,33): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4134,29): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4135,31): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4136,31): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4139,31): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4144,33): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4145,33): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4159,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4160,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4161,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4168,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4169,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4176,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4178,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4185,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4189,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4195,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4198,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4202,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4216,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4218,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4220,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4222,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4228,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4244,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4246,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4254,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4258,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4280,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4296,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4298,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4310,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4320,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4322,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4338,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4356,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4358,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4376,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4388,9): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4390,11): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4392,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4394,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4396,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4398,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4406,15): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4416,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4424,13): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4430,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4430,25): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: ViewProps): View', gave the following error.
+    Type '{ key: string; style: { flexDirection: "row"; alignItems: "center"; gap: number; padding: number; borderRadius: number; borderWidth: number; borderColor: string; backgroundColor: string; marginBottom: number; }; }' is not assignable to type 'ViewProps'.
+      Property 'key' does not exist on type 'ViewProps'.
+  Overload 2 of 2, '(props: ViewProps, context: any): View', gave the following error.
+    Type '{ key: string; style: { flexDirection: "row"; alignItems: "center"; gap: number; padding: number; borderRadius: number; borderWidth: number; borderColor: string; backgroundColor: string; marginBottom: number; }; }' is not assignable to type 'ViewProps'.
+      Property 'key' does not exist on type 'ViewProps'.
+screens/CommunicationHubScreen.tsx(4432,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4452,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4460,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4462,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4466,25): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4476,21): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4478,23): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4488,17): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4490,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4492,19): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.
+screens/CommunicationHubScreen.tsx(4506,7): error TS17004: Cannot use JSX unless the '--jsx' flag is provided.

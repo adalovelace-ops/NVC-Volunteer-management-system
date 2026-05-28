@@ -21,11 +21,20 @@ import {
   getPendingUserApprovals,
   subscribeToMessages,
   subscribeToStorageChanges,
+  getAllVolunteerProjectMatches,
+  getAllVolunteers,
+  getAllProjects,
+  getAllUsers,
+  getAllPartnerProjectApplications,
 } from '../models/storage';
+import { User, PartnerProjectApplication } from '../models/types';
+
 
 export type AdminTabParamList = {
   Dashboard: undefined;
+  Analytics: undefined;
   Partners: { partnerId?: string } | undefined;
+  PartnerApprovals: undefined;
   Projects: { projectId?: string; programSuiteView?: 'programs' | 'projects' | 'events' } | undefined;
   Volunteers: { volunteerId?: string } | undefined;
   Map: undefined;
@@ -46,6 +55,7 @@ function lazyScreen<T extends object>(loader: () => { default: React.ComponentTy
 }
 
 const DashboardScreen = lazyScreen(() => require('../screens/DashboardScreen'));
+const AdminAnalyticsScreen = lazyScreen(() => require('../screens/AdminAnalyticsScreen'));
 const AdminProjectsScreen = lazyScreen(() => require('../screens/AdminProjectsScreen'));
 const MappingScreen = lazyScreen(() => require('../screens/MappingScreen'));
 const CommunicationHubScreen = lazyScreen(() => require('../screens/CommunicationHubScreen'));
@@ -55,6 +65,7 @@ const PartnerManagementScreen = lazyScreen(() => require('../screens/PartnerMana
 const AdminReportsScreen = lazyScreen(() => require('../screens/AdminReportsScreen'));
 const ProfileScreen = lazyScreen(() => require('../screens/ProfileScreen'));
 const SystemSettingsScreen = lazyScreen(() => require('../screens/SystemSettingsScreen'));
+const PartnerApprovalsScreen = lazyScreen(() => require('../screens/PartnerApprovalsScreen'));
 
 const SIDEBAR_WIDTH = 200;
 const SIDEBAR_WIDTH_COLLAPSED = 60;
@@ -64,7 +75,9 @@ const CONTENT_GUTTER_COLLAPSED = 80;
 const getIconName = (routeName: keyof AdminTabParamList) => {
   switch (routeName) {
     case 'Dashboard': return 'dashboard';
+    case 'Analytics': return 'analytics';
     case 'Partners': return 'business';
+    case 'PartnerApprovals': return 'verified-user';
     case 'Projects': return 'business-center';
     case 'Volunteers': return 'groups';
     case 'Map': return 'map';
@@ -84,12 +97,116 @@ type SidebarProps = BottomTabBarProps & {
 
 function SidebarTabBar({ state, descriptors, navigation, collapsed, onToggle }: SidebarProps) {
   const [programMenuOpen, setProgramMenuOpen] = useState(false);
+  const [programBtnTop, setProgramBtnTop] = useState(0);
+
   const systemsRoutes = state.routes.filter(
-    route => !['Partners', 'Volunteers', 'Users', 'Settings', 'Profile'].includes(route.name)
+    route => !['Partners', 'PartnerApprovals', 'Volunteers', 'Users', 'Settings', 'Profile'].includes(route.name)
   );
   const settingsRoutes = state.routes.filter(
-    route => ['Partners', 'Volunteers', 'Users', 'Settings', 'Profile'].includes(route.name)
+    route => ['Partners', 'PartnerApprovals', 'Volunteers', 'Users', 'Settings', 'Profile'].includes(route.name)
   );
+
+  // Close menu when sidebar expands
+  React.useEffect(() => {
+    if (!collapsed) setProgramMenuOpen(false);
+  }, [collapsed]);
+
+  // Inject/remove a fixed-position DOM popup for the collapsed state on web
+  React.useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const POPUP_ID = 'program-suite-popup';
+    let existing = document.getElementById(POPUP_ID);
+
+    if (!collapsed || !programMenuOpen) {
+      if (existing) existing.remove();
+      return;
+    }
+
+    if (!existing) {
+      existing = document.createElement('div');
+      existing.id = POPUP_ID;
+      document.body.appendChild(existing);
+    }
+
+    const top = programBtnTop > 0 ? programBtnTop : 120;
+    const left = SIDEBAR_WIDTH_COLLAPSED + 8;
+
+    existing.innerHTML = '';
+    existing.style.cssText = `
+      position: fixed;
+      top: ${top}px;
+      left: ${left}px;
+      background: #ffffff;
+      border-radius: 12px;
+      border: 1px solid #bbf7d0;
+      padding: 8px 4px;
+      min-width: 175px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+      z-index: 99999;
+      font-family: inherit;
+    `;
+
+    const label = document.createElement('div');
+    label.textContent = 'Program Suite';
+    label.style.cssText = 'font-size:11px;font-weight:700;color:#94a3b8;padding:0 10px 6px;text-transform:uppercase;letter-spacing:0.5px;';
+    existing.appendChild(label);
+
+    const items = [
+      { icon: '💼', text: 'Programs', view: 'programs' },
+      { icon: '📁', text: 'Projects', view: 'projects' },
+      { icon: '📅', text: 'Events',   view: 'events'   },
+    ] as const;
+
+    items.forEach(item => {
+      const btn = document.createElement('button');
+      btn.textContent = `${item.icon}  ${item.text}`;
+      btn.style.cssText = `
+        display: flex;
+        align-items: center;
+        width: 100%;
+        padding: 9px 12px;
+        border: none;
+        background: transparent;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 700;
+        color: #15803d;
+        cursor: pointer;
+        text-align: left;
+        gap: 8px;
+      `;
+      btn.onmouseenter = () => { btn.style.background = '#f0fdf4'; };
+      btn.onmouseleave = () => { btn.style.background = 'transparent'; };
+      btn.onclick = () => {
+        navigation.navigate('Projects', { programSuiteView: item.view });
+        setProgramMenuOpen(false);
+      };
+      existing!.appendChild(btn);
+    });
+
+    // Click outside to close
+    const handleOutside = (e: MouseEvent) => {
+      if (!existing!.contains(e.target as Node)) {
+        setProgramMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      existing?.remove();
+    };
+  }, [collapsed, programMenuOpen, programBtnTop, navigation]);
+
+  // Cleanup on unmount
+  React.useEffect(() => {
+    return () => {
+      if (typeof document !== 'undefined') {
+        document.getElementById('program-suite-popup')?.remove();
+      }
+    };
+  }, []);
+
+  const programBtnRef = React.useRef<React.ElementRef<typeof TouchableOpacity>>(null);
 
   const renderItem = (routeName: string) => {
     const route = state.routes.find(r => r.name === routeName);
@@ -104,74 +221,77 @@ function SidebarTabBar({ state, descriptors, navigation, collapsed, onToggle }: 
     const isProgramRoute = route.name === 'Projects';
 
     return (
-      <React.Fragment key={route.key}>
-      <TouchableOpacity
-        onPress={() => {
-          if (isProgramRoute && !collapsed) {
-            setProgramMenuOpen(current => !current);
-            return;
-          }
-          navigation.navigate(route.name);
-        }}
-        style={[styles.sidebarItem, focused && styles.sidebarItemActive, collapsed && styles.sidebarItemCollapsed]}
-      >
-        <View style={styles.sidebarIconWrap}>
-          <MaterialIcons
-            name={getIconName(route.name as keyof AdminTabParamList)}
-            size={20}
-            color={focused ? '#166534' : '#65a30d'}
-            style={collapsed ? undefined : styles.sidebarIcon}
-          />
-          {collapsed && badgeValue > 0 && (
-            <View style={styles.sidebarIconBadge}>
-              <Text style={styles.sidebarIconBadgeText}>{badgeValue > 99 ? '99+' : badgeValue}</Text>
-            </View>
-          )}
-        </View>
-        {!collapsed && (
-          <View style={styles.sidebarLabelRow}>
-            <Text style={[styles.sidebarLabel, focused && styles.sidebarLabelActive]} numberOfLines={1}>{label}</Text>
-            {badgeValue > 0 && (
-              <View style={styles.sidebarBadge}>
-                <Text style={styles.sidebarBadgeText}>{badgeValue > 99 ? '99+' : badgeValue}</Text>
+      <View key={route.key}>
+        <TouchableOpacity
+          ref={isProgramRoute ? programBtnRef : undefined}
+          onPress={() => {
+            if (isProgramRoute) {
+              // Measure the button's position via DOM getBoundingClientRect
+              if (typeof window !== 'undefined') {
+                const domNode = (programBtnRef.current as any)?._nativeTag
+                  ? undefined
+                  : (programBtnRef.current as unknown as HTMLElement);
+                if (domNode?.getBoundingClientRect) {
+                  const rect = domNode.getBoundingClientRect();
+                  setProgramBtnTop(rect.top);
+                }
+              }
+              setProgramMenuOpen(current => !current);
+              return;
+            }
+            navigation.navigate(route.name);
+          }}
+          style={[styles.sidebarItem, focused && styles.sidebarItemActive, collapsed && styles.sidebarItemCollapsed]}
+        >
+          <View style={styles.sidebarIconWrap}>
+            <MaterialIcons
+              name={getIconName(route.name as keyof AdminTabParamList)}
+              size={20}
+              color={focused ? '#166534' : '#65a30d'}
+              style={collapsed ? undefined : styles.sidebarIcon}
+            />
+            {collapsed && badgeValue > 0 && (
+              <View style={styles.sidebarIconBadge}>
+                <Text style={styles.sidebarIconBadgeText}>{badgeValue > 99 ? '99+' : badgeValue}</Text>
               </View>
             )}
-            {isProgramRoute && (
-              <MaterialIcons
-                name={programMenuOpen ? 'expand-less' : 'expand-more'}
-                size={18}
-                color={focused ? '#166534' : '#65a30d'}
-              />
-            )}
+          </View>
+          {!collapsed && (
+            <View style={styles.sidebarLabelRow}>
+              <Text style={[styles.sidebarLabel, focused && styles.sidebarLabelActive]} numberOfLines={1}>{label}</Text>
+              {badgeValue > 0 && (
+                <View style={styles.sidebarBadge}>
+                  <Text style={styles.sidebarBadgeText}>{badgeValue > 99 ? '99+' : badgeValue}</Text>
+                </View>
+              )}
+              {isProgramRoute && (
+                <MaterialIcons
+                  name={programMenuOpen ? 'expand-less' : 'expand-more'}
+                  size={18}
+                  color={focused ? '#166534' : '#65a30d'}
+                />
+              )}
+            </View>
+          )}
+        </TouchableOpacity>
+        {/* Inline submenu when sidebar is expanded */}
+        {isProgramRoute && !collapsed && programMenuOpen && (
+          <View style={styles.sidebarSubmenu}>
+            <TouchableOpacity style={styles.sidebarSubmenuItem} onPress={() => { navigation.navigate('Projects', { programSuiteView: 'programs' }); setProgramMenuOpen(false); }}>
+              <MaterialIcons name="work" size={16} color="#15803d" />
+              <Text style={styles.sidebarSubmenuText}>Programs</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.sidebarSubmenuItem} onPress={() => { navigation.navigate('Projects', { programSuiteView: 'projects' }); setProgramMenuOpen(false); }}>
+              <MaterialIcons name="folder" size={16} color="#15803d" />
+              <Text style={styles.sidebarSubmenuText}>Projects</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.sidebarSubmenuItem} onPress={() => { navigation.navigate('Projects', { programSuiteView: 'events' }); setProgramMenuOpen(false); }}>
+              <MaterialIcons name="event" size={16} color="#15803d" />
+              <Text style={styles.sidebarSubmenuText}>Events</Text>
+            </TouchableOpacity>
           </View>
         )}
-      </TouchableOpacity>
-      {isProgramRoute && !collapsed && programMenuOpen ? (
-        <View style={styles.sidebarSubmenu}>
-          <TouchableOpacity
-            style={styles.sidebarSubmenuItem}
-            onPress={() => navigation.navigate('Projects', { programSuiteView: 'programs' })}
-          >
-            <MaterialIcons name="work" size={16} color="#15803d" />
-            <Text style={styles.sidebarSubmenuText}>Programs</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.sidebarSubmenuItem}
-            onPress={() => navigation.navigate('Projects', { programSuiteView: 'projects' })}
-          >
-            <MaterialIcons name="folder" size={16} color="#15803d" />
-            <Text style={styles.sidebarSubmenuText}>Projects</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.sidebarSubmenuItem}
-            onPress={() => navigation.navigate('Projects', { programSuiteView: 'events' })}
-          >
-            <MaterialIcons name="event" size={16} color="#15803d" />
-            <Text style={styles.sidebarSubmenuText}>Events</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
-      </React.Fragment>
+      </View>
     );
   };
 
@@ -181,7 +301,7 @@ function SidebarTabBar({ state, descriptors, navigation, collapsed, onToggle }: 
         <View style={styles.sidebarBrand}>
           <View style={styles.sidebarBrandIcon}><AppLogo width={36} /></View>
           <View style={styles.sidebarBrandCopy}>
-            <Text style={styles.sidebarBrandName}>NVC CONNECT</Text>
+            <Text style={styles.sidebarBrandName}>NVC</Text>
             <Text style={styles.sidebarBrandTag}>Admin Suite</Text>
           </View>
         </View>
@@ -214,49 +334,118 @@ function SidebarCapture({ onPropsChange, ...tabBarProps }: BottomTabBarProps & {
 
 export default function AdminNavigator() {
   const { user } = useAuth();
-  const [messageUnreadCount, setMessageUnreadCount] = useState(0);
-  const [reportNotificationCount, setReportNotificationCount] = useState(0);
-  const [pendingUserApprovalCount, setPendingUserApprovalCount] = useState(0);
+  const [pendingUsers, setPendingUsers] = useState<User[]>([]);
+  const [unreadMessages, setUnreadMessages] = useState<any[]>([]);
+  const [unreadReports, setUnreadReports] = useState<any[]>([]);
+  const [pendingPartnerApplications, setPendingPartnerApplications] = useState<PartnerProjectApplication[]>([]);
+  const [pendingVolunteerRequests, setPendingVolunteerRequests] = useState<any[]>([]);
+
+  const messageUnreadCount = unreadMessages.length;
+  const reportNotificationCount = unreadReports.length;
+  const pendingUserApprovalCount = pendingUsers.length;
   const [collapsed, setCollapsed] = useState(true);
   const [tabBarProps, setTabBarProps] = useState<BottomTabBarProps | null>(null);
   const [tabBarSignature, setTabBarSignature] = useState('');
-  const isWeb = getPlatformOS() === 'web';
+  const isMobileModeOnWeb = React.useMemo(() => {
+    if (getPlatformOS() !== 'web') return false;
+    try {
+      if (typeof window !== 'undefined' && window?.location?.search) {
+        return new URLSearchParams(window.location.search).get('mode') === 'mobile';
+      }
+    } catch {}
+    return false;
+  }, []);
+  const isWeb = getPlatformOS() === 'web' && !isMobileModeOnWeb;
 
   useEffect(() => {
     if (!user?.id) return;
-    const loadCounts = async () => {
-        try {
-            const messages = await getMessagesForUser(user.id);
-            setMessageUnreadCount(messages.filter(m => !m.read && m.recipientId === user.id).length);
-        } catch {}
-    };
 
-    const loadReportNotificationCount = async () => {
+    const loadAllNotifications = async () => {
       try {
-        const reports = await getAllPartnerReports();
-        const unreadCount = reports.filter(r => !r.viewedBy?.includes(user.id)).length;
-        setReportNotificationCount(unreadCount);
-      } catch {}
+        const [
+          allMsgs,
+          reports,
+          pUsers,
+          apps,
+          matches,
+          volunteers,
+          projects,
+          usersList,
+        ] = await Promise.all([
+          getMessagesForUser(user.id).catch(() => []),
+          getAllPartnerReports().catch(() => []),
+          getPendingUserApprovals().catch(() => []),
+          getAllPartnerProjectApplications().catch(() => []),
+          getAllVolunteerProjectMatches().catch(() => []),
+          getAllVolunteers().catch(() => []),
+          getAllProjects().catch(() => []),
+          getAllUsers().catch(() => []),
+        ]);
+
+        // Map unread messages and enrich with senderName
+        const unreadMsgs = allMsgs.filter(m => !m.read && m.recipientId === user.id);
+        const enrichedMsgs = unreadMsgs.map(msg => {
+          const sender = usersList.find(u => u.id === msg.senderId);
+          return {
+            ...msg,
+            senderName: sender ? sender.name : msg.senderId,
+          };
+        });
+        setUnreadMessages(enrichedMsgs);
+
+        // Map unread reports and enrich with submitterName, projectTitle
+        const unreadRpts = reports.filter(r => !r.viewedBy?.includes(user.id));
+        const enrichedReports = unreadRpts.map(r => {
+          const project = projects.find(p => p.id === r.projectId);
+          return {
+            ...r,
+            projectTitle: project ? project.title : 'NVC Project',
+            title: r.title || `Report for ${project ? project.title : 'Project'}`,
+          };
+        });
+        setUnreadReports(enrichedReports);
+
+        // Pending user approvals
+        setPendingUsers(pUsers);
+
+        // Pending partner applications
+        const pendingApps = apps.filter(a => a.status === 'Pending');
+        setPendingPartnerApplications(pendingApps);
+
+        // Pending volunteer requests
+        const pendingMatches = matches.filter(m => m.status === 'Requested');
+        const enrichedMatches = pendingMatches.map(match => {
+          const volunteer = volunteers.find(v => v.id === match.volunteerId);
+          const project = projects.find(p => p.id === match.projectId);
+          return {
+            ...match,
+            volunteerName: volunteer ? volunteer.name : match.volunteerId,
+            projectTitle: project ? project.title : 'NVC Project',
+          };
+        });
+        setPendingVolunteerRequests(enrichedMatches);
+      } catch (err) {
+        console.error('Error loading admin notifications:', err);
+      }
     };
 
-    const loadPendingUserApprovalCount = async () => {
-      try {
-        const pendingUsers = await getPendingUserApprovals();
-        setPendingUserApprovalCount(pendingUsers.length);
-      } catch {}
+    loadAllNotifications();
+
+    const unsubMessages = subscribeToMessages(user.id, loadAllNotifications);
+    const unsubStorage = subscribeToStorageChanges([
+      'messages',
+      'partnerReports',
+      'users',
+      'partnerProjectApplications',
+      'volunteerMatches',
+      'projects',
+      'volunteers'
+    ], loadAllNotifications);
+
+    return () => {
+      unsubMessages();
+      unsubStorage?.();
     };
-
-    loadCounts();
-    loadReportNotificationCount();
-    loadPendingUserApprovalCount();
-
-    const unsubMessages = subscribeToMessages(user.id, loadCounts);
-    const unsubStorage = subscribeToStorageChanges(['partnerReports', 'users'], () => {
-        loadCounts();
-        loadReportNotificationCount();
-        loadPendingUserApprovalCount();
-    });
-    return () => { unsubMessages(); unsubStorage?.(); };
   }, [user?.id]);
 
   const navigator = (
@@ -264,7 +453,25 @@ export default function AdminNavigator() {
       tabBar={isWeb ? props => <SidebarCapture {...props} onPropsChange={(p, s) => { setTabBarProps(p); setTabBarSignature(s); }} /> : undefined}
       screenOptions={({ route }) => ({
         headerShown: true,
-        header: ({ options }) => <ScreenBrandHeader title={options.title || route.name} />,
+        header: ({ options, navigation }) => (
+          <ScreenBrandHeader
+            title={options.title || route.name}
+            navigation={navigation}
+            userId={user?.id}
+            notificationCount={
+              pendingUsers.length +
+              unreadMessages.length +
+              unreadReports.length +
+              pendingPartnerApplications.length +
+              pendingVolunteerRequests.length
+            }
+            pendingUsers={pendingUsers}
+            unreadMessages={unreadMessages}
+            unreadReports={unreadReports}
+            pendingPartnerApplications={pendingPartnerApplications}
+            pendingVolunteerRequests={pendingVolunteerRequests}
+          />
+        ),
         tabBarIcon: ({ color, size }) => <MaterialIcons name={getIconName(route.name as keyof AdminTabParamList)} size={size} color={color} />,
         tabBarActiveTintColor: '#4CAF50',
         tabBarInactiveTintColor: '#999',
@@ -272,12 +479,21 @@ export default function AdminNavigator() {
       })}
     >
       <Tab.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'Admin Dashboard' }} />
-      <Tab.Screen name="Projects" component={AdminProjectsScreen} options={{ title: 'Program Management Suite' }} />
+      <Tab.Screen
+        name="Projects"
+        component={AdminProjectsScreen}
+        options={{
+          title: 'Program Management Suite',
+          tabBarBadge: pendingVolunteerRequests.length > 0 ? pendingVolunteerRequests.length : undefined,
+        }}
+      />
       <Tab.Screen name="Partners" component={PartnerManagementScreen} options={{ title: 'Partner Management' }} />
+      <Tab.Screen name="PartnerApprovals" component={PartnerApprovalsScreen} options={{ title: 'Partner Approvals' }} />
       <Tab.Screen name="Volunteers" component={VolunteerManagementScreen} options={{ title: 'Volunteer Management' }} />
       <Tab.Screen name="Map" component={MappingScreen} options={{ title: 'Map' }} />
       <Tab.Screen name="Messages" component={CommunicationHubScreen} options={{ title: 'Messages', tabBarBadge: messageUnreadCount > 0 ? messageUnreadCount : undefined }} />
       <Tab.Screen name="Reports" component={AdminReportsScreen} options={{ title: 'Reports', tabBarBadge: reportNotificationCount > 0 ? reportNotificationCount : undefined }} />
+      <Tab.Screen name="Analytics" component={AdminAnalyticsScreen} options={{ title: 'Analytics' }} />
       <Tab.Screen name="Users" component={UserManagementScreen} options={{ title: 'User Management', tabBarBadge: pendingUserApprovalCount > 0 ? pendingUserApprovalCount : undefined }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ title: 'Admin Profile' }} />
       <Tab.Screen name="Settings" component={SystemSettingsScreen} options={{ title: 'System Settings' }} />

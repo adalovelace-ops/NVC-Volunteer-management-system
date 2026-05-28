@@ -24,6 +24,7 @@ import {
   saveVolunteer,
   subscribeToStorageChanges,
 } from '../models/storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import InlineLoadError from '../components/InlineLoadError';
 import { getProjectDisplayStatus } from '../utils/projectStatus';
@@ -32,6 +33,8 @@ import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestEr
 // Lets admins inspect volunteers, update availability, and assign projects.
 export default function VolunteerManagementScreen({ navigation, route }: any) {
   const { user, isAdmin } = useAuth();
+  const insets = useSafeAreaInsets();
+
   const [loadError, setLoadError] = useState<{ title: string; message: string } | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [volunteers, setVolunteers] = useState<Volunteer[]>([]);
@@ -46,6 +49,13 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
   const [daysPerWeek, setDaysPerWeek] = useState('3');
   const [hoursPerWeek, setHoursPerWeek] = useState('12');
   const [availableDays, setAvailableDays] = useState<string[]>(['Monday', 'Wednesday', 'Saturday']);
+
+  useEffect(() => {
+    if (navigation) {
+      const showHeader = view === 'list';
+      navigation.setOptions({ headerShown: showHeader });
+    }
+  }, [view, navigation]);
 
   useEffect(() => {
     if (!actionNotice) {
@@ -432,14 +442,16 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
     });
 
     return (
-      <ScrollView style={styles.container}>
-        <View style={styles.header}>
+      <View style={styles.container}>
+        <View style={[styles.header, { paddingTop: insets.top, height: 56 + insets.top }]}>
           <TouchableOpacity onPress={() => setView('list')}>
             <MaterialIcons name="arrow-back" size={24} color="#333" />
           </TouchableOpacity>
           <Text style={styles.title}>Volunteer Profile</Text>
           <View style={{ width: 24 }} />
         </View>
+
+        <ScrollView style={{ flex: 1 }}>
 
         {actionNotice ? (
           <View style={styles.noticeBanner}>
@@ -813,6 +825,7 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
           </View>
         </Modal>
       </ScrollView>
+    </View>
     );
   }
 
@@ -970,35 +983,35 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   listContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
   },
   card: {
     backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    margin: 16,
+    borderRadius: 10,
+    padding: 10,
+    margin: 6,
   },
   avatarSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
-    marginBottom: 16,
+    gap: 8,
+    marginBottom: 6,
   },
   avatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#2196F3',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1006,24 +1019,24 @@ const styles = StyleSheet.create({
   avatarText: {
     color: '#fff',
     fontWeight: 'bold',
-    fontSize: 24,
+    fontSize: 14,
   },
   volunteerName: {
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: 'bold',
     color: '#333',
   },
   volunteerEmail: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#666',
-    marginTop: 4,
+    marginTop: 2,
   },
   statusBadge: {
     alignSelf: 'flex-start',
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    marginTop: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 6,
   },
   statusOpen: {
     backgroundColor: '#dcfce7',
@@ -1032,16 +1045,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#fee2e2',
   },
   statusBadgeText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     color: '#1f2937',
   },
   registrationBadge: {
     alignSelf: 'flex-start',
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    marginTop: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 6,
   },
   registrationBadgePending: {
     backgroundColor: '#fef3c7',
@@ -1053,52 +1066,52 @@ const styles = StyleSheet.create({
     backgroundColor: '#fee2e2',
   },
   registrationBadgeText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     color: '#1f2937',
   },
   statsGrid: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 6,
   },
   stat: {
     flex: 1,
     backgroundColor: '#f9f9f9',
     borderRadius: 8,
-    padding: 12,
+    padding: 6,
     alignItems: 'center',
   },
   statValue: {
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: 'bold',
     color: '#333',
-    marginTop: 4,
+    marginTop: 2,
   },
   statLabel: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#999',
-    marginTop: 4,
+    marginTop: 2,
   },
   section: {
     backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    margin: 16,
-    marginBottom: 8,
+    borderRadius: 10,
+    padding: 10,
+    margin: 6,
+    marginBottom: 4,
   },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   sectionTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: 'bold',
     color: '#333',
   },
   sectionSummary: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#64748b',
     fontWeight: '600',
   },
@@ -1107,17 +1120,17 @@ const styles = StyleSheet.create({
   },
   reviewActionRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginTop: 14,
+    gap: 8,
+    marginTop: 10,
   },
   reviewActionButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    borderRadius: 10,
-    paddingVertical: 12,
+    gap: 6,
+    borderRadius: 8,
+    paddingVertical: 10,
   },
   reviewApproveButton: {
     backgroundColor: '#16a34a',
@@ -1127,11 +1140,11 @@ const styles = StyleSheet.create({
   },
   reviewActionButtonText: {
     color: '#fff',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
   },
   availabilityInfo: {
-    gap: 12,
+    gap: 6,
   },
   infoRow: {
     flexDirection: 'row',
@@ -1150,7 +1163,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#333',
-    marginTop: 8,
+    marginTop: 6,
   },
   daysContainer: {
     flexDirection: 'row',
@@ -1171,37 +1184,37 @@ const styles = StyleSheet.create({
   skillsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 6,
   },
   skillTag: {
     backgroundColor: '#f0f0f0',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: 16,
   },
   skillTagText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#333',
     fontWeight: '500',
   },
   timeLogCard: {
     backgroundColor: '#f8fafc',
     borderRadius: 10,
-    padding: 12,
-    marginBottom: 10,
+    padding: 10,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
   timeLogHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: 8,
+    gap: 8,
+    marginBottom: 6,
   },
   timeLogStatusBadge: {
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   timeLogStatusActive: {
     backgroundColor: '#fef3c7',
@@ -1210,32 +1223,32 @@ const styles = StyleSheet.create({
     backgroundColor: '#dcfce7',
   },
   timeLogStatusText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     color: '#1f2937',
   },
   timeLogMeta: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#334155',
-    marginTop: 4,
+    marginTop: 2,
   },
   timeLogNote: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#475569',
-    marginTop: 6,
+    marginTop: 4,
     fontStyle: 'italic',
   },
   timeLogProofText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#334155',
-    marginTop: 6,
-    lineHeight: 18,
+    marginTop: 4,
+    lineHeight: 16,
   },
   projectItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
   },
@@ -1243,7 +1256,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   projectName: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#333',
   },
@@ -1255,26 +1268,26 @@ const styles = StyleSheet.create({
   pendingRequestBadge: {
     backgroundColor: '#fef3c7',
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   pendingRequestBadgeText: {
     color: '#92400e',
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
   },
   matchRecordCard: {
     backgroundColor: '#f8fafc',
     borderRadius: 10,
-    padding: 12,
-    marginBottom: 10,
+    padding: 10,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
   matchRecordHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
+    gap: 8,
   },
   matchRecordStatusBadge: {
     borderRadius: 999,
@@ -1318,11 +1331,11 @@ const styles = StyleSheet.create({
   matchCard: {
     backgroundColor: '#f9f9f9',
     borderRadius: 8,
-    padding: 12,
-    marginVertical: 8,
+    padding: 10,
+    marginVertical: 6,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
   },
   matchContent: {
     flex: 1,
@@ -1333,9 +1346,9 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   matchButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: '#f0f0f0',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1343,17 +1356,17 @@ const styles = StyleSheet.create({
   volunteerCard: {
     backgroundColor: '#fff',
     borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 6,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   volunteerCardAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#4CAF50',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1361,10 +1374,10 @@ const styles = StyleSheet.create({
   volunteerCardAvatarText: {
     color: '#fff',
     fontWeight: 'bold',
-    fontSize: 16,
+    fontSize: 13,
   },
   volunteerCardName: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#333',
   },
@@ -1380,22 +1393,22 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   volunteerCardStatus: {
-    marginTop: 6,
+    marginTop: 4,
     fontSize: 11,
     fontWeight: '700',
   },
   listRegistrationBadge: {
-    marginTop: 8,
+    marginTop: 6,
   },
   inlineReviewActions: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 10,
+    gap: 6,
+    marginTop: 8,
   },
   inlineReviewButton: {
     borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
   inlineReviewButtonText: {
     color: '#fff',

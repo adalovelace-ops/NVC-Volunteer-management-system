@@ -13,7 +13,7 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { useAuth } from '../contexts/AuthContext';
-import { Partner, Project, Volunteer } from '../models/types';
+import { Partner, Project, Volunteer, VolunteerProjectJoinRecord } from '../models/types';
 import {
   getAllPartners,
   getAllVolunteers,
@@ -31,6 +31,7 @@ import {
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
 import { createGoogleMapsMarkerIcon, loadGoogleMaps } from '../utils/webGoogleMaps';
+import { getProjectVolunteerMapEntries } from '../utils/projectVolunteers';
 
 const MapHost = 'div' as any;
 const MAP_FIT_PADDING_PX = 64;
@@ -57,6 +58,7 @@ type VolunteerMapAccountOption = {
   id: string;
   label: string;
   projectIds: string[];
+  mappedProjectCount?: number;
 };
 
 function escapeHtml(value: string): string {
@@ -85,8 +87,8 @@ const MAP_STYLE_PRESETS: MapStylePreset[] = [
   {
     key: 'volunteer-view',
     label: 'Volunteer view',
-    description: 'Green terrain styling like the volunteer side.',
-    mapTypeId: 'terrain',
+    description: 'Green roadmap styling like the volunteer side.',
+    mapTypeId: 'roadmap',
     accentColor: '#166534',
     chipBg: '#f0fdf4',
     chipBorder: '#bbf7d0',
@@ -98,8 +100,8 @@ const MAP_STYLE_PRESETS: MapStylePreset[] = [
   {
     key: 'partner-view',
     label: 'Partner view',
-    description: 'Blue hybrid styling for partner planning.',
-    mapTypeId: 'hybrid',
+    description: 'Blue roadmap styling for partner planning.',
+    mapTypeId: 'roadmap',
     accentColor: '#0f766e',
     chipBg: '#ecfeff',
     chipBorder: '#a5f3fc',
@@ -151,6 +153,7 @@ export default function MappingScreen({ navigation }: any) {
   const [showVolunteerMenu, setShowVolunteerMenu] = useState(false);
   const [selectedMapStyleKey, setSelectedMapStyleKey] = useState<MapStylePresetKey>('admin-overview');
   const [selectedVolunteerId, setSelectedVolunteerId] = useState<string | null>(null);
+  const [volunteerJoinRecords, setVolunteerJoinRecords] = useState<VolunteerProjectJoinRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [mapError, setMapError] = useState<string | null>(null);
   const mapElementRef = useRef<HTMLDivElement | null>(null);
@@ -167,14 +170,28 @@ export default function MappingScreen({ navigation }: any) {
       [...volunteers]
         .sort((left, right) => left.name.localeCompare(right.name))
         .map(volunteer => {
+          const explicitJoinedEventIds = new Set(
+            volunteerJoinRecords
+              .filter(
+                record =>
+                  record.volunteerId === volunteer.id ||
+                  record.volunteerUserId === volunteer.userId
+              )
+              .map(record => record.projectId)
+          );
+
           const joinedEventProjectIds = projects
             .filter(
               project =>
                 project.isEvent &&
                 (
+                  explicitJoinedEventIds.has(project.id) ||
                   (project.joinedUserIds || []).includes(volunteer.userId) ||
                   (project.volunteers || []).includes(volunteer.id) ||
-                  (project.internalTasks || []).some(task => task.assignedVolunteerId === volunteer.id)
+                  (project.internalTasks || []).some(task =>
+                    task.assignedVolunteerId === volunteer.id ||
+                    (task.assignedVolunteerIds || []).includes(volunteer.id)
+                  )
                 )
             )
             .map(project => project.id);
@@ -185,7 +202,7 @@ export default function MappingScreen({ navigation }: any) {
             projectIds: joinedEventProjectIds,
           };
         }),
-    [projects, volunteers]
+    [projects, volunteers, volunteerJoinRecords]
   );
 
   const availableVolunteerMapAccounts = React.useMemo(() => {
@@ -223,6 +240,16 @@ export default function MappingScreen({ navigation }: any) {
   }, [projects, selectedMapStyleKey, selectedVolunteerAccount]);
 
   const mappedProjects = React.useMemo(() => getMappedProjects(displayProjects), [displayProjects]);
+  const markerVolunteerEntriesByProjectId = React.useMemo(
+    () =>
+      new Map(
+        mappedProjects.map(project => [
+          project.id,
+          getProjectVolunteerMapEntries(project, volunteers, volunteerJoinRecords),
+        ])
+      ),
+    [mappedProjects, volunteers, volunteerJoinRecords]
+  );
   const selectedMapStyle =
     MAP_STYLE_PRESETS.find(preset => preset.key === selectedMapStyleKey) || MAP_STYLE_PRESETS[0];
 
@@ -232,7 +259,7 @@ export default function MappingScreen({ navigation }: any) {
 
   useEffect(() => {
     return subscribeToStorageChanges(
-      ['projects', 'events', 'partnerProjectApplications', 'volunteerProjectJoins'],
+      ['projects', 'events', 'volunteers', 'partnerProjectApplications', 'volunteerProjectJoins'],
       () => {
         void loadProjects();
       }
@@ -310,7 +337,11 @@ export default function MappingScreen({ navigation }: any) {
             },
             map,
             title: project.title,
-            icon: createGoogleMapsMarkerIcon(googleMaps, getProjectMarkerColor(project)),
+            icon: createGoogleMapsMarkerIcon(
+              googleMaps,
+              getProjectMarkerColor(project),
+              markerVolunteerEntriesByProjectId.get(project.id)?.length || 0
+            ),
           });
 
           const listener = marker.addListener('click', () => {
@@ -319,17 +350,9 @@ export default function MappingScreen({ navigation }: any) {
           });
 
           const buildHoverContent = () => {
-            const projectVolunteerNames = volunteers
-              .filter(volunteer =>
-                (project.joinedUserIds || []).includes(volunteer.userId) ||
-                (project.volunteers || []).includes(volunteer.id) ||
-                (project.internalTasks || []).some(task => task.assignedVolunteerId === volunteer.id)
-              )
-              .sort((a, b) => a.name.localeCompare(b.name))
-              .map(volunteer => ({
-                id: volunteer.id,
-                name: volunteer.name,
-              }));
+            const projectVolunteerEntries =
+              markerVolunteerEntriesByProjectId.get(project.id) ||
+              getProjectVolunteerMapEntries(project, volunteers, volunteerJoinRecords);
 
             const partner = project.partnerId
               ? partners.find(entry => entry.id === project.partnerId) || null
@@ -366,21 +389,21 @@ export default function MappingScreen({ navigation }: any) {
             volunteerHeader.style.marginTop = partner ? '6px' : '0';
             volunteerHeader.style.fontWeight = '600';
             volunteerHeader.style.color = '#166534';
-            volunteerHeader.textContent = `Volunteers (${projectVolunteerNames.length})`;
+            volunteerHeader.textContent = `Volunteers (${projectVolunteerEntries.length})`;
             container.appendChild(volunteerHeader);
 
-            if (projectVolunteerNames.length === 0) {
+            if (projectVolunteerEntries.length === 0) {
               const empty = document.createElement('div');
               empty.style.color = '#64748b';
               empty.style.paddingTop = '4px';
               empty.textContent = 'No volunteers joined yet.';
               container.appendChild(empty);
             } else {
-              projectVolunteerNames.slice(0, 8).forEach(item => {
+              projectVolunteerEntries.slice(0, 8).forEach(item => {
                 const row = document.createElement('button');
                 row.type = 'button';
                 row.dataset.kind = 'volunteer';
-                row.dataset.id = item.id;
+                row.dataset.id = item.volunteerId || item.id;
                 row.style.display = 'block';
                 row.style.width = '100%';
                 row.style.textAlign = 'left';
@@ -390,14 +413,14 @@ export default function MappingScreen({ navigation }: any) {
                 row.style.cursor = 'pointer';
                 row.style.color = '#0f172a';
                 row.style.textDecoration = 'underline';
-                row.textContent = item.name;
+                row.textContent = item.label;
                 container.appendChild(row);
               });
-              if (projectVolunteerNames.length > 8) {
+              if (projectVolunteerEntries.length > 8) {
                 const more = document.createElement('div');
                 more.style.color = '#64748b';
                 more.style.paddingTop = '4px';
-                more.textContent = `+${projectVolunteerNames.length - 8} more`;
+                more.textContent = `+${projectVolunteerEntries.length - 8} more`;
                 container.appendChild(more);
               }
             }
@@ -527,7 +550,14 @@ export default function MappingScreen({ navigation }: any) {
       cancelled = true;
       clearMarkers();
     };
-  }, [mappedProjects, selectedMapStyle.mapTypeId, webGoogleMapsApiKey]);
+  }, [
+    mappedProjects,
+    selectedMapStyle.mapTypeId,
+    webGoogleMapsApiKey,
+    markerVolunteerEntriesByProjectId,
+    partners,
+    navigation,
+  ]);
 
   // Loads map projects and narrows visibility based on the active role.
   const loadProjects = async () => {
@@ -536,6 +566,7 @@ export default function MappingScreen({ navigation }: any) {
         'projects',
         'partnerProjectApplications',
         'volunteerJoinRecords',
+        'volunteerProfile',
       ]);
       const approvedPartnerProjectIds = new Set(
         snapshot.partnerApplications
@@ -560,20 +591,18 @@ export default function MappingScreen({ navigation }: any) {
               project =>
                 joinedVolunteerProjectIds.has(project.id) ||
                 (snapshot.volunteerProfile && (project.volunteers || []).includes(snapshot.volunteerProfile.id)) ||
-                (snapshot.volunteerProfile && (project.internalTasks || []).some(task => task.assignedVolunteerId === snapshot.volunteerProfile?.id))
+                (snapshot.volunteerProfile && (project.internalTasks || []).some(task =>
+                  task.assignedVolunteerId === snapshot.volunteerProfile?.id ||
+                  (task.assignedVolunteerIds || []).includes(snapshot.volunteerProfile?.id || '')
+                ))
             )
           : snapshot.projects;
 
       setProjects(visibleProjects);
-      setVolunteers([]);
-      setPartners([]);
-      setTimeout(async () => {
-        try {
-          const [allVolunteers, allPartners] = await Promise.all([getAllVolunteers(), getAllPartners()]);
-          setVolunteers(allVolunteers);
-          setPartners(allPartners);
-        } catch {}
-      }, 50);
+      setVolunteerJoinRecords(snapshot.volunteerJoinRecords || []);
+      const [allVolunteers, allPartners] = await Promise.all([getAllVolunteers(), getAllPartners()]);
+      setVolunteers(allVolunteers);
+      setPartners(allPartners);
       setLoading(false);
     } catch (error) {
       console.error('Error loading projects for map:', error);
@@ -700,6 +729,39 @@ export default function MappingScreen({ navigation }: any) {
 
       <View style={styles.projectListContainer}>
         <Text style={styles.projectListTitle}>Google Maps markers ({mappedProjects.length})</Text>
+        <ScrollView style={styles.markerList} showsVerticalScrollIndicator={false}>
+          {mappedProjects.map(project => {
+            const volunteerEntries = markerVolunteerEntriesByProjectId.get(project.id) || [];
+            const previewNames = volunteerEntries.slice(0, 3).map(entry => entry.label).join(', ');
+            const extraCount = Math.max(volunteerEntries.length - 3, 0);
+
+            return (
+              <TouchableOpacity
+                key={`marker-list-${project.id}`}
+                style={styles.markerListItem}
+                activeOpacity={0.82}
+                onPress={() => {
+                  setSelectedProject(project);
+                  setShowDetails(true);
+                }}
+              >
+                <View style={[styles.markerListPin, { backgroundColor: getProjectMarkerColor(project) }]}>
+                  <Text style={styles.markerListPinText}>{volunteerEntries.length}</Text>
+                </View>
+                <View style={styles.markerListCopy}>
+                  <Text style={styles.markerListName} numberOfLines={1}>
+                    {project.title}
+                  </Text>
+                  <Text style={styles.markerListMeta} numberOfLines={1}>
+                    {volunteerEntries.length} volunteer{volunteerEntries.length === 1 ? '' : 's'}
+                    {previewNames ? `: ${previewNames}${extraCount ? ` +${extraCount} more` : ''}` : ''}
+                  </Text>
+                </View>
+                <MaterialIcons name="chevron-right" size={18} color="#94a3b8" />
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
 
       <Modal animationType="slide" transparent visible={showDetails} onRequestClose={() => setShowDetails(false)}>
@@ -956,14 +1018,53 @@ const styles = StyleSheet.create({
   projectListContainer: {
     backgroundColor: '#fff',
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingTop: 8,
+    paddingBottom: 10,
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
+    maxHeight: 180,
   },
   projectListTitle: {
     fontSize: 13,
     color: '#666',
     fontWeight: '600',
+  },
+  markerList: {
+    marginTop: 8,
+  },
+  markerListItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+  },
+  markerListPin: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  markerListPinText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  markerListCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  markerListName: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  markerListMeta: {
+    marginTop: 2,
+    fontSize: 11,
+    color: '#64748b',
   },
   centeredView: {
     flex: 1,

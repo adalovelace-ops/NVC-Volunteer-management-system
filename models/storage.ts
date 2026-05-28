@@ -16,6 +16,7 @@ import {
   AdminPlanningCalendar,
   AdminPlanningItem,
   AdvocacyFocus,
+  AppSettings,
   ImpactHubReportType,
   PartnerReport,
   PartnerReportType,
@@ -25,7 +26,6 @@ import {
   Partner,
   Project,
   ProjectInternalTask,
-  ProgramTrack,
   Volunteer,
   Message,
   ProjectGroupMessage,
@@ -35,8 +35,8 @@ import {
   VolunteerTimeLog,
   PartnerProjectApplication,
   PartnerProjectProposalDetails,
+  ProgramTrack,
   PublishedImpactReport,
-  AppSettings,
   VolunteerProjectJoinRecord,
 } from './types';
 import { NVCSector, UserRole } from './types';
@@ -66,25 +66,50 @@ const STORAGE_KEYS = {
 };
 
 const WEB_MESSAGE_SYNC_KEY = 'volcre:messages:updatedAt';
+export const DEFAULT_APP_SETTINGS: AppSettings = {
+  notificationsEnabled: true,
+  autoRefreshEnabled: true,
+  compactDashboard: false,
+  approvalConfirmations: true,
+  showProgramContext: true,
+  startupScreen: 'Dashboard',
+};
+
 const memoryStorageCache = new Map<string, unknown>();
 const sharedStorageCacheTimestamps = new Map<string, number>();
 let mockDataInitializationPromise: Promise<void> | null = null;
 // Shared reads should fail fast enough to keep the UI responsive when the
 // backend is slow or unavailable.
-const REMOTE_STORAGE_TIMEOUT_MS = 90000; // Increased from 60s to 90s for slow projects table
-const REMOTE_STORAGE_BATCH_TIMEOUT_MS = 120000;
-const API_HEALTH_TIMEOUT_MS = 4000; // Reduced from 8s for faster startup detection
-const API_READY_RETRY_MS = 500; // Reduced from 1s for faster retries
-const API_READY_MAX_ATTEMPTS = 2; // Keep low to fail fast on mobile
-const API_READY_CACHE_MS = 10000; // Increased from 5s to reduce health checks
-const API_REQUEST_MAX_ATTEMPTS = 3; // Reduced from 4 to fail faster
-const API_REQUEST_RETRY_BASE_MS = 500; // Reduced from 1s
-const API_REQUEST_RETRY_MAX_MS = 4000; // Reduced from 8s
-const SHARED_STORAGE_CACHE_TTL_MS = 300000; // Increased from 90s to 5m
-const PROJECTS_SNAPSHOT_CACHE_TTL_MS = 60000; // Increased from 20s to 1m
-const STORAGE_CHANGE_POLL_INTERVAL_MS = 1000;
-const STORAGE_CHANGE_DEBOUNCE_MS = 250;
-const STORAGE_CHANGE_CALLBACK_COOLDOWN_MS = 250;
+const REMOTE_STORAGE_TIMEOUT_MS = 10000; // Base timeout for requests
+const API_HEALTH_TIMEOUT_MS = 3000; // Base timeout for health checks
+
+// Detect mobile at runtime (not module load time) to avoid errors
+function getRequestTimeoutMs(): number {
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.userAgent === 'string') {
+      const ua = navigator.userAgent.toLowerCase();
+      if (/android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/.test(ua)) {
+        return 15000; // Increased timeout for mobile networks
+      }
+    }
+  } catch {
+    // Ignore errors in user agent detection
+  }
+  return REMOTE_STORAGE_TIMEOUT_MS;
+}
+const API_READY_RETRY_MS = 800; // Reduced from 1s
+const API_READY_MAX_ATTEMPTS = 2;
+const API_READY_CACHE_MS = 10000; // Increased from 5s to 10s
+const API_REQUEST_MAX_ATTEMPTS = 3; // Reduced from 4 to 3
+const API_REQUEST_RETRY_BASE_MS = 800; // Reduced from 1s
+const API_REQUEST_RETRY_MAX_MS = 5000; // Reduced from 8s
+const SHARED_STORAGE_CACHE_TTL_MS = 600000; // Increased from 5m to 10m
+const PROJECTS_SNAPSHOT_CACHE_TTL_MS = 120000; // Increased from 1m to 2m
+const MESSAGES_CACHE_TTL_MS = 30000; // 30s cache for message list — invalidated on send/receive
+const CONVERSATION_CACHE_TTL_MS = 20000; // 20s cache for individual conversations
+const STORAGE_CHANGE_POLL_INTERVAL_MS = 5000; // Increased from 3s to 5s
+const STORAGE_CHANGE_DEBOUNCE_MS = 800; // Increased from 500ms
+const STORAGE_CHANGE_CALLBACK_COOLDOWN_MS = 1500; // Increased from 1s
 const LOCAL_ONLY_STORAGE_KEYS = new Set([STORAGE_KEYS.CURRENT_USER, STORAGE_KEYS.APP_SETTINGS]);
 const NEGROS_OCCIDENTAL_BOUNDS = {
   minLatitude: 9.85,
@@ -96,9 +121,13 @@ let apiReadyConfirmedAt = 0;
 let apiReadyCheckPromise: Promise<void> | null = null;
 const inFlightJsonRequests = new Map<string, Promise<unknown>>();
 const projectsSnapshotCache = new Map<string, { data: unknown; timestamp: number }>();
+// Message-specific caches — short TTL, invalidated on send/receive via WebSocket
+const messagesForUserCache = new Map<string, { data: Message[]; timestamp: number }>();
+const conversationCache = new Map<string, { data: Message[]; timestamp: number }>();
+const groupMessagesCache = new Map<string, { data: ProjectGroupMessage[]; timestamp: number }>();
 
-const PERSISTED_CACHE_KEY_PREFIX = 'volcre:v2:cache:';
-const PERSISTED_CACHE_TS_PREFIX = 'volcre:v2:cacheTs:';
+const PERSISTED_CACHE_KEY_PREFIX = 'volcre:cache:';
+const PERSISTED_CACHE_TS_PREFIX = 'volcre:cacheTs:';
 const PERSISTED_CACHE_PENDING_WRITES = new Map<string, ReturnType<typeof setTimeout>>();
 const PERSISTED_CACHE_WRITE_DEBOUNCE_MS = 200;
 
@@ -210,7 +239,6 @@ function flushSharedStorageChangedKeys() {
 }
 
 function queueSharedStorageChangedKeys(changedKeys: string[]) {
-  invalidateProjectsSnapshotCache();
   changedKeys.forEach(key => sharedStoragePendingChangedKeys.add(key));
   if (!sharedStoragePendingChangeTimer) {
     sharedStoragePendingChangeTimer = setTimeout(() => {
@@ -521,10 +549,7 @@ export function getProgramModuleFromProposalProjectId(projectId: string): string
     return null;
   }
 
-  const extractedModule = projectId
-    .slice('program:'.length)
-    .split('::', 1)[0]
-    .trim();
+  const extractedModule = projectId.slice('program:'.length).split('::', 1)[0].trim();
   return extractedModule || null;
 }
 
@@ -548,9 +573,36 @@ async function sendSystemMessage(
   });
 }
 
+const PROPOSAL_CARD_MESSAGE_PREFIX = '___PROPOSAL_CARD___:';
+
+function buildPartnerProposalCardMessageContent(
+  application: PartnerProjectApplication,
+  partnerUser: Pick<User, 'id' | 'name'>,
+  requestedProgramModule?: string | null,
+  extraData?: Record<string, unknown>
+): string {
+  const proposalDetails: Partial<PartnerProjectProposalDetails> = application.proposalDetails || {};
+  return `${PROPOSAL_CARD_MESSAGE_PREFIX}${JSON.stringify({
+    ...proposalDetails,
+    proposedVolunteersNeeded: Number(proposalDetails.proposedVolunteersNeeded) || 0,
+    requestedProgramModule:
+      proposalDetails.requestedProgramModule ||
+      requestedProgramModule ||
+      getProgramModuleFromProposalProjectId(application.projectId) ||
+      undefined,
+    status: application.status || 'Pending',
+    proposedById: partnerUser.id,
+    proposedByName: partnerUser.name,
+    applicationId: application.id,
+    timestamp: application.requestedAt || new Date().toISOString(),
+    ...extraData,
+  })}`;
+}
+
 async function notifyAdminAboutPartnerProjectJoin(
   projectId: string,
-  partnerUser: Pick<User, 'id' | 'name' | 'email'>
+  partnerUser: Pick<User, 'id' | 'name' | 'email'>,
+  application?: PartnerProjectApplication
 ): Promise<void> {
   const [project, adminUser] = await Promise.all([
     getProject(projectId),
@@ -575,34 +627,45 @@ async function notifyAdminAboutPartnerProjectJoin(
   await sendSystemMessage(
     partnerUser.id,
     adminUser.id,
-    `${partnerUser.name}${partnerEmail} submitted a project proposal for ${targetLabel}. Review it in the Communication Hub to approve or reject.`
+    application
+      ? buildPartnerProposalCardMessageContent(application, partnerUser, requestedProgramModule)
+      : `${partnerUser.name}${partnerEmail} submitted a project proposal for ${targetLabel}. Review it in the Communication Hub to approve or reject.`
   );
+
+  // Also send a lightweight confirmation back to the partner so they see a record in Messages.
+  try {
+    await sendSystemMessage(
+      adminUser.id,
+      partnerUser.id,
+      `Your proposal for ${targetLabel} has been submitted and is pending admin review.`
+    );
+  } catch (err) {
+    // Confirmation is best-effort — don't fail the main flow if it errors.
+    console.warn('Failed to send partner confirmation message:', err);
+  }
 }
 
 async function notifyPartnerAboutProjectJoinReview(
   application: PartnerProjectApplication,
   reviewedBy: string
 ): Promise<void> {
-  const [project, requestedProgramModule] = await Promise.all([
-    getProject(application.projectId),
-    Promise.resolve(getProgramModuleFromProposalProjectId(application.projectId)),
-  ]);
-
-  const targetLabel = project
-    ? `"${project.title}"`
-    : requestedProgramModule
-    ? `the ${requestedProgramModule} program module`
-    : 'your proposed program';
-
-  const outcome =
-    application.status === 'Approved'
-      ? `approved your project proposal for ${targetLabel}. You can now coordinate with NVC through Messages.`
-      : `rejected your project proposal for ${targetLabel}. Please create and send a new proposal again if you want to continue this request.`;
+  const requestedProgramModule = getProgramModuleFromProposalProjectId(application.projectId);
+  const reviewNotes = (application as any).reviewNotes;
 
   await sendSystemMessage(
     reviewedBy,
     application.partnerUserId,
-    `NVC Admin ${outcome}`
+    buildPartnerProposalCardMessageContent(
+      application,
+      { id: application.partnerUserId, name: application.partnerName },
+      requestedProgramModule,
+      {
+        reviewedBy,
+        reviewedAt: application.reviewedAt || new Date().toISOString(),
+        reviewNotes: reviewNotes || null,
+        projectId: application.projectId,
+      }
+    )
   );
 }
 
@@ -630,26 +693,6 @@ async function notifyAdminAboutVolunteerProjectJoinRequest(
   );
 }
 
-async function notifyVolunteerAboutProjectJoinRequestCreated(
-  projectId: string,
-  volunteerUserId: string
-): Promise<void> {
-  const [project, adminUser] = await Promise.all([
-    getProject(projectId),
-    getPrimaryAdminUser(),
-  ]);
-
-  if (!project || !adminUser || !volunteerUserId) {
-    return;
-  }
-
-  await sendSystemMessage(
-    adminUser.id,
-    volunteerUserId,
-    `Your request to join "${project.title}" was submitted. You will be notified when admin approves or rejects it.`
-  );
-}
-
 async function notifyVolunteerAboutProjectMatchDecision(
   projectId: string,
   volunteerUserId: string,
@@ -665,8 +708,8 @@ async function notifyVolunteerAboutProjectMatchDecision(
   const outcome =
     decision === 'Matched'
       ? reason === 'assignment'
-        ? `assigned you to "${project.title}". You are now joined to this event and can coordinate through Event GC.`
-        : `approved your request to join "${project.title}". You are now joined to this event and can coordinate through Event GC.`
+        ? `assigned you to "${project.title}". You can now join the program and coordinate through Messages.`
+        : `approved your request to join "${project.title}". You can now join the program and coordinate through Messages.`
       : `rejected your request to join "${project.title}". You may contact NVC admin for clarification.`;
 
   await sendSystemMessage(
@@ -676,36 +719,30 @@ async function notifyVolunteerAboutProjectMatchDecision(
   );
 }
 
-// Notifies a volunteer when a task assignment is removed from an event.
 export async function notifyVolunteerAboutTaskUnassignment(params: {
   event: Pick<Project, 'id' | 'title'>;
   task: Pick<ProjectInternalTask, 'id' | 'title'>;
   volunteer: Pick<Volunteer, 'userId' | 'name'>;
   actorUserId?: string;
 }): Promise<void> {
-  if (!params.volunteer.userId) {
+  const recipientId = params.volunteer.userId;
+  if (!recipientId) {
     return;
   }
 
   const adminUser = await getPrimaryAdminUser();
-  const senderId = adminUser?.id || params.actorUserId;
-
-  if (!senderId || senderId === params.volunteer.userId) {
+  const senderId = params.actorUserId || adminUser?.id;
+  if (!senderId || senderId === recipientId) {
     return;
   }
 
-  try {
-    await sendSystemMessage(
-      senderId,
-      params.volunteer.userId,
-      `You were unassigned from "${params.task.title}" in "${params.event.title}". This task has been removed from My Tasks.`
-    );
-  } catch (error) {
-    console.error('Failed to send task unassignment notification:', error);
-  }
+  await sendSystemMessage(
+    senderId,
+    recipientId,
+    `You were unassigned from "${params.task.title}" in "${params.event.title}".`
+  );
 }
 
-// Notifies a volunteer when one of their assigned event tasks is created or edited.
 export async function notifyVolunteerAboutTaskUpdate(params: {
   event: Pick<Project, 'id' | 'title'>;
   task: Pick<ProjectInternalTask, 'id' | 'title' | 'status'>;
@@ -713,57 +750,23 @@ export async function notifyVolunteerAboutTaskUpdate(params: {
   actorUserId?: string;
   action: 'assigned' | 'updated';
 }): Promise<void> {
-  if (!params.volunteer.userId) {
+  const recipientId = params.volunteer.userId;
+  if (!recipientId) {
     return;
   }
 
   const adminUser = await getPrimaryAdminUser();
-  const senderId = adminUser?.id || params.actorUserId;
-
-  if (!senderId || senderId === params.volunteer.userId) {
+  const senderId = params.actorUserId || adminUser?.id;
+  if (!senderId || senderId === recipientId) {
     return;
   }
 
   const message =
     params.action === 'assigned'
-      ? `You were assigned to "${params.task.title}" in "${params.event.title}". Check My Tasks for details.`
+      ? `You were assigned to "${params.task.title}" in "${params.event.title}".`
       : `"${params.task.title}" in "${params.event.title}" was updated. Current status: ${params.task.status}.`;
 
-  try {
-    await sendSystemMessage(senderId, params.volunteer.userId, message);
-  } catch (error) {
-    console.error('Failed to send task update notification:', error);
-  }
-}
-
-// Notifies a volunteer that their event attendance was recorded successfully.
-export async function notifyVolunteerAboutTimeIn(params: {
-  event: Pick<Project, 'id' | 'title'>;
-  volunteer: Pick<Volunteer, 'userId' | 'name'>;
-  timeIn: string;
-}): Promise<void> {
-  if (!params.volunteer.userId) {
-    return;
-  }
-
-  const adminUser = await getPrimaryAdminUser();
-  const senderId = adminUser?.id;
-
-  if (!senderId || senderId === params.volunteer.userId) {
-    return;
-  }
-
-  const formattedTimeIn = new Date(params.timeIn).toLocaleString();
-
-  try {
-    await sendSystemMessage(
-      senderId,
-      params.volunteer.userId,
-      `Attendance confirmed for "${params.event.title}" at ${formattedTimeIn}.`
-    );
-  } catch (error) {
-    console.error('Failed to send attendance confirmation notification:', error);
-  }
+  await sendSystemMessage(senderId, recipientId, message);
 }
 
 // Extracts the Metro bundler host so native devices can resolve the backend URL.
@@ -786,7 +789,6 @@ function getBundlerHost(): string | null {
 function resolveConfiguredApiBaseUrl(configuredBaseUrl: string): string {
   const trimmedBaseUrl = configuredBaseUrl.trim().replace(/\/$/, '');
   const bundlerHost = getBundlerHost();
-  const platformOS = getPlatformOS();
 
   try {
     const parsedUrl = new URL(trimmedBaseUrl);
@@ -795,7 +797,7 @@ function resolveConfiguredApiBaseUrl(configuredBaseUrl: string): string {
       parsedUrl.hostname === 'localhost' ||
       parsedUrl.hostname === '10.0.2.2';
 
-    if (bundlerHost && isLoopbackHost && platformOS !== 'web') {
+    if (bundlerHost && isLoopbackHost && getPlatformOS() !== 'web') {
       parsedUrl.hostname = bundlerHost;
       return parsedUrl.toString().replace(/\/$/, '');
     }
@@ -828,6 +830,30 @@ function getExpoExtraValue(key: string): string | undefined {
   const fromManifest2 = constantsAny.manifest2?.extra?.expoClient?.extra?.[key];
   if (typeof fromManifest2 === 'string' && fromManifest2.trim().length > 0) {
     return fromManifest2.trim();
+  }
+
+  if (typeof process !== 'undefined' && typeof process.env === 'object' && process.env) {
+    const envValues = [] as string[];
+
+    if (key === 'webApiBaseUrl') {
+      envValues.push(
+        process.env.EXPO_PUBLIC_WEB_API_BASE_URL as string,
+        process.env.VOLCRE_WEB_API_BASE_URL as string,
+        process.env.EXPO_PUBLIC_API_BASE_URL as string,
+        process.env.VOLCRE_API_BASE_URL as string
+      );
+    } else if (key === 'apiBaseUrl') {
+      envValues.push(
+        process.env.EXPO_PUBLIC_API_BASE_URL as string,
+        process.env.VOLCRE_API_BASE_URL as string
+      );
+    }
+
+    for (const value of envValues) {
+      if (typeof value === 'string' && value.trim().length > 0) {
+        return value.trim();
+      }
+    }
   }
 
   return undefined;
@@ -870,13 +896,8 @@ function resolveNativeApiBaseUrl(configuredBaseUrl?: string): string {
 
 // Returns the effective HTTP base URL used by the frontend storage layer.
 export function getApiBaseUrl(): string {
-  const envWebBaseUrl = process.env.EXPO_PUBLIC_WEB_API_BASE_URL;
-  const envNativeBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
   const configuredWebBaseUrl = getExpoExtraValue('webApiBaseUrl');
   if (typeof document !== 'undefined') {
-    if (envWebBaseUrl && envWebBaseUrl.trim().length > 0) {
-      return envWebBaseUrl.trim().replace(/\/$/, '');
-    }
     if (configuredWebBaseUrl && configuredWebBaseUrl.trim().length > 0) {
       return configuredWebBaseUrl.trim().replace(/\/$/, '');
     }
@@ -886,7 +907,7 @@ export function getApiBaseUrl(): string {
     return `${protocol}//${host}:8000`;
   }
 
-  const configuredNativeBaseUrl = getExpoExtraValue('apiBaseUrl') || envNativeBaseUrl;
+  const configuredNativeBaseUrl = getExpoExtraValue('apiBaseUrl');
   return resolveNativeApiBaseUrl(configuredNativeBaseUrl);
 }
 
@@ -1006,33 +1027,58 @@ async function fetchRemoteStorageItem<T>(key: string): Promise<T | null> {
 async function fetchRemoteStorageItems(
   keys: string[]
 ): Promise<Record<string, unknown | null>> {
+  // Optimization: If fetching the exact admin dashboard key set, use the dedicated endpoint
+  // which fetches all keys in a single DB connection instead of a thread pool.
+  const adminDashboardKeys = [
+    'users',
+    'projects',
+    'programs',
+    'programTracks',
+    'events',
+    'partners',
+    'volunteers',
+    'statusUpdates',
+    'adminPlanningCalendars',
+    'volunteerMatches',
+    'volunteerTimeLogs',
+    'volunteerProjectJoins',
+    'partnerProjectApplications',
+    'partnerReports',
+    'publishedImpactReports',
+  ];
+  const sortedKeys = [...keys].sort();
+  const sortedAdminKeys = [...adminDashboardKeys].sort();
+  const isAdminDashboardRequest =
+    sortedKeys.length === sortedAdminKeys.length &&
+    sortedKeys.every((key, index) => key === sortedAdminKeys[index]);
+
+  if (isAdminDashboardRequest) {
+    try {
+      const response = await fetchApiResponse('/admin/dashboard-snapshot');
+      const payload = (await response.json()) as { items?: Record<string, unknown | null> };
+      return payload.items || {};
+    } catch (error) {
+      console.warn('[storage] Admin dashboard endpoint failed, falling back to batch:', error);
+      // Fall through to standard batch request
+    }
+  }
+
   const response = await fetchApiResponse('/storage/batch', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ keys }),
-  }, REMOTE_STORAGE_BATCH_TIMEOUT_MS);
+  });
   const payload = (await response.json()) as { items?: Record<string, unknown | null> };
   return payload.items || {};
 }
 
 async function getApiErrorMessage(response: Response, fallback: string): Promise<string> {
   try {
-    const payload = (await response.json()) as {
-      detail?: string | Array<{ msg?: string }>;
-    };
+    const payload = (await response.json()) as { detail?: string };
     if (typeof payload.detail === 'string' && payload.detail.trim()) {
       return payload.detail;
-    }
-    if (Array.isArray(payload.detail)) {
-      const message = payload.detail
-        .map(item => String(item?.msg || '').trim())
-        .filter(Boolean)
-        .join('\n');
-      if (message) {
-        return message;
-      }
     }
   } catch {
     // Ignore parse errors and fall back to the default message.
@@ -1044,13 +1090,18 @@ async function getApiErrorMessage(response: Response, fallback: string): Promise
 async function fetchApiResponse(
   path: string,
   init?: RequestInit,
-  timeoutMs = REMOTE_STORAGE_TIMEOUT_MS
+  timeoutMs?: number
 ): Promise<Response> {
   let lastError: unknown = null;
+  const pathShort = path.slice(0, 50);
+  const actualTimeoutMs = timeoutMs ?? getRequestTimeoutMs();
 
   for (let attempt = 0; attempt < API_REQUEST_MAX_ATTEMPTS; attempt += 1) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const timeout = setTimeout(() => {
+      console.warn(`[Network] Request timeout after ${actualTimeoutMs}ms: ${pathShort}`);
+      controller.abort();
+    }, actualTimeoutMs);
 
     try {
       const response = await fetch(`${getApiBaseUrl()}${path}`, {
@@ -1059,6 +1110,7 @@ async function fetchApiResponse(
       });
 
       if (!response.ok) {
+        clearTimeout(timeout);
         const message = await getApiErrorMessage(
           response,
           `API request failed: ${response.status}`
@@ -1067,7 +1119,9 @@ async function fetchApiResponse(
         if (isRetryableApiStatus(response.status) && attempt < API_REQUEST_MAX_ATTEMPTS - 1) {
           invalidateApiReady();
           lastError = new Error(message);
-          await delay(getApiRetryDelayMs(attempt));
+          const delay_ms = getApiRetryDelayMs(attempt);
+          console.log(`[Network] Retrying ${pathShort} after ${delay_ms}ms (attempt ${attempt + 1}/${API_REQUEST_MAX_ATTEMPTS})`);
+          await delay(delay_ms);
           continue;
         }
 
@@ -1075,20 +1129,28 @@ async function fetchApiResponse(
         throw new Error(message);
       }
 
+      clearTimeout(timeout);
       markApiReady();
       return response;
     } catch (error) {
+      clearTimeout(timeout);
+      const isAbort = error instanceof Error && (error.name === 'AbortError' || error.message.includes('aborted'));
       if (isExpectedRemoteStorageError(error) && attempt < API_REQUEST_MAX_ATTEMPTS - 1) {
         invalidateApiReady();
+        if (isAbort) {
+          console.warn(`[Network] Request aborted for ${pathShort} (attempt ${attempt + 1}/${API_REQUEST_MAX_ATTEMPTS})`);
+        }
         lastError = error;
-        await delay(getApiRetryDelayMs(attempt));
+        const delay_ms = getApiRetryDelayMs(attempt);
+        await delay(delay_ms);
         continue;
       }
 
+      if (isAbort) {
+        console.error(`[Network] Request aborted for ${pathShort} - max retries exceeded`);
+      }
       invalidateApiReady();
       throw error;
-    } finally {
-      clearTimeout(timeout);
     }
   }
 
@@ -1113,13 +1175,17 @@ async function requestApiJson<T>(
   const requestKey = `${method}:${path}:${timeoutMs}`;
   const existingRequest = inFlightJsonRequests.get(requestKey);
   if (existingRequest) {
+    console.log(`[Network] Deduplicating request: ${path.slice(0, 50)}`);
     return existingRequest as Promise<T>;
   }
 
   const nextRequest = (async () => {
     try {
+      const reqStart = Date.now();
       const response = await fetchApiResponse(path, init, timeoutMs);
-      return (await response.json()) as T;
+      const result = (await response.json()) as T;
+      console.log(`[Network] ${method} ${path.slice(0, 50)} completed in ${Date.now() - reqStart}ms`);
+      return result;
     } catch (error) {
       inFlightJsonRequests.delete(requestKey);
       throw error;
@@ -1264,6 +1330,7 @@ function setSharedStorageCacheValue<T>(key: string, value: T | null): void {
 function invalidateSharedStorageCache(keys?: string[]): void {
   if (!keys) {
     sharedStorageCacheTimestamps.clear();
+    projectsSnapshotCache.clear();
     return;
   }
 
@@ -1273,16 +1340,12 @@ function invalidateSharedStorageCache(keys?: string[]): void {
       memoryStorageCache.delete(key);
     }
   }
+  projectsSnapshotCache.clear();
 }
 
 // Exported function to allow screens to invalidate the storage cache
 export function clearStorageCache(keys?: string[]): void {
   invalidateSharedStorageCache(keys);
-}
-
-// Reads only the device cache without starting a backend request.
-export async function getCachedStorageItem<T>(key: string): Promise<T | null> {
-  return getLocalStorageItem<T>(key);
 }
 
 function triggerBackgroundStorageRefresh(keys: string[]): void {
@@ -1311,20 +1374,33 @@ function triggerBackgroundStorageRefresh(keys: string[]): void {
 // Returns cached data immediately (if available) and refreshes in the background.
 export async function getStorageItemFast<T>(key: string): Promise<T | null> {
   try {
-    const cached = await getLocalStorageItem<T>(key);
-    const cachedAt = sharedStorageCacheTimestamps.get(key);
-    const isFresh = cachedAt !== undefined && Date.now() - cachedAt <= SHARED_STORAGE_CACHE_TTL_MS;
-
-    if (!isFresh || cached === null) {
-      triggerBackgroundStorageRefresh([key]);
+    // On web, always fetch fresh data from backend to ensure consistent state
+    if (getPlatformOS() === 'web') {
+      return getStorageItem<T>(key);
     }
 
+    // OPTIMIZED: Always return cached data immediately if available on Native mobile/tablet
+    const cached = await getLocalStorageItem<T>(key);
+    const cachedAt = sharedStorageCacheTimestamps.get(key);
+    
+    // If we have cached data, return it immediately and refresh in background
     if (cached !== null) {
+      // Trigger background refresh if cache is stale
+      if (cachedAt === undefined || Date.now() - cachedAt > SHARED_STORAGE_CACHE_TTL_MS) {
+        triggerBackgroundStorageRefresh([key]);
+      }
       return cached;
     }
 
-    return getStorageItem<T>(key);
+    // No cache available, fetch from server
+    const value = await getStorageItem<T>(key);
+    return value;
   } catch {
+    // On error, try to return cached data even if stale
+    const cached = await getLocalStorageItem<T>(key);
+    if (cached !== null) {
+      return cached;
+    }
     return getStorageItem<T>(key);
   }
 }
@@ -1396,6 +1472,15 @@ async function getLocalStorageItems(keys: string[]): Promise<Record<string, unkn
 
 // Returns cached data for all keys immediately (when available) and refreshes in background.
 export async function getStorageItemsFast(keys: string[]): Promise<Record<string, unknown | null>> {
+  // On Web, bypass local persistent cache to always get fresh data from server
+  if (getPlatformOS() === 'web') {
+    try {
+      return await getStorageItems(keys);
+    } catch {
+      return {};
+    }
+  }
+
   const results: Record<string, unknown | null> = {};
   const keysToRefresh: string[] = [];
   const missingKeys: string[] = [];
@@ -1407,23 +1492,18 @@ export async function getStorageItemsFast(keys: string[]): Promise<Record<string
     const cachedAt = sharedStorageCacheTimestamps.get(key);
     const isFresh = cachedAt !== undefined && Date.now() - cachedAt <= SHARED_STORAGE_CACHE_TTL_MS;
     
-    if (!isFresh || cached === null) {
+    if (cachedAt !== undefined) {
       keysToRefresh.push(key);
     }
-
-    if (cached !== null && isFresh) {
+    
+    if (cached !== null && (isFresh || cachedAt === undefined)) {
       results[key] = cached;
     } else {
-      if (cached !== null) {
-        results[key] = cached;
-      }
       missingKeys.push(key);
     }
   }
 
-  if (keysToRefresh.length > 0) {
-    triggerBackgroundStorageRefresh(keysToRefresh);
-  }
+  triggerBackgroundStorageRefresh(keysToRefresh);
 
   if (missingKeys.length === 0) {
     return results;
@@ -1513,40 +1593,6 @@ export async function getStorageItem<T>(key: string): Promise<T | null> {
 }
 
 // Reads multiple storage values in a single backend request when possible.
-// Split batch requests into smaller chunks to avoid timeout issues
-const STORAGE_BATCH_CHUNK_SIZE = 3;
-
-async function fetchRemoteStorageItemsInChunks(keys: string[]): Promise<Record<string, unknown | null>> {
-  if (keys.length <= STORAGE_BATCH_CHUNK_SIZE) {
-    return fetchRemoteStorageItems(keys);
-  }
-
-  const results: Record<string, unknown | null> = {};
-  const chunks: string[][] = [];
-  
-  for (let i = 0; i < keys.length; i += STORAGE_BATCH_CHUNK_SIZE) {
-    chunks.push(keys.slice(i, i + STORAGE_BATCH_CHUNK_SIZE));
-  }
-
-  // Fetch chunks sequentially to avoid overwhelming the backend
-  for (const chunk of chunks) {
-    try {
-      const chunkResults = await fetchRemoteStorageItems(chunk);
-      Object.assign(results, chunkResults);
-    } catch (error) {
-      // If a chunk fails, still try to include cached values for those keys
-      if (!isAbortLikeError(error)) {
-        throw error;
-      }
-      for (const key of chunk) {
-        results[key] = null;
-      }
-    }
-  }
-
-  return results;
-}
-
 export async function getStorageItems(
   keys: string[]
 ): Promise<Record<string, unknown | null>> {
@@ -1583,7 +1629,7 @@ export async function getStorageItems(
       return results;
     }
 
-    const remoteResults = await fetchRemoteStorageItemsInChunks(missingSharedKeys);
+    const remoteResults = await fetchRemoteStorageItems(missingSharedKeys);
     for (const key of missingSharedKeys) {
       const value = remoteResults[key] ?? null;
       setSharedStorageCacheValue(key, value);
@@ -1605,11 +1651,14 @@ export async function getStorageItems(
 }
 
 // Loads the combined data set required by the admin dashboard screen.
+// OPTIMIZED: Selective loading to minimize egress while ensuring all data is available.
+// Core collections fetched immediately, supplemental data loaded on-demand.
 export async function getDashboardSnapshot(): Promise<{
   users: User[];
   partners: Partner[];
   projects: Project[];
   programs: Project[];
+  programTracks: ProgramTrack[];
   events: Project[];
   volunteers: Volunteer[];
   statusUpdates: StatusUpdate[];
@@ -1622,46 +1671,65 @@ export async function getDashboardSnapshot(): Promise<{
   adminPlanningCalendars: AdminPlanningCalendar[];
   adminPlanningItems: AdminPlanningItem[];
 }> {
-  const coreItems = await getStorageItemsFast([
+  // SINGLE BATCH LOAD: Fetch all dashboard keys in one request to avoid sequential round-trips.
+  // getStorageItemsFast returns cached data immediately and refreshes stale keys in the background,
+  // so this is effectively instant on warm cache and one network round-trip on cold start.
+  const allItems = await getStorageItemsFast([
     STORAGE_KEYS.USERS,
     STORAGE_KEYS.PROJECTS,
+    STORAGE_KEYS.PROGRAMS,
+    STORAGE_KEYS.PROGRAM_TRACKS,
     STORAGE_KEYS.EVENTS,
     STORAGE_KEYS.PARTNERS,
     STORAGE_KEYS.VOLUNTEERS,
     STORAGE_KEYS.STATUS_UPDATES,
+    STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
+    STORAGE_KEYS.VOLUNTEER_MATCHES,
+    STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+    STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
     STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
+    STORAGE_KEYS.PARTNER_REPORTS,
+    STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
   ]);
 
-  const partners = ((coreItems[STORAGE_KEYS.PARTNERS] as Partner[] | null) || [])
-    .map(normalizePartnerRecord)
+  const partners = ((allItems[STORAGE_KEYS.PARTNERS] as Partner[] | null) || [])
     .filter(p => !p.contactEmail?.toLowerCase().includes('eduindia.org'));
 
-  const projects = (coreItems[STORAGE_KEYS.PROJECTS] as Project[] | null) || [];
+  const programs = (allItems[STORAGE_KEYS.PROGRAMS] as Project[] | null) || [];
+  const projects = (allItems[STORAGE_KEYS.PROJECTS] as Project[] | null) || [];
+  const programTracks =
+    (allItems[STORAGE_KEYS.PROGRAM_TRACKS] as ProgramTrack[] | null) ||
+    (await getStorageItemFast<ProgramTrack[]>(STORAGE_KEYS.PROGRAM_TRACKS)) ||
+    [];
 
   return {
-    users: (coreItems[STORAGE_KEYS.USERS] as User[] | null) || [],
+    users: (allItems[STORAGE_KEYS.USERS] as User[] | null) || [],
     projects: mergeProjectAndEventRecords(
-      projects,
-      coreItems[STORAGE_KEYS.EVENTS] as Project[] | null
+      [...programs, ...projects],
+      allItems[STORAGE_KEYS.EVENTS] as Project[] | null
     ),
-    programs: [],
-    events: (coreItems[STORAGE_KEYS.EVENTS] as Project[] | null) || [],
+    programs: (allItems[STORAGE_KEYS.PROGRAMS] as Project[] | null) || [],
+    programTracks,
+    events: (allItems[STORAGE_KEYS.EVENTS] as Project[] | null) || [],
     partners,
-    volunteers: (coreItems[STORAGE_KEYS.VOLUNTEERS] as Volunteer[] | null) || [],
-    statusUpdates: (coreItems[STORAGE_KEYS.STATUS_UPDATES] as StatusUpdate[] | null) || [],
-    volunteerMatches: [],
-    volunteerTimeLogs: [],
-    volunteerProjectJoins: [],
-    partnerProjectApplications:
-      (coreItems[STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS] as PartnerProjectApplication[] | null) || [],
-    partnerReports: [],
-    publishedImpactReports: [],
-    adminPlanningCalendars: [],
-    adminPlanningItems: [],
+    volunteers: (allItems[STORAGE_KEYS.VOLUNTEERS] as Volunteer[] | null) || [],
+    statusUpdates: (allItems[STORAGE_KEYS.STATUS_UPDATES] as StatusUpdate[] | null) || [],
+    volunteerMatches: (allItems[STORAGE_KEYS.VOLUNTEER_MATCHES] as VolunteerProjectMatch[] | null) || [],
+    volunteerTimeLogs: (allItems[STORAGE_KEYS.VOLUNTEER_TIME_LOGS] as VolunteerTimeLog[] | null) || [],
+    volunteerProjectJoins: (allItems[STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS] as VolunteerProjectJoinRecord[] | null) || [],
+    partnerProjectApplications: (allItems[STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS] as PartnerProjectApplication[] | null) || [],
+    partnerReports: (allItems[STORAGE_KEYS.PARTNER_REPORTS] as PartnerReport[] | null) || [],
+    publishedImpactReports: (allItems[STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS] as PublishedImpactReport[] | null) || [],
+    adminPlanningCalendars: (allItems[STORAGE_KEYS.ADMIN_PLANNING_CALENDARS] as AdminPlanningCalendar[] | null) || [],
+    adminPlanningItems: collectPlanningItemsFromCalendars(
+      (allItems[STORAGE_KEYS.ADMIN_PLANNING_CALENDARS] as AdminPlanningCalendar[] | null) || []
+    ),
   };
 }
 
 // Loads the combined data set required by the partner dashboard screen.
+// OPTIMIZED: Selective loading to minimize egress while ensuring all data is available.
+// Core collections fetched immediately, supplemental data loaded on-demand.
 export async function getPartnerDashboardSnapshot(): Promise<{
   users: User[];
   partners: Partner[];
@@ -1681,56 +1749,111 @@ export async function getPartnerDashboardSnapshot(): Promise<{
 }> {
   await ensurePartnerOwnershipLinks();
   
+  // CORE LOAD: Essential data for partner dashboard (minimizes egress)
   const coreItems = await getStorageItemsFast([
+    STORAGE_KEYS.USERS,
     STORAGE_KEYS.PROJECTS,
+    STORAGE_KEYS.PROGRAMS,
     STORAGE_KEYS.EVENTS,
     STORAGE_KEYS.PARTNERS,
+    STORAGE_KEYS.VOLUNTEERS,
+    STORAGE_KEYS.STATUS_UPDATES,
     STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
     STORAGE_KEYS.PARTNER_REPORTS,
+    STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
+    STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
   ]);
+
+  // SUPPLEMENTAL LOAD: Additional data needed for partner dashboard
+  // Load these to ensure they're available
+  let supplementalItems: Record<string, unknown | null> = {};
+  try {
+    supplementalItems = await getStorageItemsFast([
+      STORAGE_KEYS.VOLUNTEER_MATCHES,
+      STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+      STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    ]);
+  } catch (error) {
+    console.warn('Supplemental data failed to load:', error);
+    // Return empty arrays for failed supplemental data
+    supplementalItems = {
+      [STORAGE_KEYS.VOLUNTEER_MATCHES]: [],
+      [STORAGE_KEYS.VOLUNTEER_TIME_LOGS]: [],
+      [STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS]: [],
+    };
+  }
 
   const partners = ((coreItems[STORAGE_KEYS.PARTNERS] as Partner[] | null) || [])
     .filter(p => !p.contactEmail?.toLowerCase().includes('eduindia.org'));
 
+  const programs = (coreItems[STORAGE_KEYS.PROGRAMS] as Project[] | null) || [];
   const projects = (coreItems[STORAGE_KEYS.PROJECTS] as Project[] | null) || [];
 
   return {
-    users: [],
+    users: (coreItems[STORAGE_KEYS.USERS] as User[] | null) || [],
     projects: mergeProjectAndEventRecords(
-      projects,
+      [...programs, ...projects],
       coreItems[STORAGE_KEYS.EVENTS] as Project[] | null
     ),
-    programs: [],
+    programs: (coreItems[STORAGE_KEYS.PROGRAMS] as Project[] | null) || [],
     events: (coreItems[STORAGE_KEYS.EVENTS] as Project[] | null) || [],
     partners,
-    volunteers: [],
-    statusUpdates: [],
+    volunteers: (coreItems[STORAGE_KEYS.VOLUNTEERS] as Volunteer[] | null) || [],
+    statusUpdates: (coreItems[STORAGE_KEYS.STATUS_UPDATES] as StatusUpdate[] | null) || [],
     partnerApplications:
       (coreItems[STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS] as PartnerProjectApplication[] | null) ||
       [],
     partnerReports: (coreItems[STORAGE_KEYS.PARTNER_REPORTS] as PartnerReport[] | null) || [],
-    publishedImpactReports: [],
-    volunteerMatches: [],
-    volunteerTimeLogs: [],
-    volunteerProjectJoins: [],
-    adminPlanningCalendars: [],
-    adminPlanningItems: [],
+    publishedImpactReports:
+      (coreItems[STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS] as PublishedImpactReport[] | null) || [],
+    volunteerMatches: (supplementalItems[STORAGE_KEYS.VOLUNTEER_MATCHES] as VolunteerProjectMatch[] | null) || [],
+    volunteerTimeLogs: (supplementalItems[STORAGE_KEYS.VOLUNTEER_TIME_LOGS] as VolunteerTimeLog[] | null) || [],
+    volunteerProjectJoins: (supplementalItems[STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS] as VolunteerProjectJoinRecord[] | null) || [],
+    adminPlanningCalendars: (coreItems[STORAGE_KEYS.ADMIN_PLANNING_CALENDARS] as AdminPlanningCalendar[] | null) || [],
+    adminPlanningItems: collectPlanningItemsFromCalendars(
+      (coreItems[STORAGE_KEYS.ADMIN_PLANNING_CALENDARS] as AdminPlanningCalendar[] | null) || []
+    ),
   };
 }
 
 // Loads the shared planning calendar data used by volunteer and partner dashboards.
+// OPTIMIZED: Selective loading to minimize egress usage.
+// Core collections fetched immediately, supplemental data loaded on-demand in background.
 export async function getDashboardTimelineSnapshot(): Promise<DashboardTimelineSnapshot> {
   try {
     const planningCalendars = await ensureAdminPlanningCalendarsSeeded();
-
+    
+    // CORE LOAD: Timeline critical data only
     const coreItems = await getStorageItemsFast([
       STORAGE_KEYS.PROJECTS,
+      STORAGE_KEYS.PROGRAMS,
       STORAGE_KEYS.EVENTS,
       STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
     ]);
+    
+    // LAZY LOAD: Supplemental data in background, non-blocking
+    (async () => {
+      try {
+        await getStorageItemsFast([
+          STORAGE_KEYS.USERS,
+          STORAGE_KEYS.PARTNERS,
+          STORAGE_KEYS.VOLUNTEERS,
+          STORAGE_KEYS.STATUS_UPDATES,
+          STORAGE_KEYS.VOLUNTEER_MATCHES,
+          STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+          STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+          STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
+          STORAGE_KEYS.PARTNER_REPORTS,
+          STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
+        ]);
+      } catch (error) {
+        console.warn('Supplemental timeline data failed to load (non-blocking):', error);
+      }
+    })();
 
+    const programs = (coreItems[STORAGE_KEYS.PROGRAMS] as Project[] | null) || [];
     const projects = mergeProjectAndEventRecords(
-      coreItems[STORAGE_KEYS.PROJECTS] as Project[] | null,
+      programs.length > 0 ? programs : (coreItems[STORAGE_KEYS.PROJECTS] as Project[] | null),
       coreItems[STORAGE_KEYS.EVENTS] as Project[] | null
     );
     const planningItems = collectPlanningItemsFromCalendars(
@@ -1753,169 +1876,54 @@ export async function getDashboardTimelineSnapshot(): Promise<DashboardTimelineS
   }
 }
 
-// In-flight requests for snapshots to avoid redundant network overhead.
-const inFlightSnapshotRequests = new Map<string, Promise<ProjectsScreenSnapshot>>();
-
-const lastSnapshotRequestTimes = new Map<string, number>();
-const GLOBAL_SNAPSHOT_COOLDOWN_MS = 1000;
-
-function invalidateProjectsSnapshotCache(): void {
-  projectsSnapshotCache.clear();
-  lastSnapshotRequestTimes.clear();
-}
-
-
-// Loads the combined project, volunteer, and application data for project-facing screens.
-// Optional field filters are forwarded to the backend so each screen can request only
-// the collections it needs while still caching per-user/per-field snapshots.
+// Loads the combined project, volunteer, and application data for the projects screen.
 export async function getProjectsScreenSnapshot(
   user?: Pick<User, 'id' | 'role'> | null,
   fields?: string[]
 ): Promise<ProjectsScreenSnapshot> {
-  const normalizedFields = fields?.length
-    ? Array.from(
-        new Set(
-          fields
-            .map(field => String(field || '').trim())
-            .filter(Boolean)
-        )
-      )
-    : [];
-  const requestedFieldSet = new Set(normalizedFields);
-  const shouldLoadProjects = normalizedFields.length === 0 || requestedFieldSet.has('projects');
-  const shouldLoadProgramTracks =
-    normalizedFields.length === 0 ||
-    requestedFieldSet.has('programTracks') ||
-    requestedFieldSet.has('programCatalog');
-  const shouldLoadPartnerApplications =
-    normalizedFields.length === 0 ||
-    requestedFieldSet.has('partnerApplications') ||
-    requestedFieldSet.has('partnerProjectApplications');
-
   const params = new URLSearchParams();
-  if (user?.id) params.set('user_id', user.id);
-  if (user?.role) params.set('role', user.role);
-  if (normalizedFields.length > 0) {
-    params.set('fields', normalizedFields.join(','));
+  if (user?.id) {
+    params.set('user_id', user.id);
   }
-  
+  if (user?.role) {
+    params.set('role', user.role);
+  }
+  if (fields && fields.length > 0) {
+    params.set('fields', fields.join(','));
+  }
+
   const cacheKey = `snapshot:${params.toString()}`;
-  const lastRequestTime = lastSnapshotRequestTimes.get(cacheKey) || 0;
-
-  // Serve only this user's cached snapshot. Reusing another account's snapshot
-  // makes volunteer dashboards show the wrong joined events.
-  if (Date.now() - lastRequestTime < GLOBAL_SNAPSHOT_COOLDOWN_MS) {
-    const cached = projectsSnapshotCache.get(cacheKey);
-    if (cached) {
-      return cached.data as ProjectsScreenSnapshot;
-    }
+  const cached = projectsSnapshotCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < PROJECTS_SNAPSHOT_CACHE_TTL_MS) {
+    console.log(`[Data] ProjectsSnapshot cache hit (${cacheKey.slice(0, 40)}...)`);
+    return cached.data as ProjectsScreenSnapshot;
   }
 
-  const existingRequest = inFlightSnapshotRequests.get(cacheKey);
-  if (existingRequest) {
-    return existingRequest;
-  }
+  const query = params.toString();
+  const timerLabel = `[Data] ProjectsSnapshot (${user?.role || 'unknown'})`;
+  console.time(timerLabel);
+  const snapshotStart = Date.now();
 
-  const buildSnapshotFallback = async (
-    seed?: Partial<ProjectsScreenSnapshot>
-  ): Promise<ProjectsScreenSnapshot> => {
-    const [fallbackProjects, fallbackProgramTracks, fallbackPartnerApplications] = await Promise.all([
-      shouldLoadProjects ? getAllProjects().catch(() => []) : Promise.resolve([] as Project[]),
-      shouldLoadProgramTracks
-        ? getAllProgramTracks().catch(() => [])
-        : Promise.resolve([] as ProgramTrack[]),
-      shouldLoadPartnerApplications && user?.role === 'partner' && user.id
-        ? getPartnerProjectApplicationsByUser(user.id).catch(() => [])
-        : shouldLoadPartnerApplications && user?.role === 'admin'
-          ? getAllPartnerProjectApplications().catch(() => [])
-          : Promise.resolve([] as PartnerProjectApplication[]),
-    ]);
+  const payload = await requestApiJson<Partial<ProjectsScreenSnapshot>>(
+    `/projects/snapshot${query ? `?${query}` : ''}`
+  );
 
-    return {
-      projects:
-        shouldLoadProjects && fallbackProjects.length > 0
-          ? fallbackProjects
-          : (seed?.projects as Project[] | undefined) || [],
-      programTracks:
-        shouldLoadProgramTracks && fallbackProgramTracks.length > 0
-          ? fallbackProgramTracks
-          : seed?.programTracks || [],
-      volunteerProfile: seed?.volunteerProfile || null,
-      volunteerMatches: Array.isArray(seed?.volunteerMatches) ? seed?.volunteerMatches : undefined,
-      timeLogs: seed?.timeLogs || [],
-      partnerApplications:
-        shouldLoadPartnerApplications && fallbackPartnerApplications.length > 0
-          ? fallbackPartnerApplications
-          : seed?.partnerApplications || [],
-      volunteerJoinRecords: seed?.volunteerJoinRecords || [],
-    };
+  const result = {
+    projects: (payload.projects || []).map(project =>
+      project?.isEvent ? normalizeEventRecord(project) : normalizeProjectRecord(project)
+    ),
+    programTracks: payload.programTracks || [],
+    volunteerProfile: payload.volunteerProfile || null,
+    volunteerMatches: payload.volunteerMatches || [],
+    timeLogs: payload.timeLogs || [],
+    partnerApplications: payload.partnerApplications || [],
+    volunteerJoinRecords: payload.volunteerJoinRecords || [],
   };
 
-  const snapshotRequest = (async () => {
-    try {
-      lastSnapshotRequestTimes.set(cacheKey, Date.now());
-      const query = params.toString();
-      const payload = await requestApiJson<Partial<ProjectsScreenSnapshot>>(
-        `/projects/snapshot${query ? `?${query}` : ''}`
-      );
-
-      try {
-        const result = {
-          projects: (payload.projects || []).map(project => {
-            try {
-              return project?.isEvent ? normalizeEventRecord(project) : normalizeProjectRecord(project);
-            } catch (normalizeError) {
-              console.error(`[Data] Error normalizing project ${project?.id}:`, normalizeError);
-              return project as Project;
-            }
-          }),
-          programTracks: Array.isArray(payload.programTracks) ? payload.programTracks : [],
-          volunteerProfile: payload.volunteerProfile || null,
-          volunteerMatches: Array.isArray(payload.volunteerMatches) ? payload.volunteerMatches : undefined,
-          timeLogs: payload.timeLogs || [],
-          partnerApplications: payload.partnerApplications || [],
-          volunteerJoinRecords: payload.volunteerJoinRecords || [],
-        };
-
-        const recoveredResult =
-          (shouldLoadProjects && result.projects.length === 0) ||
-          (shouldLoadProgramTracks && result.programTracks.length === 0) ||
-          (shouldLoadPartnerApplications && user?.id && result.partnerApplications.length === 0)
-            ? await buildSnapshotFallback(result)
-            : result;
-
-        // Cache the result for this specific field-set request
-        projectsSnapshotCache.set(cacheKey, { data: recoveredResult, timestamp: Date.now() });
-        return recoveredResult;
-      } catch (normalizeError) {
-        console.error(`[Data] Error normalizing ProjectsSnapshot:`, normalizeError);
-        // Return what we can even if normalization fails
-        const partialResult = {
-          projects: payload.projects || [],
-          programTracks: payload.programTracks || [],
-          volunteerProfile: payload.volunteerProfile || null,
-          volunteerMatches: payload.volunteerMatches,
-          timeLogs: payload.timeLogs || [],
-          partnerApplications: payload.partnerApplications || [],
-          volunteerJoinRecords: payload.volunteerJoinRecords || [],
-        };
-        const fallbackResult = await buildSnapshotFallback(partialResult);
-        projectsSnapshotCache.set(cacheKey, { data: fallbackResult, timestamp: Date.now() });
-        return fallbackResult;
-      }
-    } catch (error) {
-      // Snapshot screens already have a safe fallback path below. Avoid surfacing
-      // recoverable backend fetch failures as mobile LogBox errors.
-      const fallbackResult = await buildSnapshotFallback();
-      projectsSnapshotCache.set(cacheKey, { data: fallbackResult, timestamp: Date.now() });
-      return fallbackResult;
-    } finally {
-      inFlightSnapshotRequests.delete(cacheKey);
-    }
-  })();
-
-  inFlightSnapshotRequests.set(cacheKey, snapshotRequest);
-  return snapshotRequest;
+  projectsSnapshotCache.set(cacheKey, { data: result, timestamp: Date.now() });
+  console.timeEnd(timerLabel);
+  console.log(`[Data] ProjectsSnapshot fetched ${result.projects?.length || 0} projects in ${Date.now() - snapshotStart}ms`);
+  return result;
 }
 
 // Writes one storage value to the backend and local cache.
@@ -1928,10 +1936,61 @@ export async function setStorageItem<T>(key: string, value: T): Promise<void> {
   try {
     await saveRemoteStorageItem(key, value);
     setSharedStorageCacheValue(key, value);
+    projectsSnapshotCache.clear();
   } catch (error) {
     console.error(`Error saving shared ${key} to backend:`, error);
     throw error;
   }
+}
+
+export async function getAppSettings(): Promise<AppSettings> {
+  const stored = await getStorageItem<Partial<AppSettings>>(STORAGE_KEYS.APP_SETTINGS);
+  return {
+    ...DEFAULT_APP_SETTINGS,
+    ...(stored || {}),
+  };
+}
+
+export async function saveAppSettings(settings: Partial<AppSettings>): Promise<void> {
+  const current = await getAppSettings();
+  await setStorageItem(STORAGE_KEYS.APP_SETTINGS, {
+    ...current,
+    ...settings,
+  });
+}
+
+export async function getAllProgramTracks(): Promise<ProgramTrack[]> {
+  return (await getStorageItemFast<ProgramTrack[]>(STORAGE_KEYS.PROGRAM_TRACKS)) || [];
+}
+
+export async function saveProgram(program: ProgramTrack): Promise<void> {
+  const programs = (await getStorageItem<ProgramTrack[]>(STORAGE_KEYS.PROGRAM_TRACKS)) || [];
+  const now = new Date().toISOString();
+  const normalizedProgram: ProgramTrack = {
+    ...program,
+    id: String(program.id || program.title).trim(),
+    title: program.title.trim(),
+    createdAt: program.createdAt || now,
+    updatedAt: now,
+  };
+  const existingIndex = programs.findIndex(entry => entry.id === normalizedProgram.id);
+  if (existingIndex >= 0) {
+    programs[existingIndex] = {
+      ...programs[existingIndex],
+      ...normalizedProgram,
+    };
+  } else {
+    programs.push(normalizedProgram);
+  }
+  await setStorageItem(STORAGE_KEYS.PROGRAM_TRACKS, programs);
+}
+
+export async function deleteProgram(programId: string): Promise<void> {
+  const programs = (await getStorageItem<ProgramTrack[]>(STORAGE_KEYS.PROGRAM_TRACKS)) || [];
+  await setStorageItem(
+    STORAGE_KEYS.PROGRAM_TRACKS,
+    programs.filter(program => program.id !== programId)
+  );
 }
 
 // User Storage
@@ -1968,33 +2027,26 @@ export function isValidDswdAccreditationNo(value: string): boolean {
   return /^[A-Z0-9][A-Z0-9\-\/]{5,}$/.test(normalizedValue);
 }
 
-function requiresDswdAccreditationNo(sectorType: PartnerSectorType): boolean {
-  return sectorType === 'NGO';
-}
-
-export async function validateDswdAccreditationNo(value: string): Promise<{valid: boolean, reason?: string}> {
+// Validates DSWD accreditation number against database (format + assignment check).
+export async function validateDswdAccreditationNo(value: string): Promise<{ valid: boolean; reason?: string }> {
   const normalizedValue = value.trim().toUpperCase();
-  
+
   // First check basic format
   if (!isValidDswdAccreditationNo(value)) {
-    return {valid: false, reason: "Invalid format"};
+    return { valid: false, reason: 'Invalid format' };
   }
-  
+
   try {
     const response = await fetch(`${getApiBaseUrl()}/validation/dswd-accreditation/${encodeURIComponent(normalizedValue)}`);
     if (!response.ok) {
-      return {valid: false, reason: "Network error"};
+      return { valid: false, reason: 'Network error' };
     }
     const result = await response.json();
     return result;
   } catch (error) {
-    console.error("Error validating DSWD accreditation number:", error);
-    return {valid: false, reason: "Network error"};
+    console.error('Error validating DSWD accreditation number:', error);
+    return { valid: false, reason: 'Network error' };
   }
-}
-
-function hasDswdAccreditationNo(value: string): boolean {
-  return value.trim().length > 0;
 }
 
 function isValidEmailAddress(value: string): boolean {
@@ -2028,17 +2080,6 @@ function normalizePartnerContactPhone(value?: string): string | undefined {
   return undefined;
 }
 
-function composePartnerAddress(
-  region?: string,
-  province?: string,
-  cityMunicipality?: string
-): string {
-  return [cityMunicipality, province, region]
-    .map(value => value?.trim() || '')
-    .filter(Boolean)
-    .join(', ');
-}
-
 // Maps one advocacy focus into the existing project/partner category taxonomy.
 function getCategoryFromAdvocacyFocus(focuses: AdvocacyFocus[]): Partner['category'] {
   if (focuses.includes('Disaster')) {
@@ -2067,7 +2108,6 @@ function normalizePartnerRecord(partner: Partner): Partner {
 
   return {
     ...partner,
-    stakeholderName: partner.stakeholderName?.trim() || '',
     description: partner.description?.trim() || '',
     category: derivedCategory,
     sectorType: partner.sectorType || 'NGO',
@@ -2076,16 +2116,10 @@ function normalizePartnerRecord(partner: Partner): Partner {
     advocacyFocus,
     contactEmail: partner.contactEmail?.trim().toLowerCase() || '',
     contactPhone: normalizePartnerContactPhone(partner.contactPhone) || '',
-    region: partner.region?.trim() || '',
-    province: partner.province?.trim() || '',
-    cityMunicipality: partner.cityMunicipality?.trim() || '',
-    address:
-      partner.address?.trim() ||
-      composePartnerAddress(partner.region, partner.province, partner.cityMunicipality),
+    address: partner.address?.trim() || '',
     verificationStatus:
-      partner.status === 'Approved'
-        ? 'Verified'
-        : partner.verificationStatus || 'Pending',
+      partner.verificationStatus ||
+      (partner.status === 'Approved' ? 'Verified' : 'Pending'),
   };
 }
 
@@ -2255,7 +2289,7 @@ function normalizeProjectInternalTask(
     description: task.description?.trim() || '',
     category: task.category?.trim() || 'General',
     priority: task.priority || 'Medium',
-    status: task.status || (assignedVolunteerIds.length ? 'Assigned' : 'Unassigned'),
+    status: task.status || (assignedVolunteerIds.length > 0 ? 'Assigned' : 'Unassigned'),
     assignedVolunteerId: assignedVolunteerIds[0] || undefined,
     assignedVolunteerName: assignedVolunteerNames[0] || undefined,
     assignedVolunteerIds: assignedVolunteerIds.length ? assignedVolunteerIds : undefined,
@@ -2267,24 +2301,13 @@ function normalizeProjectInternalTask(
   };
 }
 
-function _coerceToStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value as string[];
-  if (typeof value === 'string' && value.trim()) {
-    // Try comma-separated first, fall back to space-separated
-    return value.includes(',')
-      ? value.split(',').map(s => s.trim()).filter(Boolean)
-      : value.split(/\s+/).filter(Boolean);
-  }
-  return [];
-}
-
 function normalizeProjectSkillsNeeded(
   project: Project,
   normalizedTasks: ProjectInternalTask[]
 ): string[] {
   const rawSkills = [
-    ..._coerceToStringArray(project.skillsNeeded),
-    ...normalizedTasks.flatMap(task => _coerceToStringArray(task.skillsNeeded)),
+    ...(project.skillsNeeded || []),
+    ...normalizedTasks.flatMap(task => task.skillsNeeded || []),
   ]
     .map(skill => skill.trim())
     .filter(Boolean);
@@ -2302,7 +2325,7 @@ function normalizeProjectSkillsNeeded(
 
 function normalizeProjectRecord(project: Project): Project {
   const normalizedTasks =
-    Array.isArray(project.internalTasks) && project.internalTasks.length > 0
+    project.internalTasks && project.internalTasks.length > 0
       ? project.internalTasks.map(task => normalizeProjectInternalTask(task, project.id))
       : [];
   const normalizedCategory =
@@ -2315,21 +2338,6 @@ function normalizeProjectRecord(project: Project): Project {
       ? 'Disaster'
       : (project.category as AdvocacyFocus | undefined)) ||
     'Disaster';
-  const normalizedProgramId =
-    String(project.program_id || project.programModule || project.category || '')
-      .trim() || undefined;
-  const rawStatusMode = String(project.statusMode || '').trim().toLowerCase();
-  const hasExplicitStatusMode = rawStatusMode === 'manual' || rawStatusMode === 'system';
-  const normalizedStatusMode: Project['statusMode'] =
-    rawStatusMode === 'manual' ? 'Manual' : 'System';
-  const legacyManualStatus =
-    !hasExplicitStatusMode && (project.status === 'On Hold' || project.status === 'Cancelled')
-      ? project.status
-      : undefined;
-  const normalizedManualStatus =
-    normalizedStatusMode === 'Manual'
-      ? (project.manualStatus || project.status)
-      : legacyManualStatus;
 
   return {
     ...project,
@@ -2337,12 +2345,9 @@ function normalizeProjectRecord(project: Project): Project {
     imageHidden: Boolean(project.imageHidden),
     category: normalizedCategory,
     programModule: normalizedProgramModule,
-    program_id: normalizedProgramId,
-    statusMode: normalizedManualStatus ? 'Manual' : normalizedStatusMode,
-    manualStatus: normalizedManualStatus || undefined,
     parentProjectId: project.parentProjectId?.trim() || undefined,
-    joinedUserIds: project.isEvent ? _coerceToStringArray(project.joinedUserIds) : [],
-    volunteers: project.isEvent ? _coerceToStringArray(project.volunteers) : [],
+    joinedUserIds: project.isEvent ? (project.joinedUserIds || []) : [],
+    volunteers: project.isEvent ? (project.volunteers || []) : [],
     skillsNeeded: normalizeProjectSkillsNeeded(project, normalizedTasks),
     statusUpdates: project.statusUpdates || [],
     internalTasks: normalizedTasks,
@@ -2405,13 +2410,9 @@ export async function createUserAccount(input: {
   pillarsOfInterest: NVCSector[];
   partnerRegistration?: {
     organizationName: string;
-    stakeholderName: string;
     sectorType: PartnerSectorType;
     dswdAccreditationNo: string;
     secRegistrationNo?: string;
-    region: string;
-    province: string;
-    cityMunicipality: string;
     advocacyFocus: AdvocacyFocus[];
   };
   volunteerMembershipSheet?: {
@@ -2461,12 +2462,7 @@ export async function createUserAccount(input: {
     input.role === 'partner' &&
     (!input.partnerRegistration ||
       !input.partnerRegistration.organizationName.trim() ||
-      !input.partnerRegistration.stakeholderName.trim() ||
-      !input.partnerRegistration.region.trim() ||
-      !input.partnerRegistration.province.trim() ||
-      !input.partnerRegistration.cityMunicipality.trim() ||
-      (requiresDswdAccreditationNo(input.partnerRegistration.sectorType) &&
-        !hasDswdAccreditationNo(input.partnerRegistration.dswdAccreditationNo)) ||
+      !isValidDswdAccreditationNo(input.partnerRegistration.dswdAccreditationNo) ||
       input.partnerRegistration.advocacyFocus.length === 0)
   ) {
     throw new Error('Complete the organization application details before submitting.');
@@ -2504,77 +2500,72 @@ export async function createUserAccount(input: {
   await saveUser(createdUser);
 
   if (input.role === 'volunteer') {
-    await saveVolunteer({
-      id: `volunteer-${createdUser.id}`,
-      userId: createdUser.id,
-      name: createdUser.name,
-      email: createdUser.email || '',
-      phone: createdUser.phone || '',
-      skills: input.volunteerMembershipSheet?.skills || [],
-      skillsDescription: input.pillarsOfInterest.join(', '),
-      availability: {
-        daysPerWeek: 0,
-        hoursPerWeek: 0,
-        availableDays: [],
-      },
-      pastProjects: [],
-      totalHoursContributed: 0,
-      rating: 0,
-      engagementStatus: 'Open to Volunteer',
-      background: '',
-      gender: input.volunteerMembershipSheet?.gender || '',
-      dateOfBirth: input.volunteerMembershipSheet?.dateOfBirth || '',
-      civilStatus: input.volunteerMembershipSheet?.civilStatus || '',
-      homeAddress: input.volunteerMembershipSheet?.homeAddress || '',
-      homeAddressRegion: input.volunteerMembershipSheet?.homeAddressRegion || '',
-      homeAddressCityMunicipality: input.volunteerMembershipSheet?.homeAddressCityMunicipality || '',
-      homeAddressBarangay: input.volunteerMembershipSheet?.homeAddressBarangay || '',
-      occupation: input.volunteerMembershipSheet?.occupation || '',
-      workplaceOrSchool: input.volunteerMembershipSheet?.workplaceOrSchool || '',
-      collegeCourse: input.volunteerMembershipSheet?.collegeCourse || '',
-      certificationsOrTrainings:
-        input.volunteerMembershipSheet?.certificationsOrTrainings || '',
-      hobbiesAndInterests: input.volunteerMembershipSheet?.hobbiesAndInterests || '',
-      specialSkills: input.volunteerMembershipSheet?.specialSkills || '',
-      videoBriefingUrl: input.volunteerMembershipSheet?.videoBriefingUrl || '',
-      affiliations: input.volunteerMembershipSheet?.affiliations || [],
-      registrationStatus: 'Pending',
-      createdAt,
-    });
+    try {
+      await saveVolunteer({
+        id: `volunteer-${createdUser.id}`,
+        userId: createdUser.id,
+        name: createdUser.name,
+        email: createdUser.email || '',
+        phone: createdUser.phone || '',
+        skills: input.volunteerMembershipSheet?.skills || [],
+        skillsDescription: input.pillarsOfInterest.join(', '),
+        availability: {
+          daysPerWeek: 0,
+          hoursPerWeek: 0,
+          availableDays: [],
+        },
+        pastProjects: [],
+        totalHoursContributed: 0,
+        rating: 0,
+        engagementStatus: 'Open to Volunteer',
+        background: '',
+        gender: input.volunteerMembershipSheet?.gender || '',
+        dateOfBirth: input.volunteerMembershipSheet?.dateOfBirth || '',
+        civilStatus: input.volunteerMembershipSheet?.civilStatus || '',
+        homeAddress: input.volunteerMembershipSheet?.homeAddress || '',
+        homeAddressRegion: input.volunteerMembershipSheet?.homeAddressRegion || '',
+        homeAddressCityMunicipality: input.volunteerMembershipSheet?.homeAddressCityMunicipality || '',
+        homeAddressBarangay: input.volunteerMembershipSheet?.homeAddressBarangay || '',
+        occupation: input.volunteerMembershipSheet?.occupation || '',
+        workplaceOrSchool: input.volunteerMembershipSheet?.workplaceOrSchool || '',
+        collegeCourse: input.volunteerMembershipSheet?.collegeCourse || '',
+        certificationsOrTrainings:
+          input.volunteerMembershipSheet?.certificationsOrTrainings || '',
+        hobbiesAndInterests: input.volunteerMembershipSheet?.hobbiesAndInterests || '',
+        specialSkills: input.volunteerMembershipSheet?.specialSkills || '',
+        videoBriefingUrl: input.volunteerMembershipSheet?.videoBriefingUrl || '',
+        affiliations: input.volunteerMembershipSheet?.affiliations || [],
+        registrationStatus: 'Pending',
+        createdAt,
+      });
+    } catch (error) {
+      console.error('Error saving volunteer profile:', error);
+      throw new Error(`Failed to create volunteer profile: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   if (input.role === 'partner' && input.partnerRegistration) {
-    const normalizedDswdAccreditationNo = requiresDswdAccreditationNo(
-      input.partnerRegistration.sectorType
-    )
-      ? input.partnerRegistration.dswdAccreditationNo.trim().toUpperCase()
-      : '';
-
-    await savePartner({
-      id: `partner-${createdUser.id}`,
-      ownerUserId: createdUser.id,
-      name: input.partnerRegistration.organizationName.trim(),
-      stakeholderName: input.partnerRegistration.stakeholderName.trim(),
-      description: `${input.partnerRegistration.advocacyFocus.join(', ')} partnership application`,
-      category: getCategoryFromAdvocacyFocus(input.partnerRegistration.advocacyFocus),
-      sectorType: input.partnerRegistration.sectorType,
-      dswdAccreditationNo: normalizedDswdAccreditationNo,
-      secRegistrationNo: input.partnerRegistration.secRegistrationNo?.trim().toUpperCase() || '',
-      advocacyFocus: input.partnerRegistration.advocacyFocus,
-      contactEmail: createdUser.email,
-      contactPhone: createdUser.phone,
-      region: input.partnerRegistration.region.trim(),
-      province: input.partnerRegistration.province.trim(),
-      cityMunicipality: input.partnerRegistration.cityMunicipality.trim(),
-      address: composePartnerAddress(
-        input.partnerRegistration.region,
-        input.partnerRegistration.province,
-        input.partnerRegistration.cityMunicipality
-      ),
-      status: 'Pending',
-      verificationStatus: 'Pending',
-      createdAt,
-    });
+    try {
+      await savePartner({
+        id: `partner-${createdUser.id}`,
+        ownerUserId: createdUser.id,
+        name: input.partnerRegistration.organizationName.trim(),
+        description: `${input.partnerRegistration.advocacyFocus.join(', ')} partnership application`,
+        category: getCategoryFromAdvocacyFocus(input.partnerRegistration.advocacyFocus),
+        sectorType: input.partnerRegistration.sectorType,
+        dswdAccreditationNo: input.partnerRegistration.dswdAccreditationNo.trim().toUpperCase(),
+        secRegistrationNo: input.partnerRegistration.secRegistrationNo?.trim().toUpperCase() || '',
+        advocacyFocus: input.partnerRegistration.advocacyFocus,
+        contactEmail: createdUser.email,
+        contactPhone: createdUser.phone,
+        status: 'Pending',
+        verificationStatus: 'Pending',
+        createdAt,
+      });
+    } catch (error) {
+      console.error('Error saving partner profile:', error);
+      throw new Error(`Failed to create partner profile: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   const savedUser = await getUser(createdUser.id);
@@ -2731,17 +2722,35 @@ export async function loginWithCredentials(
   identifier: string,
   password: string
 ): Promise<User | null> {
-  const payload = await requestApiJson<{ user?: User | null }>('/auth/login', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      identifier: identifier.trim(),
-      password: password.trim(),
-    }),
-  }, 15000); // 15 seconds timeout
-  return payload.user || null;
+  try {
+    const payload = await requestApiJson<{ user?: User | null }>('/auth/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        identifier: identifier.trim(),
+        password: password.trim(),
+      }),
+    });
+    return payload.user || null;
+  } catch (error: any) {
+    if (error?.message === 'Invalid email/phone or password.') {
+      return loginWithStoredCredentials(identifier, password);
+    }
+
+    const fallbackMessages = [
+      'Database unavailable while checking your account. Please try again.',
+      'Failed to fetch',
+      'Network request failed',
+      'Database Unavailable',
+    ];
+    if (fallbackMessages.some(message => String(error?.message || '').includes(message))) {
+      return loginWithStoredCredentials(identifier, password);
+    }
+
+    throw error;
+  }
 }
 
 // Returns all user accounts from shared storage.
@@ -2773,33 +2782,6 @@ export async function setCurrentUser(user: User | null): Promise<void> {
 // Restores the currently signed-in user from local-only storage.
 export async function getCurrentUser(): Promise<User | null> {
   return (await getLocalStorageItem<User>(STORAGE_KEYS.CURRENT_USER)) || null;
-}
-
-export const DEFAULT_APP_SETTINGS: AppSettings = {
-  notificationsEnabled: true,
-  autoRefreshEnabled: true,
-  compactDashboard: false,
-  approvalConfirmations: true,
-  showProgramContext: true,
-  startupScreen: 'Dashboard',
-};
-
-export async function getAppSettings(): Promise<AppSettings> {
-  const stored = await getLocalStorageItem<Partial<AppSettings>>(STORAGE_KEYS.APP_SETTINGS);
-  return {
-    ...DEFAULT_APP_SETTINGS,
-    ...(stored || {}),
-  };
-}
-
-export async function saveAppSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
-  const current = await getAppSettings();
-  const next: AppSettings = {
-    ...current,
-    ...patch,
-  };
-  await setLocalStorageItem(STORAGE_KEYS.APP_SETTINGS, next);
-  return next;
 }
 
 function userMatchesLinkedRecord(
@@ -2900,49 +2882,10 @@ async function getLinkedUserAccountForPartner(partner: Partner): Promise<User | 
 // User Approval Management
 // Gets all pending user accounts that need admin approval.
 export async function getPendingUserApprovals(): Promise<User[]> {
-  const [users, volunteers, partners] = await Promise.all([
-    getAllUsers(),
-    getAllVolunteers(),
-    getAllPartners(),
-  ]);
-
-  return users.filter(user => {
-    if (user.role === 'admin') {
-      return false;
-    }
-
-    if (user.approvalStatus === 'pending') {
-      return true;
-    }
-
-    if (user.approvalStatus === 'approved' || user.approvalStatus === 'rejected') {
-      return false;
-    }
-
-    if (user.role === 'volunteer') {
-      return volunteers.some(
-        volunteer =>
-          userMatchesLinkedRecord(user, {
-            userId: volunteer.userId,
-            email: volunteer.email,
-            phone: volunteer.phone,
-          }) && (volunteer.registrationStatus || 'Pending') === 'Pending'
-      );
-    }
-
-    if (user.role === 'partner') {
-      return partners.some(
-        partner =>
-          userMatchesLinkedRecord(user, {
-            ownerUserId: partner.ownerUserId,
-            email: partner.contactEmail,
-            phone: partner.contactPhone,
-          }) && (partner.status || 'Pending') === 'Pending'
-      );
-    }
-
-    return false;
-  });
+  const users = await getAllUsers();
+  return users.filter(
+    user => user.role !== 'admin' && user.approvalStatus === 'pending'
+  );
 }
 
 // Gets all approved users.
@@ -2953,40 +2896,108 @@ export async function getApprovedUsers(): Promise<User[]> {
 
 // Approves a pending user account.
 export async function approveUser(userId: string, adminId: string): Promise<User> {
-  const payload = await requestApiJson<{ user: User }>(
-    `/auth/users/${encodeURIComponent(userId)}/approve?admin_id=${encodeURIComponent(adminId)}`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ status: 'approved' }),
-    }
-  );
-
-  invalidateSharedStorageCache([
-    STORAGE_KEYS.USERS,
-    STORAGE_KEYS.VOLUNTEERS,
-    STORAGE_KEYS.PARTNERS,
-    STORAGE_KEYS.MESSAGES,
-  ]);
-
-  if (!payload.user) {
-    throw new Error('Approval completed but the updated user was not returned.');
+  const user = await getUser(userId);
+  if (!user) {
+    throw new Error('User not found.');
   }
 
-  return payload.user;
+  const approvedAt = new Date().toISOString();
+  const updatedUser: User = {
+    ...user,
+    approvalStatus: 'approved',
+    approvedBy: adminId,
+    approvedAt,
+    rejectionReason: undefined,
+  };
+
+  await saveUser(updatedUser);
+
+  if (updatedUser.role === 'volunteer') {
+    const linkedVolunteers = await getLinkedVolunteersForUserAccount(updatedUser);
+    await Promise.all(
+      linkedVolunteers.map(volunteer =>
+        saveVolunteer({
+          ...volunteer,
+          registrationStatus: 'Approved',
+          reviewedBy: adminId,
+          reviewedAt: approvedAt,
+          credentialsUnlockedAt: approvedAt,
+        })
+      )
+    );
+  }
+
+  if (updatedUser.role === 'partner') {
+    const linkedPartners = await getLinkedPartnerRecordsForUserAccount(updatedUser);
+    await Promise.all(
+      linkedPartners.map(partner =>
+        savePartner({
+          ...partner,
+          status: 'Approved',
+          validatedBy: adminId,
+          validatedAt: approvedAt,
+          credentialsUnlockedAt: approvedAt,
+        })
+      )
+    );
+  }
+
+  return updatedUser;
 }
 
-// Deletes a pending user account instead of keeping a rejected login around.
+// Rejects a pending user account with an optional reason.
 export async function rejectUser(
   userId: string,
   rejectionReason: string = 'Account rejected by administrator.',
   adminId?: string
-): Promise<void> {
-  void rejectionReason;
-  void adminId;
-  await deleteUser(userId);
+): Promise<User> {
+  const user = await getUser(userId);
+  if (!user) {
+    throw new Error('User not found.');
+  }
+
+  const reviewedAt = new Date().toISOString();
+  const updatedUser: User = {
+    ...user,
+    approvalStatus: 'rejected',
+    approvedBy: undefined,
+    approvedAt: undefined,
+    rejectionReason,
+  };
+
+  await saveUser(updatedUser);
+
+  if (updatedUser.role === 'volunteer') {
+    const linkedVolunteers = await getLinkedVolunteersForUserAccount(updatedUser);
+    await Promise.all(
+      linkedVolunteers.map(volunteer =>
+        saveVolunteer({
+          ...volunteer,
+          registrationStatus: 'Rejected',
+          reviewedBy: adminId,
+          reviewedAt,
+          credentialsUnlockedAt: undefined,
+        })
+      )
+    );
+  }
+
+  if (updatedUser.role === 'partner') {
+    const linkedPartners = await getLinkedPartnerRecordsForUserAccount(updatedUser);
+    await Promise.all(
+      linkedPartners.map(partner =>
+        savePartner({
+          ...partner,
+          status: 'Rejected',
+          validatedBy: adminId,
+          validatedAt: reviewedAt,
+          credentialsUnlockedAt: undefined,
+        })
+      )
+    );
+  }
+
+  return updatedUser;
 }
 
 // Partner Storage
@@ -3113,6 +3124,30 @@ export async function deletePartner(partnerId: string): Promise<void> {
       (reports || []).filter(report => report.partnerId !== partnerId)
     ),
   ]);
+  invalidateSharedStorageCache([
+    STORAGE_KEYS.PROJECTS,
+    STORAGE_KEYS.PROGRAMS,
+    STORAGE_KEYS.EVENTS,
+    STORAGE_KEYS.STATUS_UPDATES,
+    STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
+    STORAGE_KEYS.PARTNER_REPORTS,
+    STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
+    STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+    STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+  ]);
+  notifyStorageChanged([
+    STORAGE_KEYS.PROJECTS,
+    STORAGE_KEYS.PROGRAMS,
+    STORAGE_KEYS.EVENTS,
+    STORAGE_KEYS.STATUS_UPDATES,
+    STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
+    STORAGE_KEYS.PARTNER_REPORTS,
+    STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
+    STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+    STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+  ]);
 }
 
 async function ensureAdminPlanningCalendarsSeeded(): Promise<AdminPlanningCalendar[]> {
@@ -3205,119 +3240,17 @@ export async function deleteAdminPlanningItem(itemId: string): Promise<void> {
   await setStorageItem(STORAGE_KEYS.ADMIN_PLANNING_CALENDARS, nextCalendars);
 }
 
-// Program Tracks Storage
-// Inserts or updates a program track.
-export async function saveProgramTrack(programTrack: ProgramTrack): Promise<void> {
-  const [programTracks, programs] = await Promise.all([
-    getStorageItem<ProgramTrack[]>(STORAGE_KEYS.PROGRAM_TRACKS),
-    getStorageItem<ProgramTrack[]>(STORAGE_KEYS.PROGRAMS),
-  ]);
-
-  const nextProgramTracks = (programTracks || []).slice();
-  const nextPrograms = (programs || []).slice();
-  const now = new Date().toISOString();
-  const normalizedTrack: ProgramTrack = {
-    ...programTrack,
-    createdAt: programTrack.createdAt || now,
-    updatedAt: now,
-  };
-  const syncCollection = (collection: ProgramTrack[]) => {
-    const existingIndex = collection.findIndex(item => item.id === normalizedTrack.id);
-    if (existingIndex >= 0) {
-      collection[existingIndex] = normalizedTrack;
-      return;
-    }
-    collection.push(normalizedTrack);
-  };
-
-  syncCollection(nextProgramTracks);
-  syncCollection(nextPrograms);
-
-  await Promise.all([
-    setStorageItem(STORAGE_KEYS.PROGRAM_TRACKS, nextProgramTracks),
-    setStorageItem(STORAGE_KEYS.PROGRAMS, nextPrograms),
-  ]);
-}
-
-// Deletes a program track by id.
-export async function deleteProgramTrack(programTrackId: string): Promise<void> {
-  const [programTracks, programs] = await Promise.all([
-    getStorageItem<ProgramTrack[]>(STORAGE_KEYS.PROGRAM_TRACKS),
-    getStorageItem<ProgramTrack[]>(STORAGE_KEYS.PROGRAMS),
-  ]);
-
-  await Promise.all([
-    setStorageItem(
-      STORAGE_KEYS.PROGRAM_TRACKS,
-      (programTracks || []).filter(programTrack => programTrack.id !== programTrackId)
-    ),
-    setStorageItem(
-      STORAGE_KEYS.PROGRAMS,
-      (programs || []).filter(program => program.id !== programTrackId)
-    ),
-  ]);
-}
-
-export async function getAllProgramTracks(): Promise<ProgramTrack[]> {
-  return (await getStorageItem<ProgramTrack[]>('programTracks')) || [];
-}
-
 // Project Storage
 // Inserts or updates a project or event record.
-export async function saveProgram(program: ProgramTrack): Promise<void> {
-  const [programTracks, programs] = await Promise.all([
-    getStorageItem<ProgramTrack[]>(STORAGE_KEYS.PROGRAM_TRACKS),
-    getStorageItem<ProgramTrack[]>(STORAGE_KEYS.PROGRAMS),
-  ]);
-
-  const nextProgram = { ...program };
-  const nextProgramTracks = (programTracks || []).slice();
-  const nextPrograms = (programs || []).slice();
-
-  const upsert = (collection: ProgramTrack[]) => {
-    const existingIndex = collection.findIndex(item => item.id === nextProgram.id);
-    if (existingIndex >= 0) {
-      collection[existingIndex] = { ...collection[existingIndex], ...nextProgram };
-      return;
-    }
-    collection.push(nextProgram);
-  };
-
-  upsert(nextProgramTracks);
-  upsert(nextPrograms);
-
-  await Promise.all([
-    setStorageItem(STORAGE_KEYS.PROGRAM_TRACKS, nextProgramTracks),
-    setStorageItem(STORAGE_KEYS.PROGRAMS, nextPrograms),
-  ]);
-}
-
-export async function deleteProgram(programId: string): Promise<void> {
-  const [programTracks, programs] = await Promise.all([
-    getStorageItem<ProgramTrack[]>(STORAGE_KEYS.PROGRAM_TRACKS),
-    getStorageItem<ProgramTrack[]>(STORAGE_KEYS.PROGRAMS),
-  ]);
-
-  await Promise.all([
-    setStorageItem(
-      STORAGE_KEYS.PROGRAM_TRACKS,
-      (programTracks || []).filter(track => track.id !== programId)
-    ),
-    setStorageItem(
-      STORAGE_KEYS.PROGRAMS,
-      (programs || []).filter(program => program.id !== programId)
-    ),
-  ]);
-}
-
 export async function saveProject(project: Project): Promise<void> {
+  invalidateSharedStorageCache([STORAGE_KEYS.PROJECTS]);
   const projects = await getStorageItem<Project[]>(STORAGE_KEYS.PROJECTS) || [];
   const existingIndex = projects.findIndex(p => p.id === project.id);
   const normalizedProject = normalizeProjectRecord({
     ...project,
     isEvent: false,
     parentProjectId: undefined,
-    skillsNeeded: normalizeProjectSkillsNeeded(project, Array.isArray(project.internalTasks) ? project.internalTasks : []),
+    skillsNeeded: normalizeProjectSkillsNeeded(project, project.internalTasks || []),
   });
   if (existingIndex >= 0) {
     projects[existingIndex] = normalizedProject;
@@ -3325,26 +3258,25 @@ export async function saveProject(project: Project): Promise<void> {
     projects.push(normalizedProject);
   }
   await setStorageItem(STORAGE_KEYS.PROJECTS, projects);
-  invalidateProjectsSnapshotCache();
+  notifyStorageChanged([STORAGE_KEYS.PROJECTS]);
 }
 
 // Inserts or updates an event record in the dedicated events collection.
 export async function saveEvent(event: Project): Promise<void> {
-  const rawEvents = await getStorageItem<Project[]>(STORAGE_KEYS.EVENTS) || [];
-  const existingIndex = rawEvents.findIndex(entry => entry.id === event.id);
+  invalidateSharedStorageCache([STORAGE_KEYS.EVENTS]);
+  const events = await getStorageItem<Project[]>(STORAGE_KEYS.EVENTS) || [];
+  const existingIndex = events.findIndex(entry => entry.id === event.id);
   const normalizedEvent = normalizeEventRecord({
     ...event,
-    skillsNeeded: normalizeProjectSkillsNeeded(event, Array.isArray(event.internalTasks) ? event.internalTasks : []),
+    skillsNeeded: normalizeProjectSkillsNeeded(event, event.internalTasks || []),
   });
   if (existingIndex >= 0) {
-    rawEvents[existingIndex] = normalizedEvent;
+    events[existingIndex] = normalizedEvent;
   } else {
-    rawEvents.push(normalizedEvent);
+    events.push(normalizedEvent);
   }
-  // Normalize all events (fixes legacy string-vs-array issues in older records)
-  const events = rawEvents.map(e => e.id === normalizedEvent.id ? normalizedEvent : normalizeEventRecord(e));
   await setStorageItem(STORAGE_KEYS.EVENTS, events);
-  invalidateProjectsSnapshotCache();
+  notifyStorageChanged([STORAGE_KEYS.EVENTS]);
 }
 
 // Deletes a project and cleans up dependent records that reference it.
@@ -3423,7 +3355,26 @@ export async function deleteProject(projectId: string): Promise<void> {
       (projectGroupMessages || []).filter(message => !relatedProjectIds.has(message.projectId))
     ),
   ]);
-  invalidateProjectsSnapshotCache();
+  invalidateSharedStorageCache([
+    STORAGE_KEYS.EVENTS,
+    STORAGE_KEYS.STATUS_UPDATES,
+    STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
+    STORAGE_KEYS.PARTNER_REPORTS,
+    STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
+    STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+    STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+  ]);
+  notifyStorageChanged([
+    STORAGE_KEYS.EVENTS,
+    STORAGE_KEYS.STATUS_UPDATES,
+    STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
+    STORAGE_KEYS.PARTNER_REPORTS,
+    STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
+    STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+    STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+  ]);
 }
 
 // Deletes one event and cleans up records that reference it.
@@ -3483,7 +3434,6 @@ export async function deleteEvent(eventId: string): Promise<void> {
       (projectGroupMessages || []).filter(message => message.projectId !== eventId)
     ),
   ]);
-  invalidateProjectsSnapshotCache();
 }
 
 // Looks up a single project by id.
@@ -3494,13 +3444,14 @@ export async function getProject(id: string): Promise<Project | null> {
 
 // Returns all projects and events from shared storage.
 export async function getAllProjects(): Promise<Project[]> {
-  const [projects, events] = await Promise.all([
+  const [programs, projects, events] = await Promise.all([
+    getStorageItemFast<Project[]>(STORAGE_KEYS.PROGRAMS),
     getStorageItemFast<Project[]>(STORAGE_KEYS.PROJECTS),
     getStorageItemFast<Project[]>(STORAGE_KEYS.EVENTS),
   ]);
 
   return mergeProjectAndEventRecords(
-    projects,
+    [...(programs || []), ...(projects || [])],
     events
   );
 }
@@ -3544,7 +3495,7 @@ function normalizeVolunteerRecord(volunteer: Volunteer): Volunteer {
 
   return {
     ...volunteer,
-    name: volunteer.name.trim(),
+    name: (volunteer.name || '').trim(),
     email: volunteer.email?.trim().toLowerCase() || '',
     phone: normalizeAccountPhone(volunteer.phone) || '',
     registrationStatus,
@@ -3593,7 +3544,17 @@ export async function getVolunteerByUserId(userId: string): Promise<Volunteer | 
   const payload = await requestApiJson<{ volunteer?: Volunteer | null }>(
     `/volunteers/by-user/${encodeURIComponent(userId)}`
   );
-  return payload.volunteer ? normalizeVolunteerRecord(payload.volunteer) : null;
+  if (payload.volunteer) {
+    return normalizeVolunteerRecord(payload.volunteer);
+  }
+
+  const linkedUser = await getUser(userId);
+  if (!linkedUser) {
+    return null;
+  }
+
+  const linkedVolunteers = await getLinkedVolunteersForUserAccount(linkedUser);
+  return linkedVolunteers[0] ? normalizeVolunteerRecord(linkedVolunteers[0]) : null;
 }
 
 // Computes recognition metrics such as joined programs and top-volunteer status.
@@ -3680,6 +3641,30 @@ export async function getAllVolunteerTimeLogs(): Promise<VolunteerTimeLog[]> {
   return logs.sort((a, b) => new Date(b.timeIn).getTime() - new Date(a.timeIn).getTime());
 }
 
+export async function setVolunteerAttendanceChecked(
+  logId: string,
+  checked: boolean,
+  checkedByUserId: string
+): Promise<VolunteerTimeLog> {
+  const logs = (await getStorageItem<VolunteerTimeLog[]>(STORAGE_KEYS.VOLUNTEER_TIME_LOGS)) || [];
+  const existingLog = logs.find(log => log.id === logId);
+  if (!existingLog) {
+    throw new Error('Attendance log not found.');
+  }
+
+  const users = (await getStorageItem<User[]>(STORAGE_KEYS.USERS)) || [];
+  const checkedByUser = users.find(candidate => candidate.id === checkedByUserId);
+  const updatedLog: VolunteerTimeLog = {
+    ...existingLog,
+    attendanceCheckedAt: checked ? new Date().toISOString() : undefined,
+    attendanceCheckedBy: checked ? checkedByUserId : undefined,
+    attendanceCheckedByName: checked ? checkedByUser?.name || 'Field Officer' : undefined,
+  };
+
+  await saveVolunteerTimeLog(updatedLog);
+  return updatedLog;
+}
+
 // Starts a volunteer time log for the selected project.
 export async function startVolunteerTimeLog(
   volunteerId: string,
@@ -3703,53 +3688,9 @@ export async function startVolunteerTimeLog(
   );
 
   if (!payload.log) {
-    throw new Error('Attendance confirmation did not complete.');
+    throw new Error('Time in did not complete.');
   }
 
-  try {
-    const [volunteer, project] = await Promise.all([
-      getVolunteer(volunteerId),
-      getProject(projectId),
-    ]);
-
-    if (volunteer && project) {
-      await notifyVolunteerAboutTimeIn({
-        event: project,
-        volunteer,
-        timeIn: payload.log.timeIn,
-      });
-    }
-  } catch (error) {
-    console.error('Failed to send volunteer attendance confirmation notification:', error);
-  }
-
-  return payload.log;
-}
-
-export async function setVolunteerAttendanceChecked(
-  logId: string,
-  checked: boolean,
-  checkedByUserId: string
-): Promise<VolunteerTimeLog> {
-  const payload = await requestApiJson<{ log?: VolunteerTimeLog | null }>(
-    `/volunteer-time-logs/${encodeURIComponent(logId)}/attendance-check`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        checked,
-        checkedByUserId,
-      }),
-    }
-  );
-
-  if (!payload.log) {
-    throw new Error('Attendance check update did not complete.');
-  }
-
-  await saveVolunteerTimeLog(payload.log);
   return payload.log;
 }
 
@@ -3859,6 +3800,9 @@ export async function saveMessage(message: Message): Promise<void> {
       },
       body: JSON.stringify(message),
     });
+    // Invalidate caches for both sender and recipient
+    invalidateMessageCache(message.senderId, message.recipientId);
+    invalidateMessageCache(message.recipientId, message.senderId);
     notifyWebMessageUpdate();
   } catch (error) {
     if (!isExpectedRemoteStorageError(error)) {
@@ -3881,6 +3825,8 @@ export async function saveProjectGroupMessage(message: ProjectGroupMessage): Pro
         body: JSON.stringify(message),
       }
     );
+    // Invalidate group message cache for this project
+    invalidateMessageCache(undefined, undefined, message.projectId);
     notifyWebMessageUpdate();
   } catch (error) {
     if (!isExpectedRemoteStorageError(error)) {
@@ -3891,45 +3837,83 @@ export async function saveProjectGroupMessage(message: ProjectGroupMessage): Pro
 }
 
 export async function deleteProjectGroupChat(projectId: string): Promise<void> {
-  try {
-    await fetchApiResponse(
-      `/projects/${encodeURIComponent(projectId)}/group-messages`,
-      { method: 'DELETE' }
-    );
-    notifyWebMessageUpdate();
-  } catch (error) {
-    if (!isExpectedRemoteStorageError(error)) {
-      console.error('Error deleting project group chat:', error);
-    }
-    throw error;
-  }
+  const messages =
+    (await getStorageItem<ProjectGroupMessage[]>(STORAGE_KEYS.PROJECT_GROUP_MESSAGES)) || [];
+  await setStorageItem(
+    STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+    messages.filter(message => message.projectId !== projectId)
+  );
+  invalidateMessageCache(undefined, undefined, projectId);
+  notifyWebMessageUpdate();
 }
 
 // Returns all direct messages relevant to a specific user.
+// Results are cached for MESSAGES_CACHE_TTL_MS and invalidated on send/receive.
 export async function getMessagesForUser(userId: string): Promise<Message[]> {
+  const cached = messagesForUserCache.get(userId);
+  if (cached && Date.now() - cached.timestamp < MESSAGES_CACHE_TTL_MS) {
+    return cached.data;
+  }
   const payload = await requestApiJson<{ messages?: Message[] }>(
-    `/messages?user_id=${encodeURIComponent(userId)}`
+    `/messages?user_id=${encodeURIComponent(userId)}&limit=10000`
   );
-  return payload.messages || [];
+  const messages = payload.messages || [];
+  messagesForUserCache.set(userId, { data: messages, timestamp: Date.now() });
+  return messages;
 }
 
 // Returns the direct-message history between two users.
+// Results are cached for CONVERSATION_CACHE_TTL_MS and invalidated on send/receive.
 export async function getConversation(userId1: string, userId2: string): Promise<Message[]> {
+  const cacheKey = [userId1, userId2].sort().join(':');
+  const cached = conversationCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CONVERSATION_CACHE_TTL_MS) {
+    return cached.data;
+  }
   const payload = await requestApiJson<{ messages?: Message[] }>(
-    `/messages/conversation?user1=${encodeURIComponent(userId1)}&user2=${encodeURIComponent(userId2)}`
+    `/messages/conversation?user1=${encodeURIComponent(userId1)}&user2=${encodeURIComponent(userId2)}&limit=10000`
   );
-  return payload.messages || [];
+  const messages = payload.messages || [];
+  conversationCache.set(cacheKey, { data: messages, timestamp: Date.now() });
+  return messages;
 }
 
 // Returns the project group chat history available to a specific user.
+// Results are cached for CONVERSATION_CACHE_TTL_MS and invalidated on new messages.
 export async function getProjectGroupMessages(
   projectId: string,
   userId: string
 ): Promise<ProjectGroupMessage[]> {
+  const cacheKey = `${projectId}:${userId}`;
+  const cached = groupMessagesCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CONVERSATION_CACHE_TTL_MS) {
+    return cached.data;
+  }
   const payload = await requestApiJson<{ messages?: ProjectGroupMessage[] }>(
     `/projects/${encodeURIComponent(projectId)}/group-messages?user_id=${encodeURIComponent(userId)}`
   );
-  return payload.messages || [];
+  const messages = payload.messages || [];
+  groupMessagesCache.set(cacheKey, { data: messages, timestamp: Date.now() });
+  return messages;
+}
+
+// Invalidates all message caches for a user (call after send/receive).
+export function invalidateMessageCache(userId?: string, conversationPartnerId?: string, projectId?: string): void {
+  if (userId) {
+    messagesForUserCache.delete(userId);
+  }
+  if (userId && conversationPartnerId) {
+    const cacheKey = [userId, conversationPartnerId].sort().join(':');
+    conversationCache.delete(cacheKey);
+  }
+  if (projectId) {
+    // Clear all group message cache entries for this project
+    for (const key of groupMessagesCache.keys()) {
+      if (key.startsWith(`${projectId}:`)) {
+        groupMessagesCache.delete(key);
+      }
+    }
+  }
 }
 
 // Marks a direct message as read and updates storage listeners.
@@ -4090,11 +4074,6 @@ export async function saveVolunteerProjectMatch(match: VolunteerProjectMatch): P
   ]);
   if (match.status === 'Matched') {
     await attachVolunteerToProject(match.projectId, match.volunteerId);
-    await ensureVolunteerProjectJoinRecord(
-      match.projectId,
-      match.volunteerId,
-      match.requestedAt ? 'VolunteerJoin' : 'AdminMatch'
-    );
   }
   await syncVolunteerEngagementStatus(match.volunteerId);
 }
@@ -4324,194 +4303,79 @@ export async function getVolunteerProjectJoinRecords(
     .sort((a, b) => new Date(b.joinedAt).getTime() - new Date(a.joinedAt).getTime());
 }
 
-// Repairs legacy/partial approvals so every matched volunteer is present in event membership.
+export async function getAllVolunteerProjectJoinRecords(): Promise<VolunteerProjectJoinRecord[]> {
+  const records =
+    (await getStorageItemFast<VolunteerProjectJoinRecord[]>(STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS)) || [];
+  return records
+    .map(record => ({
+      ...record,
+      participationStatus: record.participationStatus || 'Active',
+    }))
+    .sort((a, b) => new Date(b.joinedAt).getTime() - new Date(a.joinedAt).getTime());
+}
+
 export async function reconcileApprovedVolunteerEventMemberships(): Promise<void> {
-  const [events, volunteers, matches, joinRecords] = await Promise.all([
-    getStorageItem<Project[]>(STORAGE_KEYS.EVENTS),
-    getStorageItem<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS),
-    getStorageItem<VolunteerProjectMatch[]>(STORAGE_KEYS.VOLUNTEER_MATCHES),
-    getStorageItem<VolunteerProjectJoinRecord[]>(STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS),
+  const [matches, volunteers, projects, existingRecords] = await Promise.all([
+    getAllVolunteerProjectMatches(),
+    getAllVolunteers(),
+    getAllProjects(),
+    getAllVolunteerProjectJoinRecords(),
   ]);
 
-  const eventRecords = events || [];
-  const volunteerById = new Map((volunteers || []).map(volunteer => [volunteer.id, volunteer]));
-  const nextJoinRecords = [...(joinRecords || [])];
-  let eventsChanged = false;
-  let joinRecordsChanged = false;
+  const existingKeys = new Set(
+    existingRecords.map(record => `${record.projectId}:${record.volunteerId}`)
+  );
+  const projectById = new Map(projects.map(project => [project.id, project]));
+  const volunteerById = new Map(volunteers.map(volunteer => [volunteer.id, volunteer]));
+  const nextRecords = [...existingRecords];
 
-  const matchedByProjectId = new Map<string, VolunteerProjectMatch[]>();
-  (matches || []).forEach(match => {
-    if (match.status !== 'Matched') {
-      return;
-    }
-    const projectMatches = matchedByProjectId.get(match.projectId) || [];
-    projectMatches.push(match);
-    matchedByProjectId.set(match.projectId, projectMatches);
-  });
-
-  const nextEvents = eventRecords.map(event => {
-    if (!event.isEvent) {
-      return event;
-    }
-
-    const projectMatches = matchedByProjectId.get(event.id) || [];
-    if (projectMatches.length === 0) {
-      return event;
-    }
-
-    const volunteerIds = new Set(event.volunteers || []);
-    const joinedUserIds = new Set(event.joinedUserIds || []);
-    let eventChanged = false;
-
-    projectMatches.forEach(match => {
+  matches
+    .filter(match => match.status === 'Matched' || match.status === 'Completed')
+    .forEach(match => {
+      const project = projectById.get(match.projectId);
       const volunteer = volunteerById.get(match.volunteerId);
-      if (!volunteer) {
+      if (!project?.isEvent || !volunteer || existingKeys.has(`${match.projectId}:${match.volunteerId}`)) {
         return;
       }
 
-      if (!volunteerIds.has(volunteer.id)) {
-        volunteerIds.add(volunteer.id);
-        eventChanged = true;
-      }
-
-      if (volunteer.userId && !joinedUserIds.has(volunteer.userId)) {
-        joinedUserIds.add(volunteer.userId);
-        eventChanged = true;
-      }
-
-      const hasJoinRecord = nextJoinRecords.some(
-        record => record.projectId === event.id && record.volunteerId === volunteer.id
-      );
-      if (!hasJoinRecord) {
-        nextJoinRecords.push({
-          id: buildVolunteerProjectJoinRecordId(event.id, volunteer.id),
-          projectId: event.id,
-          volunteerId: volunteer.id,
-          volunteerUserId: volunteer.userId,
-          volunteerName: volunteer.name,
-          volunteerEmail: volunteer.email,
-          joinedAt: match.reviewedAt || match.matchedAt || new Date().toISOString(),
-          source: 'VolunteerJoin',
-          participationStatus: 'Active',
-        });
-        joinRecordsChanged = true;
-      }
+      nextRecords.push({
+        id: buildVolunteerProjectJoinRecordId(match.projectId, match.volunteerId),
+        projectId: match.projectId,
+        volunteerId: match.volunteerId,
+        volunteerUserId: volunteer.userId,
+        volunteerName: volunteer.name,
+        volunteerEmail: volunteer.email,
+        joinedAt: match.matchedAt || match.requestedAt || new Date().toISOString(),
+        source: 'AdminMatch',
+        participationStatus: match.status === 'Completed' ? 'Completed' : 'Active',
+        completedAt: match.status === 'Completed' ? match.reviewedAt || new Date().toISOString() : undefined,
+      });
+      existingKeys.add(`${match.projectId}:${match.volunteerId}`);
     });
 
-    if (!eventChanged) {
-      return event;
-    }
-
-    eventsChanged = true;
-    return {
-      ...event,
-      volunteers: Array.from(volunteerIds),
-      joinedUserIds: Array.from(joinedUserIds),
-      updatedAt: new Date().toISOString(),
-    };
-  });
-
-  const writes: Promise<void>[] = [];
-  if (eventsChanged) {
-    writes.push(setStorageItem(STORAGE_KEYS.EVENTS, nextEvents));
-  }
-  if (joinRecordsChanged) {
-    writes.push(setStorageItem(STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS, nextJoinRecords));
-  }
-
-  if (writes.length > 0) {
-    await Promise.all(writes);
-    invalidateProjectsSnapshotCache();
-    invalidateSharedStorageCache([
-      STORAGE_KEYS.EVENTS,
-      STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
-      STORAGE_KEYS.VOLUNTEER_MATCHES,
-    ]);
+  if (nextRecords.length !== existingRecords.length) {
+    await setStorageItem(STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS, nextRecords);
   }
 }
 
-// Removes a volunteer from an event group chat by clearing their event membership records.
-export async function leaveVolunteerEventGroup(
-  projectId: string,
-  userId: string
-): Promise<void> {
-  const [project, volunteer, joinRecords, matches] = await Promise.all([
+export async function leaveVolunteerEventGroup(projectId: string, userId: string): Promise<void> {
+  const [records, project] = await Promise.all([
+    getAllVolunteerProjectJoinRecords(),
     getProject(projectId),
-    getVolunteerByUserId(userId),
-    getStorageItem<VolunteerProjectJoinRecord[]>(STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS),
-    getStorageItem<VolunteerProjectMatch[]>(STORAGE_KEYS.VOLUNTEER_MATCHES),
   ]);
 
-  if (!project?.isEvent) {
-    throw new Error('Event group chat not found.');
-  }
+  await setStorageItem(
+    STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    records.filter(record => !(record.projectId === projectId && record.volunteerUserId === userId))
+  );
 
-  if (!volunteer) {
-    throw new Error('Volunteer profile not found.');
-  }
-
-  const nextTasks = (project.internalTasks || []).map(task => {
-    const assignedVolunteerIds = Array.from(
-      new Set(
-        [
-          ...(Array.isArray(task.assignedVolunteerIds) ? task.assignedVolunteerIds : []),
-          task.assignedVolunteerId,
-        ]
-          .map(value => String(value || '').trim())
-          .filter(Boolean)
-      )
-    );
-    const assignedVolunteerNames = Array.from(
-      new Set(
-        [
-          ...(Array.isArray(task.assignedVolunteerNames) ? task.assignedVolunteerNames : []),
-          task.assignedVolunteerName,
-        ]
-          .map(value => String(value || '').trim())
-          .filter(Boolean)
-      )
-    );
-    const volunteerIndex = assignedVolunteerIds.indexOf(volunteer.id);
-
-    if (volunteerIndex < 0 || task.isFieldOfficer) {
-      return task;
-    }
-
-    const nextAssignedVolunteerIds = assignedVolunteerIds.filter(id => id !== volunteer.id);
-    const nextAssignedVolunteerNames = assignedVolunteerNames.filter((_, index) => index !== volunteerIndex);
-
-    return {
-      ...task,
-      assignedVolunteerId: nextAssignedVolunteerIds[0] || undefined,
-      assignedVolunteerName: nextAssignedVolunteerNames[0] || undefined,
-      assignedVolunteerIds: nextAssignedVolunteerIds.length ? nextAssignedVolunteerIds : undefined,
-      assignedVolunteerNames: nextAssignedVolunteerNames.length ? nextAssignedVolunteerNames : undefined,
-      status: nextAssignedVolunteerIds.length ? ('Assigned' as const) : ('Unassigned' as const),
-      updatedAt: new Date().toISOString(),
-    };
-  });
-
-  await Promise.all([
-    saveEvent({
+  if (project?.isEvent) {
+    await saveEvent({
       ...project,
-      volunteers: (project.volunteers || []).filter(volunteerId => volunteerId !== volunteer.id),
-      joinedUserIds: (project.joinedUserIds || []).filter(joinedUserId => joinedUserId !== userId),
-      internalTasks: nextTasks,
+      joinedUserIds: (project.joinedUserIds || []).filter(id => id !== userId),
       updatedAt: new Date().toISOString(),
-    }),
-    setStorageItem(
-      STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
-      (joinRecords || []).filter(
-        record => !(record.projectId === projectId && record.volunteerId === volunteer.id)
-      )
-    ),
-    setStorageItem(
-      STORAGE_KEYS.VOLUNTEER_MATCHES,
-      (matches || []).filter(
-        match => !(match.projectId === projectId && match.volunteerId === volunteer.id)
-      )
-    ),
-  ]);
+    });
+  }
 }
 
 // Returns project ids that a volunteer has already completed.
@@ -4615,6 +4479,35 @@ export async function getAllPartnerProjectApplications(): Promise<PartnerProject
   return applications.sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
 }
 
+async function updatePartnerProjectApplicationCache(
+  application: PartnerProjectApplication
+): Promise<void> {
+  const applications =
+    await getStorageItem<PartnerProjectApplication[]>(STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS) || [];
+  const existingIndex = applications.findIndex(app => app.id === application.id);
+  const nextApplications =
+    existingIndex >= 0
+      ? applications.map(app => (app.id === application.id ? application : app))
+      : [...applications, application];
+
+  setSharedStorageCacheValue(STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS, nextApplications);
+  projectsSnapshotCache.clear();
+  notifyStorageChanged([STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS]);
+}
+
+async function updateApprovedProposalProjectCache(project: Project): Promise<void> {
+  const projects = (await getStorageItemFast<Project[]>(STORAGE_KEYS.PROJECTS)) || [];
+  const existingIndex = projects.findIndex(item => item.id === project.id);
+  const nextProjects =
+    existingIndex >= 0
+      ? projects.map(item => (item.id === project.id ? project : item))
+      : [project, ...projects];
+
+  setSharedStorageCacheValue(STORAGE_KEYS.PROJECTS, nextProjects);
+  projectsSnapshotCache.clear();
+  notifyStorageChanged([STORAGE_KEYS.PROJECTS]);
+}
+
 // Returns partner applications submitted by a specific partner account.
 export async function getPartnerProjectApplicationsByUser(
   partnerUserId: string
@@ -4671,34 +4564,20 @@ export async function submitPartnerProgramProposal(
     throw new Error('Partner program proposal did not complete.');
   }
 
-  let resolvedApplication = payload.application;
+  await updatePartnerProjectApplicationCache(payload.application);
 
-  if (resolvedApplication.status === 'Rejected') {
-    resolvedApplication = {
-      ...resolvedApplication,
-      projectId: proposalProjectId,
-      partnerUserId: partnerUser.id,
-      partnerName: partnerUser.name,
-      partnerEmail: partnerUser.email || '',
-      proposalDetails: options?.proposalDetails,
-      status: 'Pending',
-      requestedAt: new Date().toISOString(),
-      reviewedAt: undefined,
-      reviewedBy: undefined,
-    };
-    await savePartnerProjectApplication(resolvedApplication);
-  }
-
-  invalidateSharedStorageCache([STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS]);
-  queueSharedStorageChangedKeys([STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS]);
-
+  // Notify admin (and confirm to partner) about the new proposal. Best-effort; don't fail submission on notify errors.
   try {
-    await notifyAdminAboutPartnerProjectJoin(proposalProjectId, partnerUser);
-  } catch (error) {
-    console.error('Error notifying admin about partner join request:', error);
+    await notifyAdminAboutPartnerProjectJoin(payload.application.projectId, {
+      id: partnerUser.id,
+      name: partnerUser.name,
+      email: partnerUser.email || '',
+    }, payload.application);
+  } catch (e) {
+    console.warn('Failed to notify admin about partner proposal:', e);
   }
 
-  return resolvedApplication;
+  return payload.application;
 }
 
 // Backwards-compatible alias used by older screens.
@@ -4713,9 +4592,13 @@ export async function requestPartnerProjectJoin(
 export async function reviewPartnerProjectApplication(
   applicationId: string,
   status: 'Approved' | 'Rejected',
-  reviewedBy: string
+  reviewedBy: string,
+  reviewNotes?: string
 ): Promise<PartnerProjectApplication> {
-  const payload = await requestApiJson<{ application?: PartnerProjectApplication | null }>(
+  const payload = await requestApiJson<{
+    application?: PartnerProjectApplication | null;
+    project?: Project | null;
+  }>(
     `/partner-project-applications/${encodeURIComponent(applicationId)}/review`,
     {
       method: 'POST',
@@ -4725,6 +4608,7 @@ export async function reviewPartnerProjectApplication(
       body: JSON.stringify({
         status,
         reviewedBy,
+        reviewNotes: reviewNotes?.trim() || undefined,
       }),
     }
   );
@@ -4733,12 +4617,10 @@ export async function reviewPartnerProjectApplication(
     throw new Error('Application review did not complete.');
   }
 
-  const changedKeys = [STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS];
-  if (payload.application.status === 'Approved' && !String(payload.application.projectId || '').startsWith('program:')) {
-    changedKeys.push(STORAGE_KEYS.PROJECTS);
+  await updatePartnerProjectApplicationCache(payload.application);
+  if (payload.project) {
+    await updateApprovedProposalProjectCache(payload.project);
   }
-  invalidateSharedStorageCache(changedKeys);
-  queueSharedStorageChangedKeys(changedKeys);
 
   try {
     await notifyPartnerAboutProjectJoinReview(payload.application, reviewedBy);
@@ -4816,6 +4698,17 @@ export async function reviewPartnerRegistration(
 }
 
 // Saves one uploaded partner report.
+function dedupeReports<T extends { id: string }>(reports: T[]): T[] {
+  const seen = new Set<string>();
+  return reports.filter(report => {
+    if (seen.has(report.id)) {
+      return false;
+    }
+    seen.add(report.id);
+    return true;
+  });
+}
+
 export async function savePartnerReport(report: PartnerReport): Promise<void> {
   const reports = await getStorageItem<PartnerReport[]>(STORAGE_KEYS.PARTNER_REPORTS) || [];
   const existingIndex = reports.findIndex(entry => entry.id === report.id);
@@ -4824,14 +4717,14 @@ export async function savePartnerReport(report: PartnerReport): Promise<void> {
   } else {
     reports.push(report);
   }
-  await setStorageItem(STORAGE_KEYS.PARTNER_REPORTS, reports);
+  await setStorageItem(STORAGE_KEYS.PARTNER_REPORTS, dedupeReports(reports));
 }
 
 // Returns partner reports associated with one project.
 // OPTIMIZED: Use cached getStorageItemFast instead of slow getStorageItem
 export async function getPartnerReportsByProject(projectId: string): Promise<PartnerReport[]> {
   const reports = await getStorageItemFast<PartnerReport[]>(STORAGE_KEYS.PARTNER_REPORTS) || [];
-  return reports
+  return dedupeReports(reports)
     .filter(report => report.projectId === projectId)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
@@ -4840,7 +4733,7 @@ export async function getPartnerReportsByProject(projectId: string): Promise<Par
 // OPTIMIZED: Use cached getStorageItemFast instead of slow getStorageItem
 export async function getPartnerReportsByUser(partnerUserId: string): Promise<PartnerReport[]> {
   const reports = await getStorageItemFast<PartnerReport[]>(STORAGE_KEYS.PARTNER_REPORTS) || [];
-  return reports
+  return dedupeReports(reports)
     .filter(
       report =>
         report.submitterUserId === partnerUserId ||
@@ -4853,14 +4746,14 @@ export async function getPartnerReportsByUser(partnerUserId: string): Promise<Pa
 // OPTIMIZED: Use cached getStorageItemFast instead of slow getStorageItem
 export async function getAllPartnerReports(): Promise<PartnerReport[]> {
   const reports = await getStorageItemFast<PartnerReport[]>(STORAGE_KEYS.PARTNER_REPORTS) || [];
-  return reports.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return dedupeReports(reports).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
 // Returns every impact-hub report submitted by one user regardless of role.
 // OPTIMIZED: Use cached getStorageItemFast instead of slow getStorageItem
 export async function getImpactHubReportsByUser(userId: string): Promise<PartnerReport[]> {
   const reports = await getStorageItemFast<PartnerReport[]>(STORAGE_KEYS.PARTNER_REPORTS) || [];
-  return reports
+  return dedupeReports(reports)
     .filter(report => report.submitterUserId === userId || report.partnerUserId === userId)
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
@@ -4889,12 +4782,10 @@ function calculateImpactCountFromMetrics(metrics?: Record<string, number>): numb
     return 0;
   }
 
-  const total = Object.values(metrics).reduce(
+  return Object.values(metrics).reduce(
     (sum, value) => sum + (Number.isFinite(value) ? value : 0),
     0
   );
-
-  return Math.max(0, Math.round(total));
 }
 
 const REPORT_MEDIA_FILE_MAX_LENGTH = 500;
@@ -4982,7 +4873,7 @@ async function validateVolunteerReportEligibility(input: {
   );
 
   if (!hasTimedIn) {
-    throw new Error('You must confirm attendance for this event before submitting a report.');
+    throw new Error('You must time in to this event before submitting a report.');
   }
 }
 
@@ -5040,12 +4931,11 @@ export async function submitImpactHubReport(input: {
     metrics: normalizedMetrics,
     attachments: normalizedMediaPayload.attachments,
     mediaFile: normalizedMediaPayload.mediaFile,
-    createdAt: new Date().toISOString(),
-    status: 'Submitted',
-    sourceReportIds: [],
     collaborationFeedback: input.collaborationFeedback?.trim() || undefined,
     volunteerPraise: input.volunteerPraise?.trim() || undefined,
     gratitudeNote: input.gratitudeNote?.trim() || undefined,
+    createdAt: new Date().toISOString(),
+    status: 'Submitted',
   };
 
   try {
@@ -5057,7 +4947,6 @@ export async function submitImpactHubReport(input: {
       body: JSON.stringify(report),
     });
     if (payload.report) {
-      await savePartnerReport(payload.report);
       return payload.report;
     }
   } catch (error: any) {
@@ -5436,13 +5325,17 @@ export async function clearAllStorage(): Promise<void> {
     try {
       await clearRemoteStorage();
     } catch (error) {
-        console.error('Error clearing remote storage:', error);
-      }
-      sharedStorageCacheTimestamps.clear();
-      memoryStorageCache.clear();
-    } catch (error) {
-      console.error('Error clearing storage:', error);
+      console.error('Error clearing remote storage:', error);
     }
+    sharedStorageCacheTimestamps.clear();
+    memoryStorageCache.clear();
+    projectsSnapshotCache.clear();
+    messagesForUserCache.clear();
+    conversationCache.clear();
+    groupMessagesCache.clear();
+  } catch (error) {
+    console.error('Error clearing storage:', error);
+  }
 }
 
 // Initialize with mock data

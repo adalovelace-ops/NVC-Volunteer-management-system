@@ -23,7 +23,7 @@ export default function ProposalCard({
   onReject,
   isAdmin = false 
 }: ProposalCardProps) {
-  const { proposalDetails, partnerName, status, requestedAt } = application;
+  const { proposalDetails, partnerName, partnerEmail, status, requestedAt } = application;
   
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'Not specified';
@@ -55,6 +55,7 @@ export default function ProposalCard({
           </View>
           <View>
             <Text style={styles.partnerName}>{partnerName}</Text>
+            {partnerEmail ? <Text style={styles.partnerEmail}>{partnerEmail}</Text> : null}
             <Text style={styles.requestDate}>Requested {formatDate(requestedAt)}</Text>
           </View>
         </View>
@@ -188,6 +189,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     color: '#475569',
+  },
+  partnerEmail: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
   },
   infoGrid: {
     flexDirection: 'row',

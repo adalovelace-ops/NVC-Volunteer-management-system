@@ -41,17 +41,24 @@ export function VolunteerReportsDashboard({
   onRefresh,
   refreshing,
 }: VolunteerReportsDashboardProps) {
-  const eventCount = useMemo(
-    () => new Set(reports.map(report => report.projectId).filter(Boolean)).size,
+  const visibleReports = useMemo(
+    () => reports.filter(report => report.status !== 'Rejected'),
     [reports]
   );
+  const eventCount = useMemo(
+    () => new Set(visibleReports.map(report => report.projectId).filter(Boolean)).size,
+    [visibleReports]
+  );
   const stats = useMemo(() => {
-    const submitted = reports.filter(r => r.status === 'Submitted').length;
-    const totalHours = reports.reduce((sum, r) => sum + (r.metrics.volunteerHours || 0), 0);
-    const linkedProjects = new Set(reports.map(report => report.projectId).filter(Boolean)).size;
+    const submitted = visibleReports.filter(r => r.status === 'Submitted').length;
+    const volunteerEventJoins = visibleReports.reduce(
+      (sum, r) => sum + (r.metrics.volunteerEventJoins ?? r.metrics.volunteerHours ?? 0),
+      0
+    );
+    const linkedProjects = new Set(visibleReports.map(report => report.projectId).filter(Boolean)).size;
 
-    return { submitted, totalHours, linkedProjects };
-  }, [reports]);
+    return { submitted, volunteerEventJoins, linkedProjects };
+  }, [visibleReports]);
 
   const renderReportItem = ({ item }: { item: SubmittedReport }) => (
     <TouchableOpacity
@@ -120,7 +127,7 @@ export function VolunteerReportsDashboard({
         <View style={styles.statsContainer}>
           <View style={styles.statCard}>
             <MaterialIcons name="book" size={24} color="#1D4ED8" />
-            <Text style={styles.statValue}>{reports.length}</Text>
+            <Text style={styles.statValue}>{visibleReports.length}</Text>
             <Text style={styles.statLabel}>Total Reports</Text>
           </View>
           <View style={styles.statCard}>
@@ -139,12 +146,12 @@ export function VolunteerReportsDashboard({
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Event Report History</Text>
-            {reports.length > 0 && (
-              <Text style={styles.sectionBadge}>{reports.length}</Text>
+            {visibleReports.length > 0 && (
+              <Text style={styles.sectionBadge}>{visibleReports.length}</Text>
             )}
           </View>
 
-          {reports.length === 0 ? (
+          {visibleReports.length === 0 ? (
             <View style={styles.emptyState}>
               <MaterialIcons name="upload-file" size={48} color="#cbd5e1" />
               <Text style={styles.emptyTitle}>No reports yet</Text>
@@ -158,7 +165,7 @@ export function VolunteerReportsDashboard({
             </View>
           ) : (
             <FlatList
-              data={reports}
+              data={visibleReports}
               renderItem={renderReportItem}
               keyExtractor={item => item.id}
               scrollEnabled={false}
@@ -191,6 +198,17 @@ export function PartnerReportsDashboard({
   onRefresh,
   refreshing,
 }: VolunteerReportsDashboardProps) {
+  // Partner's own submitted reports (not volunteer reports)
+  const ownReports = useMemo(
+    () =>
+      reports
+        .filter(r => r.submitterRole === 'partner' && r.status !== 'Rejected')
+        .sort(
+          (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+        ),
+    [reports]
+  );
+
   const stats = useMemo(() => {
     const submitted = projectSummaries.reduce(
       (sum, summary) => sum + getVolunteerReportsForSummary(summary).length,
@@ -241,6 +259,43 @@ export function PartnerReportsDashboard({
       )
     );
   };
+
+  const renderOwnReportItem = ({ item }: { item: SubmittedReport }) => (
+    <TouchableOpacity
+      style={styles.reportItem}
+      onPress={() => onViewReport(item)}
+      activeOpacity={0.7}
+    >
+      <View style={styles.reportItemLeft}>
+        <View
+          style={[
+            styles.statusIndicator,
+            item.status === 'Approved' && styles.statusIndicatorApproved,
+            item.status === 'Submitted' && styles.statusIndicatorSubmitted,
+            item.status === 'Rejected' && styles.statusIndicatorRejected,
+          ]}
+        />
+        <View style={styles.reportItemContent}>
+          <Text style={styles.reportItemTitle}>{item.title}</Text>
+          <Text style={styles.reportItemType}>{formatReportType(item.reportType)}</Text>
+          {item.projectTitle ? (
+            <Text style={styles.reportItemDate}>{item.projectTitle}</Text>
+          ) : null}
+          <Text style={styles.reportItemDate}>{new Date(item.submittedAt).toLocaleDateString()}</Text>
+        </View>
+      </View>
+      <View
+        style={[
+          styles.reportStatusBadge,
+          item.status === 'Approved' && styles.badgeApproved,
+          item.status === 'Submitted' && styles.badgeSubmitted,
+          item.status === 'Rejected' && styles.badgeRejected,
+        ]}
+      >
+        <Text style={styles.badgeText}>{item.status}</Text>
+      </View>
+    </TouchableOpacity>
+  );
 
   const renderReportItem = ({ item }: { item: SubmittedReport }) => (
     <TouchableOpacity
@@ -321,6 +376,38 @@ export function PartnerReportsDashboard({
           </View>
         </View>
 
+        {/* My Submitted Reports */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionTitleRow}>
+              <MaterialIcons name="description" size={18} color="#166534" />
+              <Text style={styles.sectionTitle}>My Submitted Reports</Text>
+              <Text style={styles.sectionBadge}>{ownReports.length}</Text>
+            </View>
+            <TouchableOpacity style={styles.uploadButton} onPress={onUploadReport}>
+              <MaterialIcons name="add" size={16} color="#fff" />
+              <Text style={styles.uploadButtonText}>Add</Text>
+            </TouchableOpacity>
+          </View>
+          {ownReports.length > 0 ? (
+            <FlatList
+              data={ownReports}
+              renderItem={renderOwnReportItem}
+              keyExtractor={item => item.id}
+              scrollEnabled={false}
+              ItemSeparatorComponent={() => <View style={styles.separator} />}
+            />
+          ) : (
+            <View style={styles.emptyState}>
+              <MaterialIcons name="upload-file" size={40} color="#cbd5e1" />
+              <Text style={styles.emptyTitle}>No reports submitted yet</Text>
+              <Text style={styles.emptyText}>
+                Submit a partner report for your approved project to track impact.
+              </Text>
+            </View>
+          )}
+        </View>
+
         {projectSections.map(section => (
           <View key={section.key} style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -379,7 +466,7 @@ export function PartnerReportsDashboard({
                       <View style={styles.reportItemContent}>
                         <Text style={styles.reportItemTitle}>{account.submitterName}</Text>
                         <Text style={styles.reportItemType}>
-                          {`${account.verifiedAttendance} verified • ${account.beneficiariesServed} beneficiaries • ${Number.isInteger(account.volunteerHours) ? account.volunteerHours : account.volunteerHours.toFixed(1)} hours`}
+                          {`${account.verifiedAttendance} verified • ${account.beneficiariesServed} beneficiaries • ${account.volunteerEventJoins} event join${account.volunteerEventJoins === 1 ? '' : 's'}`}
                         </Text>
                         <Text style={styles.reportItemDate}>
                           {account.reports.length} volunteer report{account.reports.length === 1 ? '' : 's'}
@@ -420,6 +507,7 @@ export default VolunteerReportsDashboard;
 function getVolunteerReportsForSummary(summary: PartnerProjectReportSummary): SubmittedReport[] {
   return summary.volunteerAccounts
     .flatMap(account => account.reports)
+    .filter(report => report.status !== 'Rejected')
     .sort(
       (left, right) =>
         new Date(right.submittedAt).getTime() - new Date(left.submittedAt).getTime()
@@ -451,7 +539,7 @@ function buildProjectSummaryContent(summary: PartnerProjectReportSummary): strin
             `- ${account.submitterName}`,
             `  Volunteer Reports: ${account.reports.length}`,
             `  Verified Attendance: ${account.verifiedAttendance}`,
-            `  Volunteer Hours: ${formatMetricValue(account.volunteerHours)}`,
+            `  Volunteer Event Joins: ${account.volunteerEventJoins}`,
             `  Beneficiaries Served: ${account.beneficiariesServed}`,
             account.reports.length
               ? `  Reports: ${account.reports.map(report => report.title).join(', ')}`
@@ -486,7 +574,7 @@ function buildProjectSummaryContent(summary: PartnerProjectReportSummary): strin
     'Project Metrics',
     `Volunteer Reports Submitted: ${volunteerReports.length}`,
     `Verified Attendance: ${formatMetricValue(summary.metrics.verifiedAttendance)}`,
-    `Volunteer Hours: ${formatMetricValue(summary.metrics.volunteerHours)}`,
+    `Volunteer Event Joins: ${formatMetricValue(summary.metrics.volunteerEventJoins ?? summary.metrics.volunteerHours)}`,
     `Active Volunteers: ${formatMetricValue(summary.metrics.activeVolunteers)}`,
     `Beneficiaries Served: ${formatMetricValue(summary.metrics.beneficiariesServed)}`,
     `Linked Events Count: ${summary.linkedEvents.length}`,

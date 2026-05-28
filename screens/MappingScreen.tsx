@@ -13,8 +13,9 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import MapView, { Callout, Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
 import InlineLoadError from '../components/InlineLoadError';
+import PhotoMapMarker from '../components/PhotoMapMarker';
 import { useAuth } from '../contexts/AuthContext';
-import { Partner, PartnerReport, Project, Volunteer } from '../models/types';
+import { Partner, PartnerReport, Project, Volunteer, VolunteerProjectJoinRecord } from '../models/types';
 import {
   getAllPartners,
   getAllPartnerReports,
@@ -27,10 +28,13 @@ import { navigateToAvailableRoute } from '../utils/navigation';
 import {
   getInitialProjectRegion,
   getMappedProjects,
+  getUnmappedProjects,
   getPrimaryProjectImageSource,
+  getProjectMarkerColor,
 } from '../utils/projectMap';
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
+import { getProjectVolunteerMapEntries } from '../utils/projectVolunteers';
 
 // Displays the native project map with a detail sheet for the selected marker.
 export default function MappingScreen({ navigation }: any) {
@@ -38,6 +42,7 @@ export default function MappingScreen({ navigation }: any) {
   const [loadError, setLoadError] = useState<{ title: string; message: string } | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [volunteers, setVolunteers] = useState<Volunteer[]>([]);
+  const [volunteerJoinRecords, setVolunteerJoinRecords] = useState<VolunteerProjectJoinRecord[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnerReports, setPartnerReports] = useState<PartnerReport[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
@@ -45,6 +50,7 @@ export default function MappingScreen({ navigation }: any) {
   const [loading, setLoading] = useState(true);
   const mapRef = React.useRef<MapView | null>(null);
   const mappedProjects = React.useMemo(() => getMappedProjects(projects), [projects]);
+  const unmappedProjects = React.useMemo(() => getUnmappedProjects(projects), [projects]);
   const isVolunteerView = user?.role === 'volunteer';
   const initialRegion = React.useMemo(
     () => getInitialProjectRegion(mappedProjects) as Region,
@@ -57,7 +63,7 @@ export default function MappingScreen({ navigation }: any) {
 
   useEffect(() => {
     return subscribeToStorageChanges(
-      ['projects', 'events', 'partnerReports', 'partnerProjectApplications', 'volunteerProjectJoins'],
+      ['projects', 'events', 'volunteers', 'partnerReports', 'partnerProjectApplications', 'volunteerProjectJoins'],
       () => {
         void loadProjects();
       }
@@ -100,13 +106,17 @@ export default function MappingScreen({ navigation }: any) {
               project =>
                 joinedVolunteerProjectIds.has(project.id) ||
                 (snapshot.volunteerProfile && (project.volunteers || []).includes(snapshot.volunteerProfile.id)) ||
-                (snapshot.volunteerProfile && (project.internalTasks || []).some(task => task.assignedVolunteerId === snapshot.volunteerProfile?.id))
+                (snapshot.volunteerProfile && (project.internalTasks || []).some(task =>
+                  task.assignedVolunteerId === snapshot.volunteerProfile?.id ||
+                  (task.assignedVolunteerIds || []).includes(snapshot.volunteerProfile?.id || '')
+                ))
             )
           : snapshot.projects;
 
       const visibleProjectIds = new Set(visibleProjects.map(project => project.id));
 
       setProjects(visibleProjects);
+      setVolunteerJoinRecords(snapshot.volunteerJoinRecords || []);
       
       // Load secondary data immediately without the artificial delay
       try {
@@ -225,6 +235,7 @@ export default function MappingScreen({ navigation }: any) {
           showsCompass
           showsScale
           toolbarEnabled
+          mapType="standard"
         >
           {mappedProjects.map((project, index) => (
             <Marker
@@ -237,6 +248,10 @@ export default function MappingScreen({ navigation }: any) {
               description={`${project.isEvent ? 'Event' : 'Project'} | ${getProjectDisplayStatus(project)}`}
               onPress={() => handleProjectSelection(project.id)}
             >
+              <PhotoMapMarker
+                accentColor={getProjectMarkerColor(project)}
+                count={getProjectVolunteerMapEntries(project, volunteers, volunteerJoinRecords).length}
+              />
               <Callout tooltip>
                 <View style={styles.calloutCard}>
                   <Text style={styles.calloutTitle} numberOfLines={2}>
@@ -245,6 +260,23 @@ export default function MappingScreen({ navigation }: any) {
                   <Text style={styles.calloutMetaLabel}>
                     {project.isEvent ? 'Event' : 'Project'}
                   </Text>
+
+                  {(() => {
+                    const addr = project.location?.address || '';
+                    const isPlaceholder =
+                      !addr ||
+                      addr === 'Location to be finalized' ||
+                      addr === 'Program location to be finalized';
+                    if (!isPlaceholder) return null;
+                    return (
+                      <View style={styles.calloutLocationPending}>
+                        <MaterialIcons name="location-off" size={13} color="#b45309" />
+                        <Text style={styles.calloutLocationPendingText}>
+                          Location pending — shown at region center
+                        </Text>
+                      </View>
+                    );
+                  })()}
 
                   {(() => {
                     const partner = project.partnerId
@@ -277,39 +309,50 @@ export default function MappingScreen({ navigation }: any) {
 
                   <Text style={styles.calloutSectionLabel}>Volunteers</Text>
                   {(() => {
-                    const joinedVolunteers = volunteers
-                      .filter(volunteer =>
-                        (project.joinedUserIds || []).includes(volunteer.userId) ||
-                        (project.volunteers || []).includes(volunteer.id) ||
-                        (project.internalTasks || []).some(task => task.assignedVolunteerId === volunteer.id)
-                      )
-                      .sort((a, b) => a.name.localeCompare(b.name));
+                    const mergedVolunteers = getProjectVolunteerMapEntries(
+                      project,
+                      volunteers,
+                      volunteerJoinRecords
+                    ).slice(0, 6);
 
-                    if (joinedVolunteers.length === 0) {
+                    if (mergedVolunteers.length === 0) {
                       return <Text style={styles.calloutEmpty}>No volunteers joined yet.</Text>;
                     }
 
-                    return joinedVolunteers.slice(0, 6).map(volunteer => (
-                      <TouchableOpacity
-                        key={volunteer.id}
-                        activeOpacity={0.6}
-                        onPress={() => {
-                          navigateToAvailableRoute(
-                            navigation,
-                            'Volunteers',
-                            { volunteerId: volunteer.id },
-                            { routeName: 'Map' }
-                          );
-                        }}
-                        style={styles.calloutProfileRow}
-                      >
-                        <MaterialIcons name="person-outline" size={18} color="#166534" />
-                        <Text style={styles.calloutProfileText} numberOfLines={1}>
-                          {volunteer.name}
-                        </Text>
-                        <MaterialIcons name="chevron-right" size={18} color="#cbd5e1" />
-                      </TouchableOpacity>
-                    ));
+                    return mergedVolunteers.map(volunteer => {
+                      const volunteerRecord = volunteers.find(
+                        v => v.id === volunteer.volunteerId || v.userId === volunteer.volunteerUserId
+                      );
+
+                      return volunteerRecord ? (
+                        <TouchableOpacity
+                          key={volunteerRecord.id}
+                          activeOpacity={0.6}
+                          onPress={() => {
+                            navigateToAvailableRoute(
+                              navigation,
+                              'Volunteers',
+                              { volunteerId: volunteerRecord.id },
+                              { routeName: 'Map' }
+                            );
+                          }}
+                          style={styles.calloutProfileRow}
+                        >
+                          <MaterialIcons name="person-outline" size={18} color="#166534" />
+                          <Text style={styles.calloutProfileText} numberOfLines={1}>
+                            {volunteerRecord.name}
+                          </Text>
+                          <MaterialIcons name="chevron-right" size={18} color="#cbd5e1" />
+                        </TouchableOpacity>
+                      ) : (
+                        <View key={volunteer.id} style={styles.calloutProfileRow}>
+                          <MaterialIcons name="person-outline" size={18} color="#166534" />
+                          <Text style={styles.calloutProfileText} numberOfLines={1}>
+                            {volunteer.label}
+                          </Text>
+                        </View>
+                      );
+                    });
                   })()}
                 </View>
               </Callout>
@@ -382,9 +425,9 @@ export default function MappingScreen({ navigation }: any) {
           <Text style={styles.projectListTitle}>
             {`Projects ${mappedProjects.length} mapped | Uploaded Impact ${partnerReports.reduce((sum, report) => sum + report.impactCount, 0)}`}
           </Text>
-          {projects.length > mappedProjects.length ? (
+          {unmappedProjects.length > 0 ? (
             <Text style={styles.projectListWarning}>
-              {`${projects.length - mappedProjects.length} ${projects.length - mappedProjects.length === 1 ? 'item is' : 'items are'} missing a map placement and hidden from the map.`}
+              {`${unmappedProjects.length} ${unmappedProjects.length === 1 ? 'item is' : 'items are'} missing a map placement and shown at the region center.`}
             </Text>
           ) : null}
         </View>
@@ -626,6 +669,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748b',
     paddingVertical: 4,
+  },
+  calloutLocationPending: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#fef3c7',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    marginBottom: 6,
+  },
+  calloutLocationPendingText: {
+    fontSize: 10,
+    color: '#b45309',
+    fontWeight: '600',
+    flexShrink: 1,
   },
   volunteerInlineErrorWrap: {
     position: 'absolute',

@@ -14,6 +14,7 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import DownloadPreviewModal from './DownloadPreviewModal';
 import type { SubmittedReport } from '../screens/ReportsScreen';
 import type { Project, Volunteer } from '../models/types';
 
@@ -23,6 +24,7 @@ interface AdminReportsDashboardProps {
   volunteers: Volunteer[];
   onUploadReport: () => void;
   onViewReport: (report: SubmittedReport) => void;
+  onViewAnalytics: () => void;
   loading: boolean;
   onRefresh: () => void;
   refreshing: boolean;
@@ -47,6 +49,24 @@ type AccountReportGroup = {
   reports: SubmittedReport[];
   latestReport: SubmittedReport;
 };
+
+type EventReportGroup = {
+  key: string;
+  title: string;
+  reports: SubmittedReport[];
+  accountGroups: AccountReportGroup[];
+  latestReport: SubmittedReport;
+};
+
+type ColumnDrilldownState = Partial<
+  Record<
+    StatusColumn['key'],
+    {
+      eventKey?: string;
+      accountKey?: string;
+    }
+  >
+>;
 
 type ReportTableRow = {
   id: string;
@@ -295,12 +315,92 @@ function groupReportsByAccount(reports: SubmittedReport[]): AccountReportGroup[]
     );
 }
 
+function getEventGroupKey(report: SubmittedReport): string {
+  if (report.projectId) {
+    return `activity:${report.projectId}`;
+  }
+
+  if (report.projectTitle) {
+    return `activity-title:${report.projectTitle}`;
+  }
+
+  return 'activity:unlinked';
+}
+
+function getEventGroupTitle(
+  report: SubmittedReport,
+  eventsById: Map<string, { title: string }>
+): string {
+  if (report.projectId && eventsById.has(report.projectId)) {
+    return eventsById.get(report.projectId)?.title || 'Event';
+  }
+
+  if (report.projectKind === 'event') {
+    return report.projectTitle || 'Unlisted event';
+  }
+
+  if (report.projectTitle) {
+    return report.projectTitle;
+  }
+
+  return 'No linked event';
+}
+
+function groupReportsByEvent(
+  reports: SubmittedReport[],
+  eventsById: Map<string, { title: string }>
+): EventReportGroup[] {
+  const grouped = new Map<string, SubmittedReport[]>();
+
+  reports.forEach(report => {
+    const key = getEventGroupKey(report);
+    const eventReports = grouped.get(key) || [];
+    eventReports.push(report);
+    grouped.set(key, eventReports);
+  });
+
+  return Array.from(grouped.entries())
+    .map(([key, eventReports]) => {
+      const sortedReports = [...eventReports].sort(
+        (left, right) =>
+          new Date(right.submittedAt).getTime() -
+          new Date(left.submittedAt).getTime()
+      );
+
+      return {
+        key,
+        title: sortedReports[0]
+          ? getEventGroupTitle(sortedReports[0], eventsById)
+          : 'Event',
+        reports: sortedReports,
+        accountGroups: groupReportsByAccount(sortedReports),
+        latestReport: sortedReports[0],
+      };
+    })
+    .filter(group => Boolean(group.latestReport))
+    .sort(
+      (left, right) =>
+        new Date(right.latestReport.submittedAt).getTime() -
+        new Date(left.latestReport.submittedAt).getTime()
+    );
+}
+
+function estimateFileSize(rowCount: number, format: 'csv' | 'pdf'): string {
+  const bytesPerRow = format === 'csv' ? 350 : 500;
+  const totalBytes = bytesPerRow * rowCount;
+
+  if (totalBytes < 1024) return `${totalBytes} B`;
+  if (totalBytes < 1024 * 1024) return `${(totalBytes / 1024).toFixed(1)} KB`;
+  return `${(totalBytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
 export default function AdminReportsDashboard({
   reports,
   projects,
   volunteers,
   onUploadReport,
   onViewReport,
+  onViewAnalytics,
   loading,
   onRefresh,
   refreshing,
@@ -308,10 +408,16 @@ export default function AdminReportsDashboard({
   const { width } = useWindowDimensions();
   const isDesktop = Platform.OS === 'web' || width >= 1100;
   const [selectedEventId, setSelectedEventId] = useState('all');
+  const [drilldownState, setDrilldownState] = useState<ColumnDrilldownState>({});
+  const [previewModalState, setPreviewModalState] = useState<{
+    visible: boolean;
+    format: 'csv' | 'pdf';
+  }>({ visible: false, format: 'csv' });
 
   const summary = useMemo(() => {
-    const totalHours = reports.reduce(
-      (sum, report) => sum + (report.metrics.volunteerHours || 0),
+    const volunteerEventJoins = reports.reduce(
+      (sum, report) =>
+        sum + (report.metrics.volunteerEventJoins ?? report.metrics.volunteerHours ?? 0),
       0
     );
     const verifiedAttendance = reports.reduce(
@@ -324,7 +430,7 @@ export default function AdminReportsDashboard({
     );
 
     return {
-      totalHours,
+      volunteerEventJoins,
       verifiedAttendance,
       beneficiariesServed,
     };
@@ -332,19 +438,20 @@ export default function AdminReportsDashboard({
 
   const eventOptions = useMemo(() => {
     const events = projects
-      .filter(project => project.isEvent)
-      .map(project => ({ id: project.id, title: project.title || 'Untitled event' }));
+      .map(project => ({
+        id: project.id,
+        title: project.title || (project.isEvent ? 'Untitled event' : 'Untitled project'),
+      }));
     const existingEventIds = new Set(events.map(event => event.id));
 
     reports.forEach(report => {
       if (
-        report.projectKind === 'event' &&
         report.projectId &&
         !existingEventIds.has(report.projectId)
       ) {
         events.push({
           id: report.projectId,
-          title: report.projectTitle || 'Unlisted event',
+          title: report.projectTitle || (report.projectKind === 'event' ? 'Unlisted event' : 'Unlisted project'),
         });
         existingEventIds.add(report.projectId);
       }
@@ -361,17 +468,9 @@ export default function AdminReportsDashboard({
   const eventReports = useMemo(
     () =>
       reports.filter(report => {
-        const isEventReport =
-          report.projectKind === 'event' ||
-          Boolean(report.projectId && eventsById.has(report.projectId));
-
-        if (!isEventReport) {
-          return false;
-        }
-
         return selectedEventId === 'all' || report.projectId === selectedEventId;
       }),
-    [eventsById, reports, selectedEventId]
+    [reports, selectedEventId]
   );
 
   const selectedEventLabel = useMemo(() => {
@@ -403,39 +502,50 @@ export default function AdminReportsDashboard({
   );
 
   const handleDownloadCsv = () => {
-    const csv = [
-      ['Title', 'Submitter', 'Role', 'Type', 'Event', 'Status', 'Submitted At'],
-      ...tableRows.map(row => [
-        row.title,
-        row.submitter,
-        row.role,
-        row.type,
-        row.event,
-        row.status,
-        row.submittedAt,
-      ]),
-    ]
-      .map(columns =>
-        columns.map(value => `"${String(value).replace(/"/g, '""')}"`).join(',')
-      )
-      .join('\n');
-
-    void downloadFile(
-      `admin-event-reports-${selectedEventLabel}-${new Date().toISOString().slice(0, 10)}.csv`,
-      csv,
-      'text/csv;charset=utf-8;',
-      'Unable to save this CSV on the phone.'
-    );
+    setPreviewModalState({ visible: true, format: 'csv' });
   };
 
   const handleDownloadPdf = () => {
-    const pdf = buildReportsPdf(tableRows, `Admin Event Reports - ${selectedEventLabel}`);
-    void downloadFile(
-      `admin-event-reports-${selectedEventLabel}-${new Date().toISOString().slice(0, 10)}.pdf`,
-      pdf,
-      'application/pdf',
-      'Unable to save this PDF on the phone.'
-    );
+    setPreviewModalState({ visible: true, format: 'pdf' });
+  };
+
+  const handleConfirmDownload = async () => {
+    const format = previewModalState.format;
+    setPreviewModalState({ visible: false, format });
+
+    if (format === 'csv') {
+      const csv = [
+        ['Title', 'Submitter', 'Role', 'Type', 'Event', 'Status', 'Submitted At'],
+        ...tableRows.map(row => [
+          row.title,
+          row.submitter,
+          row.role,
+          row.type,
+          row.event,
+          row.status,
+          row.submittedAt,
+        ]),
+      ]
+        .map(columns =>
+          columns.map(value => `"${String(value).replace(/"/g, '""')}"`).join(',')
+        )
+        .join('\n');
+
+      void downloadFile(
+        `admin-event-reports-${selectedEventLabel}-${new Date().toISOString().slice(0, 10)}.csv`,
+        csv,
+        'text/csv;charset=utf-8;',
+        'Unable to save this CSV on the phone.'
+      );
+    } else {
+      const pdf = buildReportsPdf(tableRows, `Admin Event Reports - ${selectedEventLabel}`);
+      void downloadFile(
+        `admin-event-reports-${selectedEventLabel}-${new Date().toISOString().slice(0, 10)}.pdf`,
+        pdf,
+        'application/pdf',
+        'Unable to save this PDF on the phone.'
+      );
+    }
   };
 
   const handlePrintTable = () => {
@@ -533,42 +643,84 @@ export default function AdminReportsDashboard({
           new Date(left.submittedAt).getTime()
       );
 
+    const fieldEventGroups = groupReportsByEvent(fieldReports, eventsById);
+    const volunteerEventGroups = groupReportsByEvent(volunteerReports, eventsById);
+    const partnerEventGroups = groupReportsByEvent(partnerReports, eventsById);
+
     return [
       {
         key: 'all',
         label: 'Field Reports',
         subtitle: 'Assigned field officer submissions',
-        count: groupReportsByAccount(fieldReports).length,
+        count: fieldEventGroups.length,
         accent: '#d9f2de',
         panel: '#2f8f45',
         card: '#4aa764',
-        chips: ['Accounts', 'Field', 'Latest'],
+        chips: ['Events', 'Accounts', 'Reports'],
         reports: fieldReports,
       },
       {
         key: 'volunteer',
         label: 'Volunteer Reports',
         subtitle: 'Regular volunteer submissions',
-        count: groupReportsByAccount(volunteerReports).length,
+        count: volunteerEventGroups.length,
         accent: '#fff6d9',
         panel: '#d1a120',
         card: '#dfb33f',
-        chips: ['Accounts', 'Volunteer', 'Event'],
+        chips: ['Events', 'Accounts', 'Reports'],
         reports: volunteerReports,
       },
       {
         key: 'partner',
         label: 'Partner Reports',
         subtitle: 'Program and event submissions',
-        count: groupReportsByAccount(partnerReports).length,
+        count: partnerEventGroups.length,
         accent: '#ffdfe4',
         panel: '#bd3c4f',
         card: '#cd5a6d',
-        chips: ['Accounts', 'Impact', 'Program'],
+        chips: ['Events', 'Accounts', 'Reports'],
         reports: partnerReports,
       },
     ];
-  }, [reports]);
+  }, [eventsById, reports]);
+
+  const handleSelectColumnEvent = (
+    columnKey: StatusColumn['key'],
+    eventKey: string
+  ) => {
+    setDrilldownState(previous => ({
+      ...previous,
+      [columnKey]: { eventKey },
+    }));
+  };
+
+  const handleSelectColumnAccount = (
+    columnKey: StatusColumn['key'],
+    eventKey: string,
+    accountKey: string
+  ) => {
+    setDrilldownState(previous => ({
+      ...previous,
+      [columnKey]: { eventKey, accountKey },
+    }));
+  };
+
+  const handleBackToColumnEvents = (columnKey: StatusColumn['key']) => {
+    setDrilldownState(previous => ({
+      ...previous,
+      [columnKey]: {},
+    }));
+  };
+
+  const handleBackToColumnAccounts = (
+    columnKey: StatusColumn['key'],
+    eventKey: string
+  ) => {
+    setDrilldownState(previous => ({
+      ...previous,
+      [columnKey]: { eventKey },
+    }));
+  };
 
   if (loading) {
     return (
@@ -592,10 +744,9 @@ export default function AdminReportsDashboard({
               <MaterialIcons name="assessment" size={28} color="#4d5cd6" />
             </View>
             <View style={styles.mastheadText}>
-              <Text style={styles.title}>Analytics Report</Text>
+              <Text style={styles.title}>Reports</Text>
               <Text style={styles.subtitle}>
-                Monitor submitted reports and field metrics across volunteers and
-                partners
+                Review submitted reports and field metrics across volunteers and partners
               </Text>
             </View>
             <TouchableOpacity
@@ -615,7 +766,7 @@ export default function AdminReportsDashboard({
           </View>
 
           <View style={styles.kpiRow}>
-            <Text style={styles.kpiText}>Volunteer Hours: {summary.totalHours}</Text>
+            <Text style={styles.kpiText}>Volunteer Event Joins: {summary.volunteerEventJoins}</Text>
             <Text style={styles.kpiText}>
               Attendance Metrics: {summary.verifiedAttendance}
             </Text>
@@ -628,7 +779,14 @@ export default function AdminReportsDashboard({
 
           <View style={[styles.board, !isDesktop && styles.boardStacked]}>
             {columns.map(column => {
-              const accountGroups = groupReportsByAccount(column.reports);
+              const eventGroups = groupReportsByEvent(column.reports, eventsById);
+              const columnDrilldown = drilldownState[column.key] || {};
+              const selectedEventGroup = eventGroups.find(
+                group => group.key === columnDrilldown.eventKey
+              );
+              const selectedAccountGroup = selectedEventGroup?.accountGroups.find(
+                group => group.key === columnDrilldown.accountKey
+              );
 
               return (
                 <View
@@ -645,7 +803,9 @@ export default function AdminReportsDashboard({
                           styles.viewAllButton,
                           { backgroundColor: column.card },
                         ]}
+                        onPress={onViewAnalytics}
                         activeOpacity={0.85}
+                        accessibilityLabel={`View all analytics for ${column.label}`}
                       >
                         <Text style={styles.viewAllText}>View all</Text>
                       </TouchableOpacity>
@@ -670,7 +830,7 @@ export default function AdminReportsDashboard({
                     style={styles.cardList}
                     showsVerticalScrollIndicator={false}
                   >
-                    {accountGroups.length === 0 ? (
+                    {eventGroups.length === 0 ? (
                       <View
                         style={[
                           styles.emptyCard,
@@ -688,93 +848,201 @@ export default function AdminReportsDashboard({
                         </Text>
                       </View>
                     ) : (
-                      accountGroups.slice(0, 8).map(account => {
-                        return (
+                      <>
+                        {selectedEventGroup ? (
                           <View
-                            key={account.key}
                             style={[
-                              styles.reportCard,
+                              styles.drilldownBar,
                               { backgroundColor: column.card },
                             ]}
                           >
-                            <View style={styles.reportTopRow}>
-                              <Text
-                                style={styles.reportTitle}
-                                numberOfLines={1}
-                              >
-                                {account.submitterName}
-                              </Text>
-                            </View>
-                            <Text style={styles.reportMeta} numberOfLines={1}>
-                              {[
-                                formatRoleLabel(account.submitterRole),
-                                `${account.reports.length} ${account.reports.length === 1 ? 'report' : 'reports'}`,
-                              ].join(' • ')}
-                            </Text>
-                            <Text
-                              style={styles.reportSubtitle}
-                              numberOfLines={1}
+                            <TouchableOpacity
+                              style={styles.drilldownBackButton}
+                              onPress={() =>
+                                selectedAccountGroup
+                                  ? handleBackToColumnAccounts(
+                                      column.key,
+                                      selectedEventGroup.key
+                                    )
+                                  : handleBackToColumnEvents(column.key)
+                              }
+                              activeOpacity={0.85}
                             >
-                              Reports in this account
+                              <MaterialIcons name="arrow-back" size={15} color="#fff" />
+                              <Text style={styles.drilldownBackText}>Back</Text>
+                            </TouchableOpacity>
+                            <Text style={styles.drilldownTitle} numberOfLines={1}>
+                              {selectedAccountGroup
+                                ? selectedAccountGroup.submitterName
+                                : selectedEventGroup.title}
                             </Text>
-
-                            <View
-                              style={styles.accountReportList}
-                            >
-                              {account.reports.map(report => {
-                                const progress = getProgressPercent(report);
-
-                                return (
-                                  <TouchableOpacity
-                                    key={report.id}
-                                    style={styles.accountReportItem}
-                                    onPress={() => onViewReport(report)}
-                                    activeOpacity={0.85}
-                                  >
-                                    <View style={styles.accountReportTopRow}>
-                                      <Text
-                                        style={styles.accountReportEvent}
-                                        numberOfLines={1}
-                                      >
-                                        {getLinkedActivityLabel(report)}
-                                      </Text>
-                                      <Text style={styles.accountReportDate}>
-                                        {formatShortDate(report.submittedAt)}
-                                      </Text>
-                                    </View>
-                                    <Text
-                                      style={styles.accountReportTitle}
-                                      numberOfLines={2}
-                                    >
-                                      {report.title || 'Untitled report'}
-                                    </Text>
-                                    <Text
-                                      style={styles.accountReportType}
-                                      numberOfLines={1}
-                                    >
-                                      {report.reportType.replace(/_/g, ' ')}
-                                    </Text>
-                                    <View style={styles.progressTrack}>
-                                      <View
-                                        style={[
-                                          styles.progressFill,
-                                          {
-                                            width: `${progress}%`,
-                                            backgroundColor: column.accent,
-                                          },
-                                        ]}
-                                      />
-                                    </View>
-                                    <Text style={styles.progressText}>
-                                      {progress}% metrics captured
-                                    </Text>
-                                  </TouchableOpacity>
-                                );
-                              })}
-                            </View>
                           </View>
-                        );
-                      })
+                        ) : null}
+
+                        {!selectedEventGroup
+                          ? eventGroups.map(eventGroup => (
+                              <TouchableOpacity
+                                key={eventGroup.key}
+                                style={[
+                                  styles.reportCard,
+                                  { backgroundColor: column.card },
+                                ]}
+                                onPress={() =>
+                                  handleSelectColumnEvent(column.key, eventGroup.key)
+                                }
+                                activeOpacity={0.85}
+                              >
+                                <View style={styles.reportTopRow}>
+                                  <Text style={styles.reportTitle} numberOfLines={1}>
+                                    {eventGroup.title}
+                                  </Text>
+                                  <Text style={styles.reportDate}>
+                                    {formatShortDate(eventGroup.latestReport.submittedAt)}
+                                  </Text>
+                                </View>
+                                <Text style={styles.reportMeta} numberOfLines={1}>
+                                  {[
+                                    `${eventGroup.accountGroups.length} ${
+                                      eventGroup.accountGroups.length === 1
+                                        ? 'account'
+                                        : 'accounts'
+                                    }`,
+                                    `${eventGroup.reports.length} ${
+                                      eventGroup.reports.length === 1
+                                        ? 'report'
+                                        : 'reports'
+                                    }`,
+                                  ].join(' - ')}
+                                </Text>
+                                <Text style={styles.reportSubtitle} numberOfLines={1}>
+                                  Tap to view account cards
+                                </Text>
+                                <Text style={styles.reportCountText} numberOfLines={1}>
+                                  Latest: {eventGroup.latestReport.title || 'Untitled report'}
+                                </Text>
+                              </TouchableOpacity>
+                            ))
+                          : selectedAccountGroup
+                          ? (
+                              <View
+                                style={[
+                                  styles.reportCard,
+                                  { backgroundColor: column.card },
+                                ]}
+                              >
+                                <Text style={styles.reportMeta} numberOfLines={1}>
+                                  {[
+                                    formatRoleLabel(selectedAccountGroup.submitterRole),
+                                    `${selectedAccountGroup.reports.length} ${
+                                      selectedAccountGroup.reports.length === 1
+                                        ? 'report'
+                                        : 'reports'
+                                    }`,
+                                  ].join(' - ')}
+                                </Text>
+                                <Text style={styles.reportSubtitle} numberOfLines={1}>
+                                  Reports in this account
+                                </Text>
+
+                                <View style={styles.accountReportList}>
+                                  {selectedAccountGroup.reports.map(report => {
+                                    const progress = getProgressPercent(report);
+
+                                    return (
+                                      <TouchableOpacity
+                                        key={report.id}
+                                        style={styles.accountReportItem}
+                                        onPress={() => onViewReport(report)}
+                                        activeOpacity={0.85}
+                                      >
+                                        <View style={styles.accountReportTopRow}>
+                                          <Text
+                                            style={styles.accountReportEvent}
+                                            numberOfLines={1}
+                                          >
+                                            {getLinkedActivityLabel(report)}
+                                          </Text>
+                                          <Text style={styles.accountReportDate}>
+                                            {formatShortDate(report.submittedAt)}
+                                          </Text>
+                                        </View>
+                                        <Text
+                                          style={styles.accountReportTitle}
+                                          numberOfLines={2}
+                                        >
+                                          {report.title || 'Untitled report'}
+                                        </Text>
+                                        <Text
+                                          style={styles.accountReportType}
+                                          numberOfLines={1}
+                                        >
+                                          {report.reportType.replace(/_/g, ' ')}
+                                        </Text>
+                                        <View style={styles.progressTrack}>
+                                          <View
+                                            style={[
+                                              styles.progressFill,
+                                              {
+                                                width: `${progress}%`,
+                                                backgroundColor: column.accent,
+                                              },
+                                            ]}
+                                          />
+                                        </View>
+                                        <Text style={styles.progressText}>
+                                          {progress}% metrics captured
+                                        </Text>
+                                      </TouchableOpacity>
+                                    );
+                                  })}
+                                </View>
+                              </View>
+                            )
+                          : selectedEventGroup.accountGroups.map(account => (
+                              <TouchableOpacity
+                                key={account.key}
+                                style={[
+                                  styles.reportCard,
+                                  { backgroundColor: column.card },
+                                ]}
+                                onPress={() =>
+                                  handleSelectColumnAccount(
+                                    column.key,
+                                    selectedEventGroup.key,
+                                    account.key
+                                  )
+                                }
+                                activeOpacity={0.85}
+                              >
+                                <View style={styles.reportTopRow}>
+                                  <Text style={styles.reportTitle} numberOfLines={1}>
+                                    {account.submitterName}
+                                  </Text>
+                                  <MaterialIcons
+                                    name="chevron-right"
+                                    size={20}
+                                    color="#fff"
+                                  />
+                                </View>
+                                <Text style={styles.reportMeta} numberOfLines={1}>
+                                  {[
+                                    formatRoleLabel(account.submitterRole),
+                                    `${account.reports.length} ${
+                                      account.reports.length === 1
+                                        ? 'report'
+                                        : 'reports'
+                                    }`,
+                                  ].join(' - ')}
+                                </Text>
+                                <Text style={styles.reportSubtitle} numberOfLines={1}>
+                                  Tap to view reports in this account
+                                </Text>
+                                <Text style={styles.reportCountText} numberOfLines={1}>
+                                  Latest: {account.latestReport.title || 'Untitled report'}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                      </>
                     )}
                   </ScrollView>
                 </View>
@@ -916,6 +1184,48 @@ export default function AdminReportsDashboard({
           </View>
         </View>
       </ScrollView>
+
+      {/* Download Preview Modal */}
+      <DownloadPreviewModal
+        visible={previewModalState.visible}
+        title={`Preview ${previewModalState.format.toUpperCase()} Download`}
+        subtitle={`${selectedEventLabel} • ${tableRows.length} reports`}
+        totalRows={tableRows.length}
+        previewRows={tableRows.map(row => ({
+          Title: row.title,
+          Submitter: row.submitter,
+          Role: row.role,
+          Type: row.type,
+          Event: row.event,
+          Status: row.status,
+          Submitted: row.submittedAt,
+        }))}
+        columns={['Title', 'Submitter', 'Role', 'Type', 'Event', 'Status', 'Submitted']}
+        stats={[
+          {
+            label: 'Total Records',
+            value: `${tableRows.length} reports`,
+            icon: 'assessment',
+          },
+          {
+            label: 'Date Range',
+            value: tableRows.length > 0
+              ? `Generated on ${new Date().toLocaleDateString()}`
+              : 'N/A',
+            icon: 'event',
+          },
+          {
+            label: 'File Format',
+            value: previewModalState.format === 'csv' ? 'CSV (Text)' : 'PDF (Document)',
+            icon: previewModalState.format === 'csv' ? 'description' : 'picture-as-pdf',
+          },
+        ]}
+        fileSize={estimateFileSize(tableRows.length, previewModalState.format)}
+        onConfirm={handleConfirmDownload}
+        onCancel={() => setPreviewModalState({ visible: false, format: 'csv' })}
+        confirmText={`Download ${previewModalState.format.toUpperCase()}`}
+        confirmColor={previewModalState.format === 'csv' ? '#2563eb' : '#b91c1c'}
+      />
     </View>
   );
 }
@@ -1271,6 +1581,33 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 11,
     fontWeight: '700',
+  },
+  drilldownBar: {
+    marginTop: 10,
+    marginBottom: 10,
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  drilldownBackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingRight: 6,
+  },
+  drilldownBackText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  drilldownTitle: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '800',
   },
   cardList: {
     marginTop: 10,

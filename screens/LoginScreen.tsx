@@ -22,6 +22,31 @@ function getPlatformOS(): string {
     return 'web';
   }
 }
+
+/**
+ * Returns true when running in a real web browser BUT the user has NOT
+ * requested mobile-emulation mode via the `?mode=mobile` query param.
+ *
+ * Visiting  http://localhost:8081/?mode=mobile  (or any URL with that param)
+ * makes the web app behave exactly like the mobile app – volunteer and partner
+ * accounts can log in, the role-selection screen appears, and the signup flow
+ * is fully accessible.  This is useful for:
+ *   • Playwright E2E tests that need to cover volunteer / partner UI
+ *   • Developers who want to preview the mobile UI in a desktop browser
+ */
+function getIsWeb(): boolean {
+  if (getPlatformOS() !== 'web') return false;
+  try {
+    // Check for ?mode=mobile query param
+    if (typeof window !== 'undefined' && window?.location?.search) {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('mode') === 'mobile') return false;
+    }
+  } catch {
+    // ignore – treat as normal web
+  }
+  return true;
+}
 import { MaterialIcons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -30,11 +55,13 @@ import {
   getAllProjects,
   getAllUsers,
   getApiBaseUrl,
-  getCachedStorageItem,
+  getStorageItemFast,
   getUserByEmailOrPhone,
+  validateDswdAccreditationNo,
   loginWithCredentials,
   subscribeToStorageChanges,
 } from '../models/storage';
+import { showError, showInfo } from '../utils/errorHandler';
 import { useAuth } from '../contexts/AuthContext';
 import AppLogo from '../components/AppLogo';
 import InlineLoadError from '../components/InlineLoadError';
@@ -70,29 +97,18 @@ type SignupVolunteerSheetState = {
   workplaceOrSchool: string;
   collegeCourse: string;
   certificationsOrTrainings: string;
-  hobbiesAndInterests: string;
   specialSkills: string;
   skills: string[];
   affiliationOrg1: string;
   affiliationPos1: string;
-  affiliationOrg2: string;
-  affiliationPos2: string;
 };
 
 type SignupPartnerApplicationState = {
   organizationName: string;
-  stakeholderName: string;
   sectorType: PartnerSectorType;
   dswdAccreditationNo: string;
-  region: string;
-  province: string;
-  cityMunicipality: string;
+  secRegistrationNo: string;
   advocacyFocus: AdvocacyFocus[];
-};
-
-type PartnerProvinceOption = {
-  code: string;
-  name: string;
 };
 
 type MobileEntryRole = Exclude<UserRole, 'admin'>;
@@ -183,13 +199,10 @@ function createEmptySignupVolunteerSheet(): SignupVolunteerSheetState {
     workplaceOrSchool: '',
     collegeCourse: '',
     certificationsOrTrainings: '',
-    hobbiesAndInterests: '',
     specialSkills: '',
     skills: [],
     affiliationOrg1: '',
     affiliationPos1: '',
-    affiliationOrg2: '',
-    affiliationPos2: '',
   };
 }
 
@@ -197,12 +210,9 @@ function createEmptySignupVolunteerSheet(): SignupVolunteerSheetState {
 function createEmptySignupPartnerApplication(): SignupPartnerApplicationState {
   return {
     organizationName: '',
-    stakeholderName: '',
     sectorType: 'NGO',
     dswdAccreditationNo: '',
-    region: '',
-    province: '',
-    cityMunicipality: '',
+    secRegistrationNo: '',
     advocacyFocus: [],
   };
 }
@@ -212,7 +222,11 @@ function normalizeLoginPhone(value?: string): string {
 }
 
 function getUserNotFoundDisplay(): { title: string; message: string } {
-  return { title: 'User Not Found', message: 'User not found' };
+  return {
+    title: 'User Not Found',
+    message:
+      'No account was found for that username, email, or phone number. Please input a valid email, username, or phone.',
+  };
 }
 
 function findUserByLoginIdentifier(users: User[], identifier: string): User | null {
@@ -278,7 +292,7 @@ function getCachedLoginFailureDisplay(
   if (matchedUser) {
     return {
       title: 'Incorrect Password',
-      message: 'Incorrect password',
+      message: 'Incorrect password. Please input a valid password and try again.',
     };
   }
 
@@ -351,7 +365,7 @@ function getMobileRoleMismatchMessage(selectedRole: MobileEntryRole, actualRole:
 
 // Handles account login and volunteer or partner self-registration.
 export default function LoginScreen() {
-  const isWeb = getPlatformOS() === 'web';
+  const isWeb = getIsWeb();
   const { width: screenWidth } = useWindowDimensions();
   const isCompactLayout = screenWidth < 480;
   const stackSelectionCards = screenWidth < 420;
@@ -391,11 +405,6 @@ export default function LoginScreen() {
   const [selectedCityCode, setSelectedCityCode] = useState('');
   const [filteredCities, setFilteredCities] = useState<PHCityMunicipality[]>([]);
   const [filteredBarangays, setFilteredBarangays] = useState<PHBarangay[]>([]);
-  const [selectedPartnerRegionCode, setSelectedPartnerRegionCode] = useState('');
-  const [partnerProvinceOptions, setPartnerProvinceOptions] = useState<PartnerProvinceOption[]>([]);
-  const [selectedPartnerProvinceCode, setSelectedPartnerProvinceCode] = useState('');
-  const [partnerFilteredCities, setPartnerFilteredCities] = useState<PHCityMunicipality[]>([]);
-  const [selectedPartnerCityCode, setSelectedPartnerCityCode] = useState('');
   const { login } = useAuth();
   const mountedRef = useRef(true);
   const visibleDemoAccounts = getVisibleDemoAccounts(isWeb, selectedMobileRole);
@@ -576,7 +585,7 @@ export default function LoginScreen() {
     // Loads stored accounts so users can quickly reuse credentials from this device.
     const loadSavedAccounts = async () => {
       try {
-        const cachedUsers = (await getCachedStorageItem<User[]>('users')) || [];
+        const cachedUsers = (await getStorageItemFast<User[]>('users')) || [];
         applyVisibleSavedAccounts(cachedUsers);
 
         if (backendStatus !== 'online') {
@@ -615,10 +624,8 @@ export default function LoginScreen() {
     const activeMobileRole = roleOverride ?? selectedMobileRole;
     const showLoginError = (title: string, message: string) => {
       setLoginError({ title, message });
-
-      if (!isWeb) {
-        Alert.alert(title, message);
-      }
+      // Use centralized handler so web and mobile behave consistently
+      showError(new Error(message), { fallbackTitle: title, fallbackMessage: message });
     };
 
     setLoginError(null);
@@ -694,6 +701,22 @@ export default function LoginScreen() {
         setBackendStatus('checking');
         setBackendMessage('Trying to reach the database on a slow connection...');
       }
+      // Pre-check whether the identifier maps to any known account (email, username alias, or phone).
+      // This lets us provide a more specific error to the user (username vs password).
+      let identifierMatchedUser: User | null = null;
+      try {
+        identifierMatchedUser = await getUserByEmailOrPhone(trimmedIdentifier);
+      } catch (e) {
+        // If the lookup fails, fall back to attempting login normally.
+        identifierMatchedUser = null;
+      }
+
+      if (!identifierMatchedUser) {
+        // No local/mirrored account matches the identifier — inform the user.
+        showLoginError(getUserNotFoundDisplay().title, getUserNotFoundDisplay().message);
+        return;
+      }
+
       const user = await loginWithCredentials(trimmedIdentifier, trimmedPassword);
 
       if (!user) {
@@ -783,11 +806,6 @@ export default function LoginScreen() {
     setSelectedCityCode('');
     setFilteredCities([]);
     setFilteredBarangays([]);
-    setSelectedPartnerRegionCode('');
-    setPartnerProvinceOptions([]);
-    setSelectedPartnerProvinceCode('');
-    setPartnerFilteredCities([]);
-    setSelectedPartnerCityCode('');
     setSignupAcceptedCommitment(false);
     setSignupStep('role');
   };
@@ -907,75 +925,6 @@ export default function LoginScreen() {
     updateSignupVolunteerSheet('homeAddressBarangay', barangayName);
   };
 
-  const getPartnerProvinceOptions = (regionCode: string): PartnerProvinceOption[] => {
-    if (!regionCode) {
-      return [];
-    }
-
-    const uniqueProvinces = new Map<string, PartnerProvinceOption>();
-    getCitiesByRegion(regionCode).forEach(city => {
-      if (!uniqueProvinces.has(city.provinceCode)) {
-        uniqueProvinces.set(city.provinceCode, {
-          code: city.provinceCode,
-          name: city.provinceName,
-        });
-      }
-    });
-
-    return Array.from(uniqueProvinces.values()).sort((a, b) => a.name.localeCompare(b.name));
-  };
-
-  const handleSelectPartnerRegion = (regionCode: string) => {
-    const selectedRegion = PHRegions.find(region => region.code === regionCode);
-    const provinces = getPartnerProvinceOptions(regionCode);
-
-    setSignupPartnerApplication(current => ({
-      ...current,
-      region: selectedRegion?.name || '',
-      province: '',
-      cityMunicipality: '',
-    }));
-    setSelectedPartnerRegionCode(regionCode);
-    setPartnerProvinceOptions(provinces);
-    setSelectedPartnerProvinceCode('');
-    setPartnerFilteredCities([]);
-    setSelectedPartnerCityCode('');
-  };
-
-  const handleSelectPartnerProvince = (provinceCode: string) => {
-    const selectedProvince = partnerProvinceOptions.find(option => option.code === provinceCode);
-    const uniqueCities = new Map<string, PHCityMunicipality>();
-
-    getCitiesByRegion(selectedPartnerRegionCode)
-      .filter(city => city.provinceCode === provinceCode)
-      .forEach(city => {
-        if (!uniqueCities.has(city.code)) {
-          uniqueCities.set(city.code, city);
-        }
-      });
-
-    setSignupPartnerApplication(current => ({
-      ...current,
-      province: selectedProvince?.name || '',
-      cityMunicipality: '',
-    }));
-    setSelectedPartnerProvinceCode(provinceCode);
-    setPartnerFilteredCities(
-      Array.from(uniqueCities.values()).sort((a, b) => a.displayName.localeCompare(b.displayName))
-    );
-    setSelectedPartnerCityCode('');
-  };
-
-  const handleSelectPartnerCity = (cityCode: string) => {
-    const selectedCity = partnerFilteredCities.find(city => city.code === cityCode);
-
-    setSignupPartnerApplication(current => ({
-      ...current,
-      cityMunicipality: selectedCity?.displayName || '',
-    }));
-    setSelectedPartnerCityCode(cityCode);
-  };
-
   // Updates one field in the partner application form.
   const updateSignupPartnerApplication = <K extends keyof SignupPartnerApplicationState>(
     key: K,
@@ -1012,25 +961,18 @@ export default function LoginScreen() {
         return;
       }
 
-      if (!signupPartnerApplication.stakeholderName.trim()) {
-        Alert.alert('Validation Error', 'Stakeholder name is required.');
-        return;
-      }
-
-      if (
-        !signupPartnerApplication.region.trim() ||
-        !signupPartnerApplication.province.trim() ||
-        !signupPartnerApplication.cityMunicipality.trim()
-      ) {
-        Alert.alert('Validation Error', 'Select the partner region, province, and city or municipality.');
-        return;
-      }
-
-      if (
-        signupPartnerApplication.sectorType === 'NGO' &&
-        !signupPartnerApplication.dswdAccreditationNo.trim()
-      ) {
-        Alert.alert('Validation Error', 'DSWD accreditation number is required for NGO registrations.');
+      // Validate DSWD accreditation number against database
+      const dswdValidation = await validateDswdAccreditationNo(signupPartnerApplication.dswdAccreditationNo);
+      if (!dswdValidation.valid) {
+        let errorMessage = 'Enter a valid DSWD accreditation number.';
+        if (dswdValidation.reason === 'Accreditation number not found in database') {
+          errorMessage = 'This DSWD accreditation number is not recognized. Please use one of the unassigned accreditation numbers provided by the system.';
+        } else if (dswdValidation.reason === 'Accreditation number already assigned') {
+          errorMessage = 'This DSWD accreditation number is already assigned to another partner. Please use an unassigned number.';
+        } else if (dswdValidation.reason === 'Invalid format') {
+          errorMessage = 'Invalid DSWD accreditation number format. Please check the format and try again.';
+        }
+        Alert.alert('Validation Error', errorMessage);
         return;
       }
 
@@ -1087,12 +1029,9 @@ export default function LoginScreen() {
           signupRole === 'partner'
             ? {
                 organizationName: signupPartnerApplication.organizationName.trim(),
-                stakeholderName: signupPartnerApplication.stakeholderName.trim(),
                 sectorType: signupPartnerApplication.sectorType,
                 dswdAccreditationNo: signupPartnerApplication.dswdAccreditationNo.trim(),
-                region: signupPartnerApplication.region.trim(),
-                province: signupPartnerApplication.province.trim(),
-                cityMunicipality: signupPartnerApplication.cityMunicipality.trim(),
+                secRegistrationNo: signupPartnerApplication.secRegistrationNo.trim(),
                 advocacyFocus: signupPartnerApplication.advocacyFocus,
               }
             : undefined,
@@ -1111,17 +1050,12 @@ export default function LoginScreen() {
                 collegeCourse: signupVolunteerSheet.collegeCourse.trim(),
                 certificationsOrTrainings:
                   signupVolunteerSheet.certificationsOrTrainings.trim(),
-                hobbiesAndInterests: signupVolunteerSheet.hobbiesAndInterests.trim(),
                 specialSkills: signupVolunteerSheet.specialSkills.trim(),
                 skills: signupVolunteerSheet.skills,
                 affiliations: [
                   {
                     organization: signupVolunteerSheet.affiliationOrg1.trim(),
                     position: signupVolunteerSheet.affiliationPos1.trim(),
-                  },
-                  {
-                    organization: signupVolunteerSheet.affiliationOrg2.trim(),
-                    position: signupVolunteerSheet.affiliationPos2.trim(),
                   },
                 ].filter(affiliation => affiliation.organization || affiliation.position),
               }
@@ -1248,7 +1182,7 @@ export default function LoginScreen() {
         >
           <View style={styles.brandSection}>
             <AppLogo width={isWeb ? 126 : 138} />
-            <Text style={styles.title}>NVC CONNECT</Text>
+            <Text style={styles.title}>NVC</Text>
             <Text style={styles.subtitle}>
               {isWeb ? 'Admin web portal' : 'Volunteer coordination platform'}
             </Text>
@@ -1636,72 +1570,6 @@ export default function LoginScreen() {
                       editable={!signupLoading}
                     />
 
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Stakeholder Name"
-                      placeholderTextColor="#999"
-                      value={signupPartnerApplication.stakeholderName}
-                      onChangeText={value => updateSignupPartnerApplication('stakeholderName', value)}
-                      editable={!signupLoading}
-                    />
-
-                    <Text style={styles.modalSectionSubLabel}>Region</Text>
-                    <View style={styles.pickerContainer}>
-                      <Picker
-                        selectedValue={selectedPartnerRegionCode}
-                        onValueChange={(itemValue: string) => handleSelectPartnerRegion(itemValue)}
-                        enabled={!signupLoading}
-                        style={styles.picker}
-                      >
-                        <Picker.Item label="Select Region..." value="" />
-                        {PHRegions.map(region => (
-                          <Picker.Item
-                            key={region.code}
-                            label={region.name}
-                            value={region.code}
-                          />
-                        ))}
-                      </Picker>
-                    </View>
-
-                    <Text style={styles.modalSectionSubLabel}>Province</Text>
-                    <View style={styles.pickerContainer}>
-                      <Picker
-                        selectedValue={selectedPartnerProvinceCode}
-                        onValueChange={(itemValue: string) => handleSelectPartnerProvince(itemValue)}
-                        enabled={!signupLoading && selectedPartnerRegionCode !== ''}
-                        style={styles.picker}
-                      >
-                        <Picker.Item label="Select Province..." value="" />
-                        {partnerProvinceOptions.map(province => (
-                          <Picker.Item
-                            key={province.code}
-                            label={province.name}
-                            value={province.code}
-                          />
-                        ))}
-                      </Picker>
-                    </View>
-
-                    <Text style={styles.modalSectionSubLabel}>City / Municipality</Text>
-                    <View style={styles.pickerContainer}>
-                      <Picker
-                        selectedValue={selectedPartnerCityCode}
-                        onValueChange={(itemValue: string) => handleSelectPartnerCity(itemValue)}
-                        enabled={!signupLoading && selectedPartnerProvinceCode !== ''}
-                        style={styles.picker}
-                      >
-                        <Picker.Item label="Select City / Municipality..." value="" />
-                        {partnerFilteredCities.map(city => (
-                          <Picker.Item
-                            key={city.code}
-                            label={city.displayName}
-                            value={city.code}
-                          />
-                        ))}
-                      </Picker>
-                    </View>
-
                     <Text style={styles.modalSectionSubLabel}>Sector Type</Text>
                     <View style={styles.pillarGrid}>
                       {(['NGO', 'Hospital', 'Institution', 'Private'] as const).map(sector => {
@@ -1710,13 +1578,7 @@ export default function LoginScreen() {
                           <TouchableOpacity
                             key={sector}
                             style={[styles.pillarChip, selected && styles.pillarChipActive]}
-                            onPress={() =>
-                              setSignupPartnerApplication(current => ({
-                                ...current,
-                                sectorType: sector,
-                                dswdAccreditationNo: sector === 'NGO' ? current.dswdAccreditationNo : '',
-                              }))
-                            }
+                            onPress={() => updateSignupPartnerApplication('sectorType', sector)}
                             disabled={signupLoading}
                           >
                             <Text style={[styles.pillarChipText, selected && styles.pillarChipTextActive]}>
@@ -1727,27 +1589,29 @@ export default function LoginScreen() {
                       })}
                     </View>
 
-                    {signupPartnerApplication.sectorType === 'NGO' ? (
-                      <>
-                        <Text style={styles.fieldLabel}>DSWD Accreditation Number</Text>
-                        <Text style={styles.fieldHelpText}>
-                          Required for NGO registrations. Any input will be accepted.
-                        </Text>
-                        <TextInput
-                          style={styles.input}
-                          placeholder="Enter DSWD Accreditation No."
-                          placeholderTextColor="#999"
-                          value={signupPartnerApplication.dswdAccreditationNo}
-                          onChangeText={value => updateSignupPartnerApplication('dswdAccreditationNo', value)}
-                          autoCapitalize="characters"
-                          editable={!signupLoading}
-                        />
-                      </>
-                    ) : (
-                      <Text style={styles.fieldHelpText}>
-                        DSWD accreditation number is only required when the sector type is NGO.
-                      </Text>
-                    )}
+                    <Text style={styles.fieldLabel}>DSWD Accreditation Number</Text>
+                    <Text style={styles.fieldHelpText}>
+                      Enter one of the unassigned DSWD accreditation numbers. Contact admin if you need an assigned number.
+                    </Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="DSWD Accreditation No. (must be unassigned)"
+                      placeholderTextColor="#999"
+                      value={signupPartnerApplication.dswdAccreditationNo}
+                      onChangeText={value => updateSignupPartnerApplication('dswdAccreditationNo', value)}
+                      autoCapitalize="characters"
+                      editable={!signupLoading}
+                    />
+
+                    <TextInput
+                      style={styles.input}
+                      placeholder="SEC Registration No. e.g. CN201234567"
+                      placeholderTextColor="#999"
+                      value={signupPartnerApplication.secRegistrationNo}
+                      onChangeText={value => updateSignupPartnerApplication('secRegistrationNo', value)}
+                      autoCapitalize="characters"
+                      editable={!signupLoading}
+                    />
 
                     <Text style={styles.modalSectionSubLabel}>Advocacy Focus</Text>
                     <View style={styles.pillarGrid}>
@@ -1778,7 +1642,7 @@ export default function LoginScreen() {
                     <View style={styles.partnerLockNotice}>
                       <MaterialIcons name="verified-user" size={18} color="#92400e" />
                       <Text style={styles.partnerLockNoticeText}>
-                        Admin will review your application and unlock partner login after approval. DSWD accreditation number is still required for NGO registrations.
+                        Admin will review your DSWD accreditation number, verify the application, and unlock partner login after approval.
                       </Text>
                     </View>
                   </>
@@ -1808,43 +1672,66 @@ export default function LoginScreen() {
                     </View>
 
                   <Text style={styles.modalSectionSubLabel}>Date of Birth</Text>
-                  <TouchableOpacity
-                    style={[styles.button, styles.datePickerButton]}
-                    onPress={() => {
-                      setShowDatePicker(true);
-                    }}
-                    disabled={signupLoading}
-                    hitSlop={8}
-                  >
-                    <MaterialIcons name="calendar-today" size={20} color="#fff" />
-                    <Text style={styles.datePickerButtonText}>
-                      {signupVolunteerSheet.dateOfBirth
-                        ? new Date(signupVolunteerSheet.dateOfBirth).toLocaleDateString('en-US', {
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric',
-                        })
-                        : 'Select Date of Birth'}
-                    </Text>
-                  </TouchableOpacity>
+                  {getPlatformOS() === 'web' ? (
+                    <input
+                      type="date"
+                      value={signupVolunteerSheet.dateOfBirth}
+                      max={new Date().toISOString().split('T')[0]}
+                      onChange={event => {
+                        updateSignupVolunteerSheet('dateOfBirth', event.target.value);
+                      }}
+                      disabled={signupLoading}
+                      style={{
+                        width: '100%',
+                        padding: '12px 16px',
+                        borderRadius: '12px',
+                        border: '1px solid #ddd',
+                        fontSize: '16px',
+                        color: '#333',
+                        backgroundColor: '#fff',
+                        minHeight: '54px',
+                        boxSizing: 'border-box',
+                        fontFamily: 'inherit',
+                        marginBottom: '15px',
+                        outline: 'none',
+                        cursor: 'pointer',
+                      }}
+                    />
+                  ) : (
+                    <TouchableOpacity
+                      style={[styles.button, styles.datePickerButton]}
+                      onPress={() => {
+                        setShowDatePicker(true);
+                      }}
+                      disabled={signupLoading}
+                      hitSlop={8}
+                    >
+                      <MaterialIcons name="calendar-today" size={20} color="#fff" />
+                      <Text style={styles.datePickerButtonText}>
+                        {signupVolunteerSheet.dateOfBirth
+                          ? new Date(signupVolunteerSheet.dateOfBirth).toLocaleDateString('en-US', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                          })
+                          : 'Select Date of Birth'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
 
                   <Text style={styles.modalSectionSubLabel}>Civil Status</Text>
-                  <View style={styles.statusGrid}>
-                    {['Single', 'Married', 'Widowed', 'Separated', 'Domestic Partnership'].map(status => (
-                      <TouchableOpacity
-                        key={status}
-                        style={[styles.statusChip, signupVolunteerSheet.civilStatus === status && styles.statusChipActive]}
-                        onPress={() => {
-                          updateSignupVolunteerSheet('civilStatus', status);
-                        }}
-                        disabled={signupLoading}
-                        hitSlop={8}
-                      >
-                        <Text style={[styles.statusChipText, signupVolunteerSheet.civilStatus === status && styles.statusChipTextActive]}>
-                          {status}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                  <View style={styles.pickerContainer}>
+                    <Picker
+                      selectedValue={signupVolunteerSheet.civilStatus}
+                      onValueChange={(itemValue: string) => updateSignupVolunteerSheet('civilStatus', itemValue)}
+                      enabled={!signupLoading}
+                      style={styles.picker}
+                    >
+                      <Picker.Item label="Select Civil Status..." value="" />
+                      {['Single', 'Married', 'Widowed', 'Separated', 'Domestic Partnership'].map(status => (
+                        <Picker.Item key={status} label={status} value={status} />
+                      ))}
+                    </Picker>
                   </View>
 
                   <Text style={styles.modalSectionLabel}>Home Address (Philippines)</Text>
@@ -1932,23 +1819,6 @@ export default function LoginScreen() {
                     onChangeText={value => updateSignupVolunteerSheet('collegeCourse', value)}
                     editable={!signupLoading}
                   />
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Hobbies and Interests"
-                    placeholderTextColor="#999"
-                    value={signupVolunteerSheet.hobbiesAndInterests}
-                    onChangeText={value => updateSignupVolunteerSheet('hobbiesAndInterests', value)}
-                    editable={!signupLoading}
-                  />
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Special Skills"
-                    placeholderTextColor="#999"
-                    value={signupVolunteerSheet.specialSkills}
-                    onChangeText={value => updateSignupVolunteerSheet('specialSkills', value)}
-                    editable={!signupLoading}
-                  />
-
                   <Text style={styles.modalSectionSubLabel}>Skills (Select all that apply)</Text>
                   <View style={styles.dropdownWrap}>
                     <TouchableOpacity
@@ -1978,11 +1848,7 @@ export default function LoginScreen() {
                       />
                     </TouchableOpacity>
                     {showSkillsDropdown ? (
-                      <ScrollView
-                        style={styles.dropdownMenu}
-                        nestedScrollEnabled
-                        keyboardShouldPersistTaps="handled"
-                      >
+                      <View style={styles.dropdownMenu}>
                         {availableSkills.map(skill => {
                           const isSelected = signupVolunteerSheet.skills.includes(skill);
                           return (
@@ -2010,7 +1876,7 @@ export default function LoginScreen() {
                             </TouchableOpacity>
                           );
                         })}
-                      </ScrollView>
+                      </View>
                     ) : null}
                   </View>
 
@@ -2112,25 +1978,6 @@ export default function LoginScreen() {
                       editable={!signupLoading}
                     />
                   </View>
-                  <View style={styles.affiliationRow}>
-                    <TextInput
-                      style={[styles.input, styles.affiliationInput]}
-                      placeholder="Organization"
-                      placeholderTextColor="#999"
-                      value={signupVolunteerSheet.affiliationOrg2}
-                      onChangeText={value => updateSignupVolunteerSheet('affiliationOrg2', value)}
-                      editable={!signupLoading}
-                    />
-                    <TextInput
-                      style={[styles.input, styles.affiliationInput]}
-                      placeholder="Position"
-                      placeholderTextColor="#999"
-                      value={signupVolunteerSheet.affiliationPos2}
-                      onChangeText={value => updateSignupVolunteerSheet('affiliationPos2', value)}
-                      editable={!signupLoading}
-                    />
-                  </View>
-
                   <Text style={styles.modalSectionLabel}>Commitment</Text>
                   <View style={styles.commitmentCard}>
                     <Text style={styles.commitmentParagraph}>
@@ -2292,7 +2139,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   title: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
     marginTop: 18,
     marginBottom: 8,
@@ -2300,7 +2147,7 @@ const styles = StyleSheet.create({
     color: '#333',
   },
   subtitle: {
-    fontSize: 13,
+    fontSize: 14,
     color: '#666',
     textAlign: 'center',
     marginBottom: 30,
@@ -2329,13 +2176,13 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   selectionTitle: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: '700',
     color: '#0f172a',
     textAlign: 'center',
   },
   selectionSubtitle: {
-    fontSize: 13,
+    fontSize: 14,
     lineHeight: 22,
     color: '#475569',
     textAlign: 'center',
@@ -2447,11 +2294,11 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     borderWidth: 1,
     borderColor: '#ddd',
-    fontSize: 15,
+    fontSize: 16,
     minHeight: 54,
   },
   compactInput: {
-    fontSize: 14,
+    fontSize: 15,
     paddingHorizontal: 14,
     paddingVertical: 13,
     marginBottom: 12,
@@ -2475,7 +2322,7 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 'bold',
   },
   demoSection: {
@@ -2552,7 +2399,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   mobileRoleBannerTitle: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '700',
     color: '#0f172a',
   },
@@ -2627,7 +2474,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
     color: '#111827',
   },
@@ -2650,7 +2497,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   fieldLabel: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     color: '#0f172a',
     marginBottom: 6,

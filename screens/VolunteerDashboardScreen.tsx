@@ -470,21 +470,13 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
     setSelectedDashboardSection(section);
   }, []);
 
-  const openDashboardCardFromList = React.useCallback((card: DashboardCardPreview) => {
-    setSelectedDashboardSection(null);
-    setSelectedDashboardCard(card);
-  }, []);
-
-  const navigateFromDashboardCard = React.useCallback(
+  const navigateToCard = React.useCallback(
     (card: DashboardCardPreview) => {
-      setSelectedDashboardCard(null);
-
       if (card.kind === 'program') {
         const handled = navigateToAvailableRoute(
           navigation,
-          'Programs',
-          card.targetProgramId ? { programId: card.targetProgramId } : undefined,
-          { routeName: 'Projects' }
+          'Projects',
+          card.targetProgramId ? { programId: card.targetProgramId } : undefined
         );
 
         if (!handled) {
@@ -497,8 +489,7 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
         const handled = navigateToAvailableRoute(
           navigation,
           'ProjectDetails',
-          { projectId: card.targetProjectId },
-          { routeName: 'Lifecycle', params: { projectId: card.targetProjectId } }
+          { projectId: card.targetProjectId }
         );
 
         if (!handled) {
@@ -507,6 +498,19 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
       }
     },
     [navigation, openProjects]
+  );
+
+  const openDashboardCardFromList = React.useCallback((card: DashboardCardPreview) => {
+    setSelectedDashboardSection(null);
+    navigateToCard(card);
+  }, [navigateToCard]);
+
+  const navigateFromDashboardCard = React.useCallback(
+    (card: DashboardCardPreview) => {
+      setSelectedDashboardCard(null);
+      navigateToCard(card);
+    },
+    [navigateToCard]
   );
 
   const featuredEventCard = useMemo<DashboardCardPreview | null>(
@@ -755,14 +759,6 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
   );
 
   const handleLogout = async () => {
-    if (Platform.OS === 'web') {
-      const confirmed = typeof window !== 'undefined' ? window.confirm('Are you sure you want to logout?') : true;
-      if (confirmed) {
-        await logout();
-      }
-      return;
-    }
-
     Alert.alert('Logout', 'Are you sure you want to logout?', [
       { text: 'Cancel' },
       { text: 'Logout', onPress: async () => await logout() },
@@ -1063,7 +1059,7 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
                   </Text>
 
                   <View style={styles.sectionListItemFooter}>
-                    <Text style={styles.sectionListItemFooterText}>Tap to preview details</Text>
+                    <Text style={styles.sectionListItemFooterText}>Tap to open</Text>
                     <MaterialIcons name="north-east" size={16} color="#166534" />
                   </View>
                 </TouchableOpacity>

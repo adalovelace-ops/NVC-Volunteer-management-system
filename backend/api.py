@@ -1,5 +1,6 @@
 import os
 import json
+import asyncio
 import threading
 import time
 from datetime import datetime, timezone
@@ -41,6 +42,7 @@ from .relational_mirror import (
     get_relational_items_by_field,
     upsert_relational_item,
 )
+import traceback
 
 
 load_dotenv()
@@ -91,9 +93,9 @@ class TTLCache:
 
 # Cache for projects snapshot.
 # A longer TTL avoids frequent cold rebuilds; cache is explicitly cleared on writes.
-_projects_snapshot_cache = TTLCache(ttl_seconds=45)
+_projects_snapshot_cache = TTLCache(ttl_seconds=300)  # Increased from 2 minutes to 5 minutes
 _projects_snapshot_lock = threading.Lock()
-_storage_collection_cache = TTLCache(ttl_seconds=20)
+_storage_collection_cache = TTLCache(ttl_seconds=120)  # Increased from 1 minute to 2 minutes
 _DEFAULT_SNAPSHOT_FIELDS = {
     "projects",
     "programTracks",
@@ -181,6 +183,7 @@ class PartnerProjectJoinRequestPayload(BaseModel):
 class PartnerProjectApplicationReviewPayload(BaseModel):
     status: str
     reviewedBy: str
+    reviewNotes: str | None = None
 
 
 # Request payload for reviewing a volunteer join request.
@@ -367,6 +370,11 @@ def _normalize_partner_proposal_details(
     }
 
 
+def _normalize_project_category(value: Any) -> str:
+    normalized = str(value or "").strip()
+    return normalized if normalized in {"Nutrition", "Education", "Livelihood", "Disaster"} else "Education"
+
+
 # Tracks active websocket clients for messages and shared storage updates.
 class ConnectionManager:
     # Initializes the in-memory websocket connection registries.
@@ -403,7 +411,7 @@ class ConnectionManager:
         stale: list[WebSocket] = []
         for socket in sockets:
             try:
-                await socket.send_json(payload)
+                await asyncio.wait_for(socket.send_json(payload), timeout=1)
             except Exception:
                 stale.append(socket)
         for socket in stale:
@@ -438,7 +446,7 @@ class ConnectionManager:
 
         for socket in sockets:
             try:
-                await socket.send_json(payload)
+                await asyncio.wait_for(socket.send_json(payload), timeout=1)
             except Exception:
                 stale.append(socket)
 
@@ -453,12 +461,26 @@ connection_manager = ConnectionManager()
 def ensure_message_storage() -> None:
     with get_connection() as connection:
         with connection.cursor() as cursor:
+            # First, try to drop and recreate the table if it has wrong schema in public schema
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_schema = 'public' AND table_name = 'messages' AND column_name IN ('topic', 'extension', 'private')
+            """)
+            has_wrong_schema = cursor.fetchone() is not None
+            
+            if has_wrong_schema:
+                _trace("[SCHEMA] Fixing corrupted messages table...")
+                try:
+                    cursor.execute("DROP TABLE public.messages CASCADE")
+                except:
+                    pass
+            
             cursor.execute(
                 """
-                create table if not exists messages (
+                create table if not exists public.messages (
                   id text primary key,
-                  sender_id text not null references users(users_id) on delete cascade,
-                  recipient_id text not null references users(users_id) on delete cascade,
+                  sender_id text not null,
+                  recipient_id text not null,
                   project_id text,
                   content text not null,
                   timestamp timestamptz not null,
@@ -466,6 +488,19 @@ def ensure_message_storage() -> None:
                   attachments text not null default '[]'
                 )
                 """
+            )
+            # Indexes for fast message lookups by participant and timestamp
+            cursor.execute(
+                "create index if not exists messages_sender_id_idx on public.messages (sender_id)"
+            )
+            cursor.execute(
+                "create index if not exists messages_recipient_id_idx on public.messages (recipient_id)"
+            )
+            cursor.execute(
+                "create index if not exists messages_timestamp_idx on public.messages (timestamp desc)"
+            )
+            cursor.execute(
+                "create index if not exists messages_read_recipient_idx on public.messages (recipient_id, read) where read = false"
             )
         connection.commit()
 
@@ -479,7 +514,7 @@ def ensure_project_group_message_storage() -> None:
                 create table if not exists project_group_messages (
                   id text primary key,
                   project_id text not null,
-                  sender_id text not null references users(users_id) on delete cascade,
+                  sender_id text not null references users(id) on delete cascade,
                   content text not null,
                   timestamp timestamptz not null,
                   kind text not null default 'message',
@@ -513,19 +548,33 @@ def ensure_project_group_message_storage() -> None:
             cursor.execute(
                 "update project_group_messages set kind = 'message' where kind is null"
             )
+            # Index for fast group message lookups by project
+            cursor.execute(
+                "create index if not exists pgm_project_id_timestamp_idx on project_group_messages (project_id, timestamp asc)"
+            )
         connection.commit()
 
 
 # Converts a database message row into the API shape returned to clients.
+def _parse_message_attachments(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
 def serialize_message_row(row: Any) -> dict[str, Any]:
     if row is None:
         raise HTTPException(status_code=404, detail="Message not found.")
 
-    attachments = row["attachments"]
-    if isinstance(attachments, str):
-        attachments = json.loads(attachments)
-    if attachments is None:
-        attachments = []
+    attachments = _parse_message_attachments(row["attachments"])
 
     return {
         "id": row.get("messages_id") or row.get("id"),
@@ -544,11 +593,7 @@ def serialize_project_group_message_row(row: Any) -> dict[str, Any]:
     if row is None:
         raise HTTPException(status_code=404, detail="Project group message not found.")
 
-    attachments = row["attachments"]
-    if isinstance(attachments, str):
-        attachments = json.loads(attachments)
-    if attachments is None:
-        attachments = []
+    attachments = _parse_message_attachments(row["attachments"])
     need_post = row.get("need_post")
     if isinstance(need_post, str):
         need_post = json.loads(need_post)
@@ -574,6 +619,10 @@ def serialize_project_group_message_row(row: Any) -> dict[str, Any]:
 
 SPECIAL_STORAGE_KEYS = {"messages", "projectGroupMessages"}
 
+# Define collection keys that return lists instead of single objects
+# This includes all HOT_STORAGE_TABLES and SPECIAL_STORAGE_KEYS
+COLLECTION_KEYS = set(HOT_STORAGE_TABLES.keys()) | SPECIAL_STORAGE_KEYS
+
 
 def _validate_storage_items(key: str, value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
@@ -596,9 +645,9 @@ def _get_special_storage_collection(connection: Any, key: str) -> list[dict[str,
         if key == "messages":
             cursor.execute(
                 """
-                select id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
-                from messages
-                order by timestamp asc, id asc
+                SELECT id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
+                FROM public.messages
+                ORDER BY timestamp ASC, id ASC
                 """
             )
             return [serialize_message_row(row) for row in cursor.fetchall()]
@@ -635,14 +684,14 @@ def _replace_special_storage_collection(connection: Any, key: str, value: Any) -
 
     with connection.cursor() as cursor:
         if key == "messages":
-            cursor.execute("delete from messages")
+            cursor.execute("DELETE FROM public.messages")
             for item in items:
                 cursor.execute(
                     """
-                    insert into messages (
+                    INSERT INTO public.messages (
                       id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
                     )
-                    values (%s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         item["id"],
@@ -703,7 +752,7 @@ def _clear_special_storage_collection(connection: Any, key: str) -> None:
     ensure_project_group_message_storage()
     with connection.cursor() as cursor:
         if key == "messages":
-            cursor.execute("delete from messages")
+            cursor.execute("DELETE FROM public.messages")
             return
         if key == "projectGroupMessages":
             cursor.execute("delete from project_group_messages")
@@ -730,28 +779,42 @@ def _get_project_chat_participant_user_ids(connection: Any, project_id: str) -> 
         if isinstance(volunteer_user_id, str) and volunteer_user_id:
             participant_user_ids.add(volunteer_user_id)
 
-    for volunteer_id in project.get("volunteers") or []:
-        if not isinstance(volunteer_id, str) or not volunteer_id:
-            continue
-        volunteer = _postgres_get_hot_item_by_id(connection, "volunteers", volunteer_id)
-        volunteer_user_id = volunteer.get("userId") if volunteer else None
-        if isinstance(volunteer_user_id, str) and volunteer_user_id:
-            participant_user_ids.add(volunteer_user_id)
+    # OPTIMIZED: Batch fetch all volunteers instead of N+1 queries
+    volunteer_ids = [
+        volunteer_id for volunteer_id in project.get("volunteers") or []
+        if isinstance(volunteer_id, str) and volunteer_id
+    ]
+    if volunteer_ids:
+        # Batch query all volunteers at once using the relational table
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT user_id FROM volunteers WHERE id = ANY(%s)",
+                (volunteer_ids,)
+            )
+            for row in cursor.fetchall():
+                volunteer_user_id = row[0] if row else None
+                if isinstance(volunteer_user_id, str) and volunteer_user_id:
+                    participant_user_ids.add(volunteer_user_id)
 
     approved_project_ids = {project_id}
     parent_project_id = project.get("parentProjectId")
     if isinstance(parent_project_id, str) and parent_project_id:
         approved_project_ids.add(parent_project_id)
 
-    applications = get_postgres_hot_storage_collection(connection, "partnerProjectApplications")
-    for application in applications:
-        if str(application.get("status") or "") != "Approved":
-            continue
-        if str(application.get("projectId") or "") not in approved_project_ids:
-            continue
-        partner_user_id = str(application.get("partnerUserId") or "")
-        if partner_user_id:
-            participant_user_ids.add(partner_user_id)
+    # OPTIMIZED: Filter applications in SQL instead of loading all
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT partner_user_id FROM partner_project_applications
+            WHERE status = 'Approved'
+            AND project_id = ANY(%s)
+            """,
+            (list(approved_project_ids),)
+        )
+        for row in cursor.fetchall():
+            partner_user_id = str(row[0] or "") if row else ""
+            if partner_user_id:
+                participant_user_ids.add(partner_user_id)
 
     return participant_user_ids
 
@@ -865,9 +928,13 @@ def _collection_cache_key(key: str) -> str:
 def _invalidate_collection_cache(keys: list[str] | set[str] | tuple[str, ...] | None = None) -> None:
     if keys is None:
         _storage_collection_cache.clear()
+        _admin_dashboard_cache.clear()
         return
     for key in keys:
         _storage_collection_cache.delete(_collection_cache_key(str(key)))
+    # Invalidate admin dashboard cache whenever any of its constituent keys change.
+    if any(k in _ADMIN_DASHBOARD_KEYS for k in keys):
+        _admin_dashboard_cache.delete(_ADMIN_DASHBOARD_CACHE_KEY)
 
 
 def _get_cached_collection(connection: Any, key: str) -> Any:
@@ -913,7 +980,10 @@ def _postgres_upsert_hot_item(connection: Any, key: str, item: dict[str, Any]) -
     try:
         result = upsert_relational_item(connection, key, item)
         _invalidate_collection_cache([key])
-        _projects_snapshot_cache.clear()
+        # Only clear snapshot cache for keys that affect the snapshot
+        if key in {"projects", "events", "volunteers", "programTracks", "statusUpdates", 
+                   "volunteerMatches", "volunteerProjectJoins", "partnerProjectApplications"}:
+            _projects_snapshot_cache.clear()
         return result
     except KeyError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -1322,7 +1392,6 @@ def _build_projects_snapshot(
     import sys
     import time as _time
     t0 = _time.perf_counter()
-    print(f"[DEBUG] _build_projects_snapshot START: user_id={user_id} role={role} fields={requested_fields}", flush=True)
     _trace(f"[TRACE] _build_projects_snapshot: starting optimized hot storage reads at {_time.perf_counter():.3f}")
 
     includes = requested_fields if requested_fields is not None else _DEFAULT_SNAPSHOT_FIELDS
@@ -1335,8 +1404,6 @@ def _build_projects_snapshot(
     include_partner_applications = "partnerApplications" in includes
     include_join_records = "volunteerJoinRecords" in includes
 
-    print(f"[DEBUG] include_projects={include_projects} include_status_updates={include_status_updates}", flush=True)
-
     raw_projects: list[dict[str, Any]] = []
     raw_events: list[dict[str, Any]] = []
     raw_status_updates: list[dict[str, Any]] = []
@@ -1345,50 +1412,36 @@ def _build_projects_snapshot(
 
     # CORE LOAD: Only fetch the collections requested by the screen.
     if include_projects or include_join_records:
-        print(f"[DEBUG] Fetching projects from database...", flush=True)
         try:
             raw_projects = _get_cached_collection(connection, "projects")
-            print(f"[DEBUG] Got {len(raw_projects) if raw_projects else 0} projects", flush=True)
         except Exception as e:
             print(f"[ERROR] Failed to fetch projects: {type(e).__name__}: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
             raw_projects = []
         
         try:
             raw_events = _get_cached_collection(connection, "events")
-            print(f"[DEBUG] Got {len(raw_events) if raw_events else 0} events", flush=True)
         except Exception as e:
             print(f"[ERROR] Failed to fetch events: {type(e).__name__}: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
             raw_events = []
+
     if include_status_updates:
         try:
             raw_status_updates = _get_cached_collection(connection, "statusUpdates")
-            print(f"[DEBUG] Got {len(raw_status_updates) if raw_status_updates else 0} statusUpdates", flush=True)
         except Exception as e:
             print(f"[ERROR] Failed to fetch statusUpdates: {type(e).__name__}: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
             raw_status_updates = []
+
     if include_program_tracks:
         try:
-            raw_program_tracks = get_postgres_hot_storage_collection(connection, "programTracks")
-            print(f"[DEBUG] Got {len(raw_program_tracks) if raw_program_tracks else 0} programTracks", flush=True)
+            raw_program_tracks = _get_cached_collection(connection, "programTracks")
         except Exception as e:
             print(f"[ERROR] Failed to fetch programTracks: {type(e).__name__}: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
             raw_program_tracks = []
             
         try:
-            raw_programs_table = get_postgres_hot_storage_collection(connection, "programs")
-            print(f"[DEBUG] Got {len(raw_programs_table) if raw_programs_table else 0} programs", flush=True)
+            raw_programs_table = _get_cached_collection(connection, "programs")
         except Exception as e:
             print(f"[ERROR] Failed to fetch programs: {type(e).__name__}: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
             raw_programs_table = []
         
         # Merge programs table into program tracks to support the new program creation workflow
@@ -1471,27 +1524,134 @@ def _build_projects_snapshot(
 
     if role == "partner" and include_partner_applications:
         snapshot["partnerApplications"] = _postgres_get_partner_project_applications_by_user(connection, user_id)
-    elif role == "admin" and include_partner_applications:
-        snapshot["partnerApplications"] = _sort_iso_desc(
-            get_postgres_hot_storage_collection(connection, "partnerProjectApplications"),
-            "requestedAt",
-        )
+    elif role == "admin":
+        if include_partner_applications:
+            snapshot["partnerApplications"] = _sort_iso_desc(
+                get_postgres_hot_storage_collection(connection, "partnerProjectApplications"),
+                "requestedAt",
+            )
+        # Admin users should see ALL volunteer join records for the mapping view
+        if include_join_records:
+            all_join_records = get_postgres_hot_storage_collection(connection, "volunteerProjectJoins")
+            snapshot["volunteerJoinRecords"] = _sort_iso_desc(
+                [
+                    record
+                    for record in all_join_records
+                    if record.get("projectId") in event_project_ids
+                ],
+                "joinedAt",
+            )
 
     return snapshot
+
+
+def _reconcile_event_volunteer_arrays(connection: Any) -> None:
+    """Backfill event.volunteers[] and event.joinedUserIds[] from volunteerProjectJoins.
+
+    This fixes events that have join records in volunteerProjectJoins but whose
+    volunteers/joinedUserIds arrays were never updated (e.g. seeded records or
+    records created via older code paths).
+    """
+    try:
+        join_records = get_postgres_hot_storage_collection(connection, "volunteerProjectJoins")
+        if not join_records:
+            return
+
+        # Build a map: projectId -> {volunteer_ids, user_ids}
+        from collections import defaultdict
+        project_volunteer_ids: dict[str, set] = defaultdict(set)
+        project_user_ids: dict[str, set] = defaultdict(set)
+        for record in join_records:
+            pid = str(record.get("projectId") or "").strip()
+            vid = str(record.get("volunteerId") or "").strip()
+            uid = str(record.get("volunteerUserId") or "").strip()
+            if pid and vid:
+                project_volunteer_ids[pid].add(vid)
+            if pid and uid:
+                project_user_ids[pid].add(uid)
+
+        changed_keys: list[str] = []
+        for storage_key in ("events", "projects"):
+            items = get_postgres_hot_storage_collection(connection, storage_key)
+            updated = False
+            for item in items:
+                if not bool(item.get("isEvent")):
+                    continue
+                pid = str(item.get("id") or "").strip()
+                if pid not in project_volunteer_ids:
+                    continue
+
+                existing_vids = set(item.get("volunteers") or [])
+                existing_uids = set(item.get("joinedUserIds") or [])
+                new_vids = project_volunteer_ids[pid]
+                new_uids = project_user_ids[pid]
+
+                if new_vids.issubset(existing_vids) and new_uids.issubset(existing_uids):
+                    continue  # already in sync
+
+                merged_vids = sorted(existing_vids | new_vids)
+                merged_uids = sorted(existing_uids | new_uids)
+                _postgres_upsert_hot_item(
+                    connection,
+                    storage_key,
+                    {**item, "volunteers": merged_vids, "joinedUserIds": merged_uids},
+                )
+                updated = True
+
+            if updated:
+                changed_keys.append(storage_key)
+
+        if changed_keys:
+            connection.commit()
+            _invalidate_collection_cache(changed_keys)
+            print(f"[OK] Reconciled event volunteer arrays for: {changed_keys}")
+        else:
+            print("[OK] Event volunteer arrays already in sync.")
+    except Exception as error:
+        print(f"[WARN] Event volunteer array reconciliation skipped: {type(error).__name__}: {error}")
+
 
 @app.on_event("startup")
 # Prepares storage tables when the FastAPI app starts.
 def startup() -> None:
-    # Initialize connection pool for better performance
-    init_postgres_pool()
+    # Keep startup non-blocking. Supabase schema maintenance can occasionally
+    # take longer than the browser request timeout, so do it after Uvicorn is
+    # already listening.
+    def _initialize_postgres_background() -> None:
+        try:
+            init_postgres_pool()
+        except Exception as error:
+            print(f"[WARN] Postgres pool initialization skipped: {error}")
 
-    try:
-        with get_connection() as connection:
-            ensure_volunteer_time_logs_table_shape(connection)
-            connection.commit()
-        print("[OK] Volunteer time logs schema ensured.")
-    except Exception as error:
-        print(f"[WARN] Volunteer time logs schema ensure skipped: {error}")
+        try:
+            with get_connection() as connection:
+                ensure_volunteer_time_logs_table_shape(connection)
+                connection.commit()
+            print("[OK] Volunteer time logs schema ensured.")
+        except Exception as error:
+            print(f"[WARN] Volunteer time logs schema ensure skipped: {error}")
+
+        # Ensure message tables and indexes exist at startup
+        try:
+            ensure_message_storage()
+            print("[OK] Message storage indexes ensured.")
+        except Exception as error:
+            print(f"[WARN] Message storage ensure skipped: {error}")
+
+        try:
+            ensure_project_group_message_storage()
+            print("[OK] Group message storage indexes ensured.")
+        except Exception as error:
+            print(f"[WARN] Group message storage ensure skipped: {error}")
+
+        # Reconcile event volunteer arrays from join records (fixes stale/seeded data)
+        try:
+            with get_connection() as connection:
+                _reconcile_event_volunteer_arrays(connection)
+        except Exception as error:
+            print(f"[WARN] Event volunteer reconciliation skipped: {error}")
+
+    threading.Thread(target=_initialize_postgres_background, daemon=True).start()
 
     # Auto-cleanup: Compress oversized base64 images to prevent slow API responses
     # TEMPORARILY DISABLED - was causing backend to hang on startup
@@ -1554,12 +1714,13 @@ def startup() -> None:
 
     # Run warmup in a background thread to avoid blocking server startup
     threading.Thread(target=_warm_projects_snapshot_cache, daemon=True).start()
+    print("[INFO] Cache warming enabled - warming projects snapshot in the background")
 
     # Always auto-seed demo data if database is empty (prevents "all zeros" after restart)
     # This uses direct SQL instead of the Python seed function which has connection pool issues
     def auto_seed_demo_data():
         try:
-            from auto_seed import auto_seed_if_empty
+            from .auto_seed import auto_seed_if_empty
             auto_seed_if_empty()
         except Exception as error:
             print(f"[WARN] Auto-seed skipped: {type(error).__name__}: {error}")
@@ -1604,21 +1765,8 @@ def health():
             },
         )
 
-    # Use cached probe status so health reflects real DB availability
-    # without forcing an expensive live diagnostic on every call.
-    available, error = get_postgres_status(force_refresh=False)
-    if not available:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "error",
-                "configured_mode": configured_mode,
-                "mode": "unavailable",
-                "detail": error or "Supabase Postgres is currently unavailable.",
-                "timestamp": timestamp,
-            },
-        )
-
+    # This endpoint is used by startup scripts and frontend readiness checks.
+    # Keep it process-local; /db-health performs the live database probe.
     return {
         "status": "ok",
         "configured_mode": configured_mode,
@@ -2045,7 +2193,7 @@ async def approve_user(user_id: str, payload: UserApprovalPayload, admin_id: str
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    insert into messages (
+                    insert into public.messages (
                       id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
                     )
                     values (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -2287,20 +2435,49 @@ def get_projects_snapshot(
     user_id: str | None = None,
     role: str | None = None,
     fields: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """Return the project snapshot used by web and native project screens."""
     try:
         _require_postgres()
 
-        with get_connection() as connection:
-            requested_fields = _normalize_snapshot_fields(fields)
-            snapshot = _build_projects_snapshot(connection, user_id, role, requested_fields)
-            snapshot["events"] = [
-                project
-                for project in snapshot.get("projects", [])
-                if bool(project.get("isEvent"))
+        requested_fields = _normalize_snapshot_fields(fields)
+
+        # Build a stable cache key from the request parameters
+        fields_key = ",".join(sorted(requested_fields)) if requested_fields else "*"
+        cache_key = f"snapshot:{user_id}:{role}:{fields_key}"
+
+        # Check the snapshot cache first (avoids DB round-trips on warm requests)
+        cached_snapshot = _projects_snapshot_cache.get(cache_key)
+        if cached_snapshot is not None:
+            snapshot = cached_snapshot
+        else:
+            with get_connection() as connection:
+                snapshot = _build_projects_snapshot(connection, user_id, role, requested_fields)
+            _projects_snapshot_cache.set(cache_key, snapshot)
+
+        # Apply pagination to projects if limit is specified
+        all_projects = snapshot.get("projects", [])
+        if limit is not None and limit > 0:
+            paginated_snapshot = dict(snapshot)
+            paginated_snapshot["projects"] = all_projects[offset:offset + limit]
+            paginated_snapshot["totalProjects"] = len(all_projects)
+            paginated_snapshot["hasMore"] = (offset + limit) < len(all_projects)
+            paginated_snapshot["events"] = [
+                p for p in paginated_snapshot["projects"] if bool(p.get("isEvent"))
             ]
-            return snapshot
+            return paginated_snapshot
+
+        result = dict(snapshot)
+        result["totalProjects"] = len(all_projects)
+        result["hasMore"] = False
+        result["events"] = [
+            project
+            for project in all_projects
+            if bool(project.get("isEvent"))
+        ]
+        return result
     except Exception as error:
         import sys
         import traceback
@@ -2318,6 +2495,8 @@ def get_projects_snapshot(
             "timeLogs": [],
             "partnerApplications": [],
             "volunteerJoinRecords": [],
+            "totalProjects": 0,
+            "hasMore": False,
         }
 
 
@@ -2521,6 +2700,7 @@ def get_partner_applications_by_user(partner_user_id: str) -> dict[str, Any]:
 async def request_partner_project_join(payload: PartnerProjectJoinRequestPayload) -> dict[str, Any]:
     _require_postgres()
     requested_program_module = str(payload.programModule or "").strip()
+    requested_project_id = str(payload.projectId or "").strip()
     proposal_project_id = (
         f"program:{requested_program_module}::{int(datetime.now(timezone.utc).timestamp() * 1000)}"
         if requested_program_module
@@ -2541,43 +2721,66 @@ async def request_partner_project_join(payload: PartnerProjectJoinRequestPayload
                 raise HTTPException(status_code=404, detail="Project not found.")
             target_project = project
 
-        if not requested_program_module:
-            existing_application = next(
-                (
-                    application
-                    for application in _postgres_get_partner_project_applications_by_user(
-                        connection,
-                        payload.partnerUserId,
-                    )
-                    if application.get("projectId") == proposal_project_id
-                ),
-                None,
-            )
-            if existing_application is not None:
-                existing_status = str(existing_application.get("status") or "").strip()
-                if existing_status == "Rejected":
-                    refreshed_application = {
-                        **existing_application,
-                        "projectId": proposal_project_id,
-                        "partnerUserId": payload.partnerUserId,
-                        "partnerName": payload.partnerName,
-                        "partnerEmail": payload.partnerEmail,
-                        "proposalDetails": _normalize_partner_proposal_details(
-                            payload.proposalDetails,
-                            requested_program_module,
-                            target_project,
-                        ),
-                        "status": "Pending",
-                        "requestedAt": datetime.now(timezone.utc).isoformat(),
-                        "reviewedAt": None,
-                        "reviewedBy": None,
-                    }
-                    _postgres_upsert_hot_item(connection, "partnerProjectApplications", refreshed_application)
-                    connection.commit()
-                    await connection_manager.broadcast_storage_event(["partnerProjectApplications"])
-                    return {"application": refreshed_application}
+        # Find any existing application for this partner+module combination.
+        # Match by exact projectId first, then fall back to matching by program module
+        # prefix so resubmissions after rejection always update the same record instead
+        # of creating a duplicate.
+        all_partner_applications = _postgres_get_partner_project_applications_by_user(
+            connection,
+            payload.partnerUserId,
+        )
 
-                return {"application": existing_application}
+        def _application_matches_module(app: dict[str, Any]) -> bool:
+            app_project_id = str(app.get("projectId") or "")
+            # Exact match on the timestamped ID the frontend may have stored
+            if app_project_id == requested_project_id:
+                return True
+            # Match by program module prefix: "program:<module>::<ts>" starts with "program:<module>"
+            if requested_program_module:
+                module_prefix = f"program:{requested_program_module}"
+                if app_project_id.startswith(module_prefix):
+                    return True
+                # Also check proposalDetails.requestedProgramModule
+                details = app.get("proposalDetails") or {}
+                if isinstance(details, dict):
+                    stored_module = str(details.get("requestedProgramModule") or "").strip()
+                    if stored_module and stored_module == requested_program_module:
+                        return True
+            return False
+
+        # Prefer the most recent matching application
+        matching_applications = [a for a in all_partner_applications if _application_matches_module(a)]
+        existing_application = (
+            sorted(matching_applications, key=lambda a: str(a.get("requestedAt") or ""), reverse=True)[0]
+            if matching_applications
+            else None
+        )
+        if existing_application is not None:
+            existing_status = str(existing_application.get("status") or "").strip()
+            if existing_status in {"Pending", "Rejected"}:
+                refreshed_application = {
+                    **existing_application,
+                    "projectId": str(existing_application.get("projectId") or proposal_project_id),
+                    "partnerUserId": payload.partnerUserId,
+                    "partnerName": payload.partnerName,
+                    "partnerEmail": payload.partnerEmail,
+                    "proposalDetails": _normalize_partner_proposal_details(
+                        payload.proposalDetails,
+                        requested_program_module,
+                        target_project,
+                    ),
+                    "status": "Pending",
+                    "requestedAt": datetime.now(timezone.utc).isoformat(),
+                    "reviewedAt": None if existing_status == "Rejected" else existing_application.get("reviewedAt"),
+                    "reviewedBy": None if existing_status == "Rejected" else existing_application.get("reviewedBy"),
+                    "reviewNotes": None,
+                }
+                _postgres_upsert_hot_item(connection, "partnerProjectApplications", refreshed_application)
+                connection.commit()
+                asyncio.create_task(connection_manager.broadcast_storage_event(["partnerProjectApplications"]))
+                return {"application": refreshed_application}
+
+            return {"application": existing_application}
 
         application = {
             "id": f"partner-application-{int(datetime.now(timezone.utc).timestamp() * 1000)}",
@@ -2595,12 +2798,13 @@ async def request_partner_project_join(payload: PartnerProjectJoinRequestPayload
         }
         _postgres_upsert_hot_item(connection, "partnerProjectApplications", application)
         connection.commit()
-    await connection_manager.broadcast_storage_event(["partnerProjectApplications"])
+    asyncio.create_task(connection_manager.broadcast_storage_event(["partnerProjectApplications"]))
     return {"application": application}
 
 
 @app.post("/partner-project-applications/{application_id}/review")
-# API endpoint that approves or rejects a partner join request.
+# API endpoint that approves or rejects a partner proposal/join request.
+# Approved partner program proposals automatically create a new project in the program management suite.
 async def review_partner_project_application(
     application_id: str, payload: PartnerProjectApplicationReviewPayload
 ) -> dict[str, Any]:
@@ -2612,18 +2816,47 @@ async def review_partner_project_application(
     reviewed_by = str(payload.reviewedBy or "").strip()
     if not reviewed_by:
         raise HTTPException(status_code=400, detail="A reviewer id is required.")
+    review_notes = str(payload.reviewNotes or "").strip()
 
     broadcast_keys = ["partnerProjectApplications"]
+    generated_project: dict[str, Any] | None = None
+    ensure_message_storage()
     with get_connection() as connection:
         application = _postgres_get_hot_item_by_id(connection, "partnerProjectApplications", application_id)
         if application is None:
             raise HTTPException(status_code=404, detail="Application not found.")
 
         next_project_id = str(application.get("projectId") or "")
-        should_create_program_project = next_status == "Approved" and next_project_id.startswith("program:")
+        raw_proposal_details = application.get("proposalDetails")
+        has_project_proposal_details = isinstance(raw_proposal_details, dict) and any(
+            str(raw_proposal_details.get(key) or "").strip()
+            for key in (
+                "proposedTitle",
+                "proposedDescription",
+                "proposedStartDate",
+                "proposedLocation",
+                "communityNeed",
+                "expectedDeliverables",
+            )
+        )
+        should_create_program_project = (
+            next_status == "Approved"
+            and not next_project_id.startswith("project-proposal-")
+            and (next_project_id.startswith("program:") or has_project_proposal_details)
+        )
 
         if should_create_program_project:
-            proposal_details = application.get("proposalDetails") or {}
+            fallback_project = None
+            if next_project_id and not next_project_id.startswith("program:"):
+                fallback_project, _fallback_project_storage_key = _postgres_get_project_like_item_by_id(
+                    connection,
+                    next_project_id,
+                )
+            proposal_details = _normalize_partner_proposal_details(
+                raw_proposal_details if isinstance(raw_proposal_details, dict) else {},
+                "",
+                fallback_project,
+            )
             fallback_program_module = next_project_id.split(":", 1)[1] if ":" in next_project_id else ""
             requested_program_module = str(
                 proposal_details.get("requestedProgramModule")
@@ -2686,15 +2919,15 @@ async def review_partner_project_application(
                 "statusMode": "System",
                 "manualStatus": None,
                 "status": "Planning",
-                "category": requested_program_module,
+                "category": _normalize_project_category(requested_program_module),
                 "startDate": generated_start_date,
                 "endDate": generated_end_date,
                 "location": {
-                    "latitude": 0,
-                    "longitude": 0,
+                    "latitude": None,
+                    "longitude": None,
                     "address": str(proposal_details.get("proposedLocation") or "").strip()
                     or str(proposal_details.get("targetProjectAddress") or "").strip()
-                    or "Program location to be finalized",
+                    or "Location to be finalized",
                 },
                 "volunteersNeeded": max(int(proposal_details.get("proposedVolunteersNeeded") or 0), 0),
                 "skillsNeeded": proposal_details.get("skillsNeeded") or [],
@@ -2712,19 +2945,67 @@ async def review_partner_project_application(
             next_project_id = created_project_id
             broadcast_keys.append("projects")
 
+        reviewed_at = datetime.now(timezone.utc).isoformat()
         updated_application = {
             **application,
             "projectId": next_project_id,
             "status": next_status,
-            "reviewedAt": datetime.now(timezone.utc).isoformat(),
+            "reviewedAt": reviewed_at,
             "reviewedBy": reviewed_by,
+            "reviewNotes": review_notes if next_status == "Rejected" else None,
         }
         _postgres_upsert_hot_item(connection, "partnerProjectApplications", updated_application)
 
-        connection.commit()
+        if next_status in {"Rejected", "Approved"}:
+            broadcast_keys.append("messages")
+            proposal_details = updated_application.get("proposalDetails")
+            if not isinstance(proposal_details, dict):
+                proposal_details = {}
+            returned_card = {
+                **proposal_details,
+                "status": next_status,
+                "proposedById": updated_application.get("partnerUserId"),
+                "proposedByName": updated_application.get("partnerName"),
+                "partnerEmail": updated_application.get("partnerEmail"),
+                "applicationId": updated_application.get("id"),
+                "projectId": updated_application.get("projectId"),
+                "reviewedBy": reviewed_by,
+                "reviewedAt": reviewed_at,
+                "reviewNotes": review_notes or None,
+                "timestamp": reviewed_at,
+            }
+            if next_status == "Approved" and generated_project is not None:
+                returned_card["approvedProjectTitle"] = str(generated_project.get("title") or "")
+                returned_card["approvedProjectId"] = next_project_id
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    insert into public.messages (
+                      id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s)
+                    on conflict (id) do nothing
+                    """,
+                    (
+                        f"review-card-{int(datetime.now(timezone.utc).timestamp() * 1000)}-{next_status.lower()}",
+                        reviewed_by,
+                        updated_application.get("partnerUserId"),
+                        None,
+                        f"___PROPOSAL_CARD___:{json.dumps(returned_card)}",
+                        reviewed_at,
+                        False,
+                        "[]",
+                    ),
+                )
 
-    await connection_manager.broadcast_storage_event(broadcast_keys)
-    return {"application": updated_application}
+        connection.commit()
+        _projects_snapshot_cache.clear()
+
+    asyncio.create_task(connection_manager.broadcast_storage_event(broadcast_keys))
+    response: dict[str, Any] = {"application": updated_application}
+    if generated_project is not None:
+        response["project"] = generated_project
+    return response
 
 
 @app.post("/volunteer-matches/{match_id}/review")
@@ -2841,7 +3122,7 @@ async def join_project(project_id: str, payload: ProjectJoinPayload) -> dict[str
 
 @app.get("/messages")
 # API endpoint that returns all direct messages for one user.
-def get_messages(user_id: str) -> dict[str, list[dict[str, Any]]]:
+def get_messages(user_id: str, limit: int = 500) -> dict[str, list[dict[str, Any]]]:
     ensure_message_storage()
     from psycopg.rows import dict_row
 
@@ -2852,52 +3133,69 @@ def get_messages(user_id: str) -> dict[str, list[dict[str, Any]]]:
             cursor.execute(
                 """
                 select id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
-                from messages
+                from public.messages
                 where sender_id = %s or recipient_id = %s
                 order by timestamp desc, id desc
+                limit %s
                 """,
-                (user_id, user_id),
+                (user_id, user_id, limit),
             )
             rows = cursor.fetchall()
 
-        if current_role:
-            visible_rows = []
-            for row in rows:
-                other_user_id = row["recipient_id"] if row["sender_id"] == user_id else row["sender_id"]
-                other_user = _get_user_by_id(other_user_id, connection)
-                other_role = str(other_user.get("role") or "") if other_user else ""
-                if _is_direct_message_pair_allowed(current_role, other_role):
-                    visible_rows.append(row)
-            rows = visible_rows
+        if current_role and rows:
+            # Batch-fetch all other-user IDs in one query instead of N+1 lookups
+            other_user_ids = list({
+                (row["recipient_id"] if row["sender_id"] == user_id else row["sender_id"])
+                for row in rows
+            })
+            with connection.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    "SELECT users_id AS id, role FROM users WHERE users_id = ANY(%s)",
+                    (other_user_ids,),
+                )
+                role_by_id = {r["id"]: str(r["role"] or "") for r in cursor.fetchall()}
+
+            rows = [
+                row for row in rows
+                if _is_direct_message_pair_allowed(
+                    current_role,
+                    role_by_id.get(
+                        row["recipient_id"] if row["sender_id"] == user_id else row["sender_id"],
+                        ""
+                    )
+                )
+            ]
     return {"messages": [serialize_message_row(row) for row in rows]}
 
 
 @app.get("/messages/conversation")
 # API endpoint that returns the direct-message history between two users.
-def get_conversation(user1: str, user2: str) -> dict[str, list[dict[str, Any]]]:
+def get_conversation(user1: str, user2: str, limit: int = 200) -> dict[str, list[dict[str, Any]]]:
     ensure_message_storage()
     from psycopg.rows import dict_row
 
     with get_connection() as connection:
         _assert_direct_message_access(connection, user1, user2)
         with connection.cursor(row_factory=dict_row) as cursor:
+            # Limit must be an integer literal, not parameterized
+            limit = max(1, min(limit, 10000))  # Clamp to reasonable range
             cursor.execute(
-                """
+                f"""
                 select id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
-                from messages
+                from public.messages
                 where (sender_id = %s and recipient_id = %s)
                    or (sender_id = %s and recipient_id = %s)
                 order by timestamp asc, id asc
+                limit {limit}
                 """,
                 (user1, user2, user2, user1),
             )
             rows = cursor.fetchall()
     return {"messages": [serialize_message_row(row) for row in rows]}
 
-
 @app.get("/projects/{project_id}/group-messages")
 # API endpoint that returns project group chat messages for an authorized user.
-def get_project_group_messages(project_id: str, user_id: str) -> dict[str, list[dict[str, Any]]]:
+def get_project_group_messages(project_id: str, user_id: str, limit: int = 200) -> dict[str, list[dict[str, Any]]]:
     ensure_project_group_message_storage()
     from psycopg.rows import dict_row
 
@@ -2914,6 +3212,7 @@ def get_project_group_messages(project_id: str, user_id: str) -> dict[str, list[
                   timestamp,
                   kind,
                   need_post,
+                  scope_proposal,
                   response_to_message_id,
                   response_action,
                   response_to_title,
@@ -2921,8 +3220,9 @@ def get_project_group_messages(project_id: str, user_id: str) -> dict[str, list[
                 from project_group_messages
                 where project_id = %s
                 order by timestamp asc, id asc
+                limit %s
                 """,
-                (project_id,),
+                (project_id, limit),
             )
             rows = cursor.fetchall()
     return {"messages": [serialize_project_group_message_row(row) for row in rows]}
@@ -2938,27 +3238,39 @@ async def create_message(payload: MessagePayload) -> dict[str, Any]:
     with get_connection() as connection:
         _assert_direct_message_access(connection, payload.senderId, payload.recipientId)
         with connection.cursor(row_factory=dict_row) as cursor:
+            # Check if message already exists
             cursor.execute(
-                """
-                insert into messages (
-                  id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
-                )
-                values (%s, %s, %s, %s, %s, %s, %s, %s)
-                returning id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
-                """,
-                (
-                    payload.id,
-                    payload.senderId,
-                    payload.recipientId,
-                    payload.projectId,
-                    payload.content,
-                    payload.timestamp,
-                    payload.read,
-                    json.dumps(attachments),
-                ),
+                "SELECT id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments FROM public.messages WHERE id = %s",
+                (payload.id,),
             )
             row = cursor.fetchone()
+            
+            # If new message, insert it
+            if row is None:
+                cursor.execute(
+                    """
+                    INSERT INTO public.messages (
+                      id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
+                    """,
+                    (
+                        payload.id,
+                        payload.senderId,
+                        payload.recipientId,
+                        payload.projectId,
+                        payload.content,
+                        payload.timestamp,
+                        payload.read,
+                        json.dumps(attachments),
+                    ),
+                )
+                row = cursor.fetchone()
+                _trace(f"[INSERT] Message {payload.id} inserted and committed")
+        # IMPORTANT: Commit happens when exiting 'with connection.cursor' block
         connection.commit()
+        _trace(f"[COMMIT] Message {payload.id} transaction committed")
 
     _invalidate_collection_cache(["messages"])
     message = serialize_message_row(row)
@@ -3103,7 +3415,7 @@ async def mark_message_read(message_id: str) -> dict[str, Any]:
         with connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute(
                 """
-                update messages
+                update public.messages
                 set read = true
                 where id = %s
                 returning id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
@@ -3234,6 +3546,59 @@ def get_storage_items_batch(payload: StorageBatchPayload) -> dict[str, dict[str,
         return {"items": {k: ([] if k in COLLECTION_KEYS else {}) for k in (payload.keys or [])}}
 
 
+# Keys returned by the admin dashboard snapshot endpoint.
+_ADMIN_DASHBOARD_KEYS = [
+    "users",
+    "projects",
+    "programs",
+    "programTracks",
+    "events",
+    "partners",
+    "volunteers",
+    "statusUpdates",
+    "adminPlanningCalendars",
+    "volunteerMatches",
+    "volunteerTimeLogs",
+    "volunteerProjectJoins",
+    "partnerProjectApplications",
+    "partnerReports",
+    "publishedImpactReports",
+]
+
+# Cache key for the admin dashboard snapshot.
+_ADMIN_DASHBOARD_CACHE_KEY = "admin:dashboard:snapshot"
+_admin_dashboard_cache = TTLCache(ttl_seconds=60)
+
+
+@app.get("/admin/dashboard-snapshot")
+# Optimized endpoint that returns all admin dashboard collections in a single DB round-trip.
+# Uses the shared collection cache so repeated calls are served from memory.
+def get_admin_dashboard_snapshot() -> dict[str, Any]:
+    """Return all collections needed by the admin dashboard in one request."""
+    try:
+        _require_postgres()
+
+        cached = _admin_dashboard_cache.get(_ADMIN_DASHBOARD_CACHE_KEY)
+        if cached is not None:
+            return cached
+
+        items: dict[str, Any] = {}
+        with get_connection() as connection:
+            for key in _ADMIN_DASHBOARD_KEYS:
+                try:
+                    items[key] = _get_cached_collection(connection, key)
+                except Exception as e:
+                    print(f"[WARN] admin dashboard: failed to fetch '{key}': {type(e).__name__}: {e}")
+                    items[key] = []
+
+        result = {"items": items}
+        _admin_dashboard_cache.set(_ADMIN_DASHBOARD_CACHE_KEY, result)
+        return result
+    except Exception as error:
+        print(f"[ERROR] Admin dashboard snapshot failed: {type(error).__name__}: {error}")
+        return {"items": {k: [] for k in _ADMIN_DASHBOARD_KEYS}}
+
+
 @app.put("/storage/{key}")
 # API endpoint that writes one storage key and broadcasts the change.
 async def put_storage_item(key: str, payload: StoragePayload) -> dict[str, str]:
@@ -3243,8 +3608,18 @@ async def put_storage_item(key: str, payload: StoragePayload) -> dict[str, str]:
             raise HTTPException(status_code=400, detail=f"Storage key '{key}' expects a list payload.")
 
         with get_connection() as connection:
-            replace_postgres_hot_storage_collection(connection, key, payload.value)
-            connection.commit()
+            try:
+                replace_postgres_hot_storage_collection(connection, key, payload.value)
+                connection.commit()
+            except Exception as e:
+                # Log full traceback for debugging storage write failures
+                print(f"[ERROR] put_storage_item failed for key={key}: {type(e).__name__}: {e}")
+                print(traceback.format_exc())
+                try:
+                    connection.rollback()
+                except Exception:
+                    pass
+                raise HTTPException(status_code=500, detail=f"Storage write failed for '{key}'")
         
         _invalidate_collection_cache([key])
         _projects_snapshot_cache.clear()

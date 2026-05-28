@@ -222,6 +222,18 @@ def build_demo_app_storage() -> dict[str, Any]:
                 "createdAt": now_iso,
                 "updatedAt": now_iso,
             },
+            {
+                "id": "Disaster",
+                "title": "Disaster",
+                "description": "Preparedness, relief, and recovery programs for affected communities.",
+                "icon": "warning",
+                "color": "#f97316",
+                "imageUrl": "",
+                "sortOrder": 40,
+                "isActive": True,
+                "createdAt": now_iso,
+                "updatedAt": now_iso,
+            },
         ],
         "projects": [
             {

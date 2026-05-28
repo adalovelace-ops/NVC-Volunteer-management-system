@@ -217,15 +217,6 @@ export default function ProfileScreen() {
 
   // Confirms logout before clearing the signed-in session.
   const handleLogout = () => {
-    if (Platform.OS === 'web') {
-      const confirmed =
-        typeof window !== 'undefined' ? window.confirm('Are you sure you want to logout?') : true;
-      if (confirmed) {
-        logout();
-      }
-      return;
-    }
-
     Alert.alert('Logout', 'Are you sure you want to logout?', [
       { text: 'Cancel', onPress: () => {} },
       {
@@ -580,28 +571,40 @@ export default function ProfileScreen() {
         </View>
       ) : null}
       <View style={styles.profileCard}>
+        <View style={styles.profileAccentBar} />
         <View style={styles.profileHero}>
-          <View style={styles.profileHeroIdentity}>
-            {profilePhotoUri ? (
-              <Image source={{ uri: profilePhotoUri }} style={styles.avatarImage} />
-            ) : (
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{initials}</Text>
+          <View style={styles.profileHeroTop}>
+            <View style={styles.profileHeroIdentity}>
+              {profilePhotoUri ? (
+                <Image source={{ uri: profilePhotoUri }} style={styles.avatarImage} />
+              ) : (
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{initials}</Text>
+                </View>
+              )}
+
+              <View style={styles.profileHeroCopy}>
+                <Text style={styles.name}>{user?.name ?? 'User'}</Text>
+                <Text style={styles.email}>{user?.email ?? user?.phone ?? 'No contact info'}</Text>
+                <View style={styles.roleBadge}>
+                  <Text style={styles.roleBadgeText}>
+                    {user?.role === 'volunteer'
+                      ? 'Volunteer'
+                      : user?.role === 'admin'
+                      ? 'Admin'
+                      : 'Partner'}
+                  </Text>
+                </View>
+                {user?.role === 'partner' && primaryPartnerProfile ? (
+                  <Text style={styles.subheading}>{primaryPartnerProfile.name}</Text>
+                ) : null}
               </View>
-            )}
-
-            <View style={styles.profileHeroCopy}>
-              <Text style={styles.name}>{user?.name ?? 'User'}</Text>
-              <Text style={styles.email}>{user?.email ?? user?.phone ?? 'No contact info'}</Text>
-              {user?.role === 'partner' && primaryPartnerProfile ? (
-                <Text style={styles.subheading}>{primaryPartnerProfile.name}</Text>
-              ) : null}
             </View>
-          </View>
 
-          <TouchableOpacity style={styles.editButton} onPress={openEditModal}>
-            <Text style={styles.editButtonText}>Edit Profile</Text>
-          </TouchableOpacity>
+            <TouchableOpacity style={styles.editButton} onPress={openEditModal}>
+              <Text style={styles.editButtonText}>Edit Profile</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {user?.role === 'volunteer' && volunteerProfile && isTopVolunteer && (
@@ -1052,10 +1055,38 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
     elevation: 2,
+    overflow: 'hidden',
+  },
+  profileAccentBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 8,
+    backgroundColor: '#16a34a',
   },
   profileHero: {
-    gap: 14,
     marginBottom: 14,
+  },
+  profileHeroTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  roleBadge: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    backgroundColor: '#dcfce7',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  roleBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#166534',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
   },
   profileHeroIdentity: {
     flexDirection: 'row',
@@ -1173,7 +1204,7 @@ const styles = StyleSheet.create({
   },
   statsContainer: {
     flexDirection: 'row',
-    gap: 10,
+    justifyContent: 'space-between',
     width: '100%',
     marginBottom: 16,
   },
@@ -1188,31 +1219,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   statNumber: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    color: '#4CAF50',
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#166534',
     textAlign: 'center',
   },
   statLabel: {
-    fontSize: 10,
-    color: '#666',
-    marginTop: 4,
-    lineHeight: 12,
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 6,
+    lineHeight: 16,
     textAlign: 'center',
   },
   infoContainer: {
     width: '100%',
     marginBottom: 16,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#f8faf7',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#d6f3dd',
     borderRadius: 18,
     padding: 16,
   },
   sectionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#134e4a',
     marginBottom: 12,
   },
   subsectionLabel: {

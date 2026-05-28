@@ -12,15 +12,17 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import {
-  getAllVolunteerProjectMatches,
-  getAllVolunteerTimeLogs,
-  getAllPartnerReports,
   getDashboardSnapshot,
-  getVolunteerCompletedProjectIds,
   subscribeToStorageChanges,
   clearStorageCache,
 } from '../models/storage';
-import type { Partner, PartnerProjectApplication, Project, Volunteer } from '../models/types';
+import type {
+  Partner,
+  PartnerProjectApplication,
+  Project,
+  Volunteer,
+  VolunteerProjectJoinRecord,
+} from '../models/types';
 import { useAuth } from '../contexts/AuthContext';
 import { navigateToAvailableRoute } from '../utils/navigation';
 import { getMappedProjects } from '../utils/projectMap';
@@ -82,6 +84,47 @@ function useStableProjects(projects: Project[]): Project[] {
   return prevProjectsRef.current;
 }
 
+function getVolunteerJoinedProjectIds(
+  volunteer: Volunteer,
+  projects: Project[],
+  joinRecords: VolunteerProjectJoinRecord[]
+): string[] {
+  const joinedProjectIds = new Set<string>(volunteer.pastProjects || []);
+
+  joinRecords
+    .filter(
+      record =>
+        record.volunteerId === volunteer.id ||
+        record.volunteerUserId === volunteer.userId
+    )
+    .forEach(record => {
+      if (record.projectId) {
+        joinedProjectIds.add(record.projectId);
+      }
+    });
+
+  projects.forEach(project => {
+    const isJoined =
+      (project.volunteers || []).includes(volunteer.id) ||
+      (project.joinedUserIds || []).includes(volunteer.userId) ||
+      (project.internalTasks || []).some(
+        task =>
+          task.assignedVolunteerId === volunteer.id ||
+          (task.assignedVolunteerIds || []).includes(volunteer.id)
+      );
+
+    if (isJoined) {
+      joinedProjectIds.add(project.id);
+    }
+  });
+
+  return Array.from(joinedProjectIds);
+}
+
+function formatJoinedCountLabel(count: number): string {
+  return `${count} event${count === 1 ? '' : 's'} joined`;
+}
+
 // Shows the latest dashboard metrics and shortcuts for the logged-in user.
 export default function DashboardScreen({ navigation }: any) {
   const { user, isAdmin, logout } = useAuth();
@@ -93,7 +136,11 @@ export default function DashboardScreen({ navigation }: any) {
       ? performance.now()
       : Date.now();
 
-  const [projectStats, setProjectStats] = useState({ total: 0, active: 0, completed: 0 });
+  const [dashboardProjectCounts, setDashboardProjectCounts] = useState({
+    allProjects: 0,
+    programs: 0,
+    events: 0,
+  });
   const [partnerStats, setPartnerStats] = useState({ total: 0, approved: 0, pending: 0 });
   const [userStats, setUserStats] = useState({ total: 0 });
   const [workflowStats, setWorkflowStats] = useState({
@@ -112,6 +159,9 @@ export default function DashboardScreen({ navigation }: any) {
   const [partnersData, setPartnersData] = useState<Partner[]>([]);
   const [partnerApplicationsData, setPartnerApplicationsData] = useState<PartnerProjectApplication[]>([]);
   const [volunteersData, setVolunteersData] = useState<Volunteer[]>([]);
+  const [volunteerJoinRecordsData, setVolunteerJoinRecordsData] = useState<
+    VolunteerProjectJoinRecord[]
+  >([]);
   const [volunteerCompletedProjectIdsByVolunteerId, setVolunteerCompletedProjectIdsByVolunteerId] =
     useState<Record<string, string[]>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -122,7 +172,7 @@ export default function DashboardScreen({ navigation }: any) {
   const loadDashboardData = React.useCallback(async () => {
     const startedAt = perfNow();
     try {
-      // Load snapshot first (essential UI data)
+      // Single batch load — getDashboardSnapshot fetches all keys in one request.
       const {
         projects,
         partners,
@@ -130,6 +180,13 @@ export default function DashboardScreen({ navigation }: any) {
         volunteers,
         statusUpdates,
         partnerProjectApplications,
+        volunteerTimeLogs,
+        volunteerMatches,
+        volunteerProjectJoins,
+        partnerReports,
+        programs,
+        programTracks,
+        events,
       } = await getDashboardSnapshot();
 
       setLoadError(null);
@@ -137,11 +194,14 @@ export default function DashboardScreen({ navigation }: any) {
       setPartnersData(partners);
       setPartnerApplicationsData(partnerProjectApplications || []);
       setVolunteersData(volunteers);
+      setVolunteerJoinRecordsData(volunteerProjectJoins || []);
 
-      setProjectStats({
-        total: projects.length,
-        active: projects.filter(p => getProjectDisplayStatus(p) === 'In Progress').length,
-        completed: projects.filter(p => getProjectDisplayStatus(p) === 'Completed').length,
+      setDashboardProjectCounts({
+        allProjects: projects.filter(
+          project => !(programs || []).some(program => program.id === project.id)
+        ).length,
+        programs: (programTracks || []).filter(track => track.isActive !== false).length || (programs || []).length,
+        events: (events || []).length || projects.filter(project => project.isEvent).length,
       });
 
       setPartnerStats({
@@ -162,48 +222,41 @@ export default function DashboardScreen({ navigation }: any) {
 
       setRecentUpdates(allUpdates.slice(0, 6));
 
-      // Defer heavy collections (time logs, partner reports, volunteer matches, and per-volunteer completed ids)
-      setTimeout(async () => {
-        try {
-          const [volunteerTimeLogs, partnerReports, volunteerMatches] = await Promise.all([
-            getAllVolunteerTimeLogs(),
-            getAllPartnerReports(),
-            getAllVolunteerProjectMatches(),
-          ]);
+      // Compute workflow stats from already-loaded data — no extra network calls needed.
+      const sortedTimeLogs = [...(volunteerTimeLogs || [])].sort(
+        (a, b) => new Date(b.timeIn).getTime() - new Date(a.timeIn).getTime()
+      );
+      setWorkflowStats({
+        inboundInquiries: partners.filter(p => p.status === 'Pending').length,
+        timeIns: sortedTimeLogs.length,
+        timeOuts: sortedTimeLogs.filter(log => Boolean(log.timeOut)).length,
+        pendingReports: (partnerReports || []).filter(report => report.status === 'Submitted').length,
+      });
 
-          setWorkflowStats({
-            inboundInquiries: partners.filter(p => p.status === 'Pending').length,
-            timeIns: volunteerTimeLogs.length,
-            timeOuts: volunteerTimeLogs.filter(log => Boolean(log.timeOut)).length,
-            pendingReports: partnerReports.filter(report => report.status === 'Submitted').length,
-          });
+      setPendingVolunteerJoinRequests(
+        (volunteerMatches || []).filter(match => match.status === 'Requested').length
+      );
 
-          setPendingVolunteerJoinRequests(
-            volunteerMatches.filter(match => match.status === 'Requested').length
-          );
+      const latestTimeInLog = sortedTimeLogs[0];
+      const latestTimeOutLog = sortedTimeLogs.find(log => Boolean(log.timeOut)) || null;
+      setTimeTrackingTarget({
+        latestTimeInProjectId: latestTimeInLog?.projectId,
+        latestTimeOutProjectId: latestTimeOutLog?.projectId,
+      });
 
-          const latestTimeInLog = volunteerTimeLogs[0];
-          const latestTimeOutLog = volunteerTimeLogs.find(log => Boolean(log.timeOut)) || null;
-          setTimeTrackingTarget({
-            latestTimeInProjectId: latestTimeInLog?.projectId,
-            latestTimeOutProjectId: latestTimeOutLog?.projectId,
-          });
+      // Count joined work per volunteer from joins, event rosters, task assignments,
+      // and older profile history without adding per-volunteer API calls.
+      const joinRecords = volunteerProjectJoins || [];
+      const completedByVolunteerId: Record<string, string[]> = {};
+      for (const volunteer of volunteers) {
+        completedByVolunteerId[volunteer.id] = getVolunteerJoinedProjectIds(
+          volunteer,
+          projects,
+          joinRecords
+        );
+      }
+      setVolunteerCompletedProjectIdsByVolunteerId(completedByVolunteerId);
 
-          const volunteerCompletedProjectEntries = await Promise.all(
-            volunteers.map(async volunteer => [
-              volunteer.id,
-              await getVolunteerCompletedProjectIds(volunteer.id),
-            ] as const)
-          );
-          setVolunteerCompletedProjectIdsByVolunteerId(
-            Object.fromEntries(volunteerCompletedProjectEntries)
-          );
-        } catch (err) {
-          // non-fatal; keep UI responsive
-          // eslint-disable-next-line no-console
-          console.warn('Deferred dashboard loads failed', err);
-        }
-      }, 50);
       const elapsedMs = perfNow() - startedAt;
       console.log(`[perf] DashboardScreen data ready in ${Math.round(elapsedMs)}ms`);
     } catch (error) {
@@ -216,7 +269,13 @@ export default function DashboardScreen({ navigation }: any) {
       setProjectsData([]);
       setPartnersData([]);
       setVolunteersData([]);
+      setVolunteerJoinRecordsData([]);
       setVolunteerCompletedProjectIdsByVolunteerId({});
+      setDashboardProjectCounts({
+        allProjects: 0,
+        programs: 0,
+        events: 0,
+      });
     }
   }, []);
 
@@ -245,6 +304,9 @@ export default function DashboardScreen({ navigation }: any) {
         [
           'users',
           'projects',
+          'programs',
+          'events',
+          'programTracks',
           'partners',
           'partnerProjectApplications',
           'volunteers',
@@ -263,14 +325,6 @@ export default function DashboardScreen({ navigation }: any) {
 
   // Confirms logout before clearing the current authenticated session.
   const handleLogout = async () => {
-    if (Platform.OS === 'web') {
-      const confirmed = typeof window !== 'undefined' ? window.confirm('Are you sure you want to logout?') : true;
-      if (confirmed) {
-        await logout();
-      }
-      return;
-    }
-
     Alert.alert('Logout', 'Are you sure you want to logout?', [
       { text: 'Cancel', onPress: () => {} },
       {
@@ -287,6 +341,8 @@ export default function DashboardScreen({ navigation }: any) {
     clearStorageCache([
       'users',
       'projects',
+      'programs',
+      'programTracks',
       'partners',
       'volunteers',
       'statusUpdates',
@@ -360,14 +416,28 @@ export default function DashboardScreen({ navigation }: any) {
       [...volunteersData]
         .sort((left, right) => left.name.localeCompare(right.name))
         .map(volunteer => {
+          const joinedEventIds = new Set(
+            volunteerJoinRecordsData
+              .filter(
+                record =>
+                  record.volunteerId === volunteer.id ||
+                  record.volunteerUserId === volunteer.userId
+              )
+              .map(record => record.projectId)
+          );
           const joinedEventProjectIds = projectsData
             .filter(
               project =>
                 project.isEvent &&
                 (
+                  joinedEventIds.has(project.id) ||
                   (project.joinedUserIds || []).includes(volunteer.userId) ||
-                  project.volunteers.includes(volunteer.id) ||
-                  (project.internalTasks || []).some(task => task.assignedVolunteerId === volunteer.id)
+                  (project.volunteers || []).includes(volunteer.id) ||
+                  (project.internalTasks || []).some(
+                    task =>
+                      task.assignedVolunteerId === volunteer.id ||
+                      (task.assignedVolunteerIds || []).includes(volunteer.id)
+                  )
                 )
             )
             .map(project => project.id);
@@ -378,7 +448,7 @@ export default function DashboardScreen({ navigation }: any) {
             projectIds: joinedEventProjectIds,
           };
         }),
-    [projectsData, volunteersData]
+    [projectsData, volunteerJoinRecordsData, volunteersData]
   );
 
   const partnerMapAccounts = useMemo(
@@ -644,6 +714,7 @@ export default function DashboardScreen({ navigation }: any) {
           {activeVolunteers.length ? (
             activeVolunteers.map(volunteer => {
               const progress = Math.min(100, Math.max(8, (volunteer.totalHoursContributed || 0) * 3));
+              const completedCount = (volunteerCompletedProjectIdsByVolunteerId[volunteer.id] || []).length;
               return (
                 <View key={volunteer.id} style={styles.volunteerRow}>
                   <View style={styles.volunteerAvatar}>
@@ -654,7 +725,7 @@ export default function DashboardScreen({ navigation }: any) {
                     <View style={styles.volunteerTrack}>
                       <View style={[styles.volunteerFill, { width: `${progress}%` }]} />
                     </View>
-                    <Text style={styles.volunteerMeta}>{(volunteer.pastProjects || []).length} projects joined</Text>
+                    <Text style={styles.volunteerMeta}>{formatJoinedCountLabel(completedCount)}</Text>
                   </View>
                 </View>
               );
@@ -681,8 +752,9 @@ export default function DashboardScreen({ navigation }: any) {
               <Text style={styles.statNumber}>{pendingVolunteerJoinRequests}</Text>
             </View>
           ) : null}
-          <View style={styles.statLine}><Text style={styles.statKey}>Upcoming Projects</Text><Text style={styles.statNumber}>{upcomingProjects.length}</Text></View>
-          <View style={[styles.statLine, styles.statLineLast]}><Text style={styles.statKey}>Total Projects</Text><Text style={styles.statNumber}>{projectStats.total}</Text></View>
+          <View style={styles.statLine}><Text style={styles.statKey}>All Projects</Text><Text style={styles.statNumber}>{dashboardProjectCounts.allProjects}</Text></View>
+          <View style={styles.statLine}><Text style={styles.statKey}>Program Count</Text><Text style={styles.statNumber}>{dashboardProjectCounts.programs}</Text></View>
+          <View style={[styles.statLine, styles.statLineLast]}><Text style={styles.statKey}>Event Count</Text><Text style={styles.statNumber}>{dashboardProjectCounts.events}</Text></View>
         </View>
 
         <View style={styles.newsCard}>
@@ -712,7 +784,7 @@ export default function DashboardScreen({ navigation }: any) {
       </View>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>NVC CONNECT v1.0</Text>
+        <Text style={styles.footerText}>NVC v1.0</Text>
       </View>
     </ScrollView>
   );
@@ -740,8 +812,8 @@ const styles = StyleSheet.create({
     backgroundColor: green.card,
     borderBottomWidth: 1,
     borderBottomColor: green.cardBorder,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   userSection: {
     flexDirection: 'row',
@@ -759,34 +831,34 @@ const styles = StyleSheet.create({
     flexBasis: '100%',
   },
   avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: green.strong,
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarCompact: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
   },
   avatarText: {
     color: '#fff',
     fontWeight: '700',
-    fontSize: 18,
+    fontSize: 15,
   },
   greetingCompact: {
     fontSize: 14,
   },
   greeting: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: green.ink,
   },
   role: {
-    marginTop: 2,
-    fontSize: 12,
+    marginTop: 1,
+    fontSize: 11,
     color: green.muted,
   },
   headerActions: {
@@ -827,15 +899,15 @@ const styles = StyleSheet.create({
   },
   topGrid: {
     flexDirection: 'row',
-    paddingHorizontal: 14,
-    paddingTop: 14,
-    gap: 14,
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    gap: 10,
   },
   bottomGrid: {
     flexDirection: 'row',
-    paddingHorizontal: 14,
-    paddingTop: 14,
-    gap: 14,
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    gap: 10,
     alignItems: 'stretch',
   },
   stackGrid: {
@@ -846,93 +918,93 @@ const styles = StyleSheet.create({
     backgroundColor: green.card,
     borderWidth: 1,
     borderColor: green.cardBorder,
-    borderRadius: 14,
-    padding: 12,
-    minHeight: Platform.OS === 'web' ? undefined : 420,
+    borderRadius: 12,
+    padding: 8,
+    minHeight: Platform.OS === 'web' ? undefined : 300,
   },
   cardHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
     gap: 8,
   },
   cardTitle: {
-    fontSize: 17,
+    fontSize: 13,
     fontWeight: '700',
     color: green.ink,
   },
   cardMeta: {
-    fontSize: 11,
+    fontSize: 10,
     color: green.muted,
     fontWeight: '600',
   },
   mapFallback: {
-    minHeight: 220,
+    minHeight: 180,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#d9e7dc',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 6,
     backgroundColor: '#f8fcf8',
   },
   mapFallbackText: {
     color: green.muted,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
   },
   calendarCard: {
     flex: 1.2,
-    borderRadius: 14,
+    borderRadius: 12,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#bde0c6',
     flexDirection: 'row',
-    minHeight: Platform.OS === 'web' ? 320 : 280,
+    minHeight: Platform.OS === 'web' ? 220 : 190,
   },
   upcomingPane: {
-    width: '40%',
+    width: '38%',
     backgroundColor: green.strong,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
   },
   upcomingTitle: {
     color: '#f1fff4',
-    fontSize: 17,
+    fontSize: 13,
     fontWeight: '700',
-    marginBottom: 8,
+    marginBottom: 4,
   },
   upcomingRow: {
-    paddingVertical: 8,
-    borderBottomWidth: 1,
+    paddingVertical: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: 'rgba(255,255,255,0.25)',
   },
   upcomingName: {
     color: '#f7fff8',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
   },
   upcomingCategory: {
-    marginTop: 2,
+    marginTop: 1,
     color: '#e4f5d9',
-    fontSize: 11,
+    fontSize: 10,
   },
   upcomingDate: {
-    marginTop: 2,
+    marginTop: 1,
     color: '#d6f8de',
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
   },
   upcomingEmpty: {
-    marginTop: 10,
+    marginTop: 8,
     color: '#d9f7df',
-    fontSize: 12,
+    fontSize: 11,
   },
   monthPane: {
     flex: 1,
     backgroundColor: green.card,
-    padding: 12,
+    padding: 8,
   },
   monthTopRow: {
     flexDirection: 'row',
@@ -940,41 +1012,41 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   todayLabel: {
-    fontSize: 30,
-    lineHeight: 32,
+    fontSize: 18,
+    lineHeight: 20,
     fontWeight: '400',
     color: green.ink,
   },
   todayDate: {
-    marginTop: 2,
-    fontSize: 13,
+    marginTop: 1,
+    fontSize: 11,
     color: green.ink,
     fontWeight: '700',
   },
   yearLabel: {
-    fontSize: 36,
-    lineHeight: 38,
+    fontSize: 18,
+    lineHeight: 20,
     fontWeight: '400',
     color: green.ink,
   },
   monthHeading: {
-    marginTop: 8,
-    marginBottom: 8,
+    marginTop: 4,
+    marginBottom: 4,
     textAlign: 'center',
     color: green.muted,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   weekLabelRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   weekLabel: {
     width: '14.28%',
     textAlign: 'center',
     color: '#7a9181',
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
   },
   calendarGrid: {
@@ -983,10 +1055,10 @@ const styles = StyleSheet.create({
   },
   dayCell: {
     width: '14.28%',
-    aspectRatio: 1,
+    aspectRatio: 1.2,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 7,
+    borderRadius: 4,
   },
   dayCellEmpty: {
     backgroundColor: 'transparent',
@@ -999,7 +1071,7 @@ const styles = StyleSheet.create({
     borderColor: green.strong,
   },
   dayText: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#647f6c',
     fontWeight: '600',
   },
@@ -1013,28 +1085,28 @@ const styles = StyleSheet.create({
   cardBase: {
     flex: 1,
     backgroundColor: green.card,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: green.cardBorder,
-    padding: 12,
-    minHeight: 250,
+    padding: 8,
+    minHeight: 160,
   },
   volunteerRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginBottom: 12,
+    gap: 6,
+    marginBottom: 6,
   },
   volunteerAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: '#dff2e2',
     alignItems: 'center',
     justifyContent: 'center',
   },
   volunteerAvatarText: {
     color: green.strongDark,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   volunteerBody: {
@@ -1042,12 +1114,12 @@ const styles = StyleSheet.create({
   },
   volunteerName: {
     color: green.ink,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   volunteerTrack: {
-    marginTop: 6,
-    height: 4,
+    marginTop: 3,
+    height: 2,
     borderRadius: 999,
     overflow: 'hidden',
     backgroundColor: '#dbe9df',
@@ -1058,105 +1130,105 @@ const styles = StyleSheet.create({
     backgroundColor: green.strong,
   },
   volunteerMeta: {
-    marginTop: 4,
-    fontSize: 10,
+    marginTop: 2,
+    fontSize: 9,
     color: green.muted,
   },
   messagesCard: {
     flex: 0.75,
     backgroundColor: green.strong,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: green.strongDark,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 250,
-    padding: 12,
+    minHeight: 140,
+    padding: 8,
   },
   messagesValue: {
-    marginTop: 6,
-    fontSize: 40,
-    lineHeight: 44,
+    marginTop: 2,
+    fontSize: 26,
+    lineHeight: 30,
     color: '#effff2',
     fontWeight: '700',
   },
   messagesTitle: {
-    marginTop: 4,
-    fontSize: 13,
+    marginTop: 2,
+    fontSize: 12,
     color: '#f1fff4',
     fontWeight: '700',
   },
   messagesSub: {
-    marginTop: 2,
+    marginTop: 1,
     color: '#d9f5df',
-    fontSize: 11,
+    fontSize: 10,
   },
   statisticsCard: {
     flex: 0.85,
     backgroundColor: '#dff3e3',
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#b5dcbf',
-    minHeight: 250,
-    padding: 12,
+    minHeight: 140,
+    padding: 8,
   },
   statisticsTitle: {
     textAlign: 'center',
-    fontSize: 21,
+    fontSize: 13,
     fontWeight: '700',
     color: green.ink,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   statLine: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: 'rgba(32,58,42,0.12)',
-    paddingVertical: 9,
+    paddingVertical: 5,
   },
   statLineLast: {
     borderBottomWidth: 0,
   },
   statKey: {
     color: '#315844',
-    fontSize: 12,
+    fontSize: 11,
   },
   statNumber: {
     color: '#1f3f2d',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   newsCard: {
     flex: 1.4,
     backgroundColor: green.strong,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: green.strongDark,
-    minHeight: 250,
-    padding: 12,
+    minHeight: 140,
+    padding: 8,
   },
   newsTitle: {
     textAlign: 'center',
     color: '#f4fff6',
-    fontSize: 22,
+    fontSize: 13,
     fontWeight: '700',
-    marginBottom: 8,
+    marginBottom: 4,
   },
   newsRow: {
     flexDirection: 'row',
-    gap: 10,
-    paddingVertical: 9,
-    borderBottomWidth: 1,
+    gap: 6,
+    paddingVertical: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: 'rgba(255,255,255,0.24)',
   },
   newsRowLast: {
     borderBottomWidth: 0,
   },
   newsThumb: {
-    width: 58,
-    height: 38,
-    borderRadius: 6,
+    width: 36,
+    height: 28,
+    borderRadius: 5,
     backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1166,33 +1238,33 @@ const styles = StyleSheet.create({
   },
   newsDate: {
     color: '#d7f2dd',
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
   },
   newsProject: {
     marginTop: 1,
     color: '#f4fff6',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
   },
   newsBody: {
-    marginTop: 2,
+    marginTop: 1,
     color: '#e9f8eb',
-    fontSize: 11,
-    lineHeight: 15,
+    fontSize: 10,
+    lineHeight: 13,
   },
   newsEmpty: {
     color: '#d7f2dd',
-    fontSize: 12,
-    marginTop: 8,
+    fontSize: 11,
+    marginTop: 6,
   },
   footer: {
-    paddingTop: 18,
-    paddingBottom: 20,
+    paddingTop: 8,
+    paddingBottom: 10,
     alignItems: 'center',
   },
   footerText: {
-    fontSize: 12,
+    fontSize: 10,
     color: '#7f9987',
   },
 });

@@ -118,7 +118,11 @@ export default function PartnerProgramManagementScreen() {
   }, [partnerApplications]);
 
   const handleOpenProposal = (module: AdvocacyFocus) => {
-    navigation.navigate('Dashboard', { openProposalModule: module });
+    navigation.navigate('Messages', {
+      newProposalModule: module,
+      newProposalProjectId: buildProgramProposalProjectId(module),
+      newProposalTitle: `${module} Project Proposal`,
+    });
   };
 
   if (loading) {

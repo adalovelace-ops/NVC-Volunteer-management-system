@@ -7,10 +7,13 @@ import {
   getProjectsScreenSnapshot,
   getAllVolunteers,
   getAllVolunteerTimeLogs,
+  getAllVolunteerProjectJoinRecords,
   submitFieldReport,
   getImpactHubReportsByUser,
   submitImpactHubReport,
+  reviewPartnerReport,
   subscribeToStorageChanges,
+  savePartnerReport,
 } from '../models/storage';
 import type {
   ImpactHubReportType,
@@ -19,6 +22,7 @@ import type {
   Project,
   Volunteer,
   UserRole,
+  VolunteerProjectJoinRecord,
   VolunteerTimeLog,
 } from '../models/types';
 import ReportUploadModal from '../components/ReportUploadModal';
@@ -42,6 +46,7 @@ export interface SubmittedReport {
   category?: string;
   metrics: {
     volunteerHours?: number;
+    volunteerEventJoins?: number;
     verifiedAttendance?: number;
     activeVolunteers?: number;
     beneficiariesServed?: number;
@@ -72,7 +77,7 @@ export interface PartnerVolunteerAccountSummary {
   key: string;
   submitterName: string;
   reports: SubmittedReport[];
-  volunteerHours: number;
+  volunteerEventJoins: number;
   verifiedAttendance: number;
   beneficiariesServed: number;
   latestActivityAt?: string;
@@ -88,11 +93,55 @@ export interface PartnerProjectReportSummary {
   generatedDescription: string;
 }
 
+function friendlyEventFallbackTitle(projectId: string | undefined, isEvent: boolean): string {
+  if (!projectId) return 'Unlinked Activity';
+
+  // Try to extract a readable name from structured IDs
+  // e.g. "project-sample-nutrition-event-1" → "Nutrition Event"
+  const sampleMatch = projectId.match(/project-sample-(\w+)-event/);
+  if (sampleMatch) {
+    const word = sampleMatch[1];
+    return `${word.charAt(0).toUpperCase()}${word.slice(1)} Event`;
+  }
+
+  if (isEvent) {
+    return `Unlisted Event (${projectId})`;
+  }
+
+  return `Unlisted Project (${projectId})`;
+}
+
 function normalizeImpactHubReport(
   report: PartnerReport,
   projects: Project[]
 ): SubmittedReport {
   const linkedProject = projects.find(project => project.id === report.projectId);
+
+  const isEvent = linkedProject
+    ? Boolean(linkedProject.isEvent)
+    : Boolean(
+        report.projectId?.startsWith('event-') ||
+        report.projectId?.includes('-event-') ||
+        report.submitterRole === 'volunteer' ||
+        report.reportType === 'field_report'
+      );
+
+  const rawMetrics = report.metrics || {};
+  const metrics: Record<string, number> = {};
+  for (const [key, val] of Object.entries(rawMetrics)) {
+    const numVal = typeof val === 'number' ? val : Number(val) || 0;
+    if (key === 'beneficiaries' || key === 'beneficiaries_served' || key === 'beneficiariesServed') {
+      metrics.beneficiariesServed = numVal;
+    } else if (key === 'volunteer_hours' || key === 'volunteerHours') {
+      metrics.volunteerHours = numVal;
+    } else if (key === 'tasks_completed' || key === 'tasksCompleted') {
+      metrics.tasksCompleted = numVal;
+    } else if (key === 'volunteer_event_joins' || key === 'volunteerEventJoins') {
+      metrics.volunteerEventJoins = numVal;
+    } else {
+      metrics[key] = numVal;
+    }
+  }
 
   return {
     id: report.id,
@@ -103,10 +152,10 @@ function normalizeImpactHubReport(
     title: report.title || `${report.submitterName || report.partnerName || 'User'} Report`,
     description: report.description || '',
     projectId: report.projectId,
-    projectTitle: linkedProject?.title,
-    projectKind: linkedProject?.isEvent ? 'event' : linkedProject ? 'project' : undefined,
+    projectTitle: linkedProject?.title || friendlyEventFallbackTitle(report.projectId, isEvent),
+    projectKind: isEvent ? 'event' : 'project',
     category: linkedProject?.category,
-    metrics: report.metrics || {},
+    metrics,
     attachments: report.attachments || [],
     mediaFile: report.mediaFile,
     status:
@@ -126,18 +175,8 @@ function normalizeImpactHubReport(
   };
 }
 
-function getCompletedVolunteerHours(log: VolunteerTimeLog): number {
-  if (!log.timeIn || !log.timeOut) {
-    return 0;
-  }
-
-  const start = new Date(log.timeIn).getTime();
-  const end = new Date(log.timeOut).getTime();
-  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
-    return 0;
-  }
-
-  return (end - start) / 3_600_000;
+function shouldDisplayReport(report: SubmittedReport): boolean {
+  return report.status !== 'Rejected';
 }
 
 function isVolunteerAssignedToTask(
@@ -181,7 +220,7 @@ function buildPartnerGeneratedDescription(
     `Project Description: ${project.description || 'No project description yet.'}`,
     `Accepted Project Selected: ${project.title}`,
     `Linked Events: ${linkedEvents.length}`,
-    `Volunteer Hours from completed time in and time out: ${formatMetricNumber(metrics.volunteerHours, ' hours')}`,
+    `Volunteer Event Joins: ${formatMetricNumber(metrics.volunteerEventJoins ?? metrics.volunteerHours)}`,
     `Verified Attendance from completed time logs: ${formatMetricNumber(metrics.verifiedAttendance)}`,
     `Active Volunteers: ${formatMetricNumber(metrics.activeVolunteers)}`,
     `Beneficiaries Served from volunteer reports: ${formatMetricNumber(metrics.beneficiariesServed)}`,
@@ -195,7 +234,8 @@ function buildPartnerProjectSummaries(
   reports: SubmittedReport[],
   volunteers: Volunteer[],
   partnerApplications: PartnerProjectApplication[],
-  volunteerTimeLogs: VolunteerTimeLog[]
+  volunteerTimeLogs: VolunteerTimeLog[],
+  volunteerJoinRecords: VolunteerProjectJoinRecord[]
 ): PartnerProjectReportSummary[] {
   if (!partnerUserId) {
     return [];
@@ -211,10 +251,38 @@ function buildPartnerProjectSummaries(
       )
       .map(application => application.projectId)
   );
+
+  // Also collect approved program modules so we can match projects by programModule
+  // when the application projectId is still a 'program:' placeholder (stale cache).
+  const approvedProgramModules = new Set(
+    partnerApplications
+      .filter(application => application.status === 'Approved')
+      .map(application => {
+        const pid = String(application.projectId || '');
+        if (pid.startsWith('program:')) {
+          return pid.slice('program:'.length).trim();
+        }
+        return (
+          application.proposalDetails?.requestedProgramModule ||
+          ''
+        );
+      })
+      .filter(Boolean)
+  );
+
   const volunteerById = new Map(volunteers.map(volunteer => [volunteer.id, volunteer]));
 
   return projects
-    .filter(project => !project.isEvent && approvedProjectIds.has(project.id))
+    .filter(project => {
+      if (project.isEvent) return false;
+      // Match by direct project ID (normal case after approval)
+      if (approvedProjectIds.has(project.id)) return true;
+      // Match by programModule (fallback when cache has stale program: IDs)
+      if (project.programModule && approvedProgramModules.has(project.programModule)) return true;
+      // Match proposal-created projects by ID prefix
+      if (String(project.id).startsWith('project-proposal-') && approvedProgramModules.has(project.category || '')) return true;
+      return false;
+    })
     .map(project => {
       const linkedEvents = projects.filter(
         candidate => candidate.isEvent && candidate.parentProjectId === project.id
@@ -223,6 +291,7 @@ function buildPartnerProjectSummaries(
       const partnerReports = reports
         .filter(
           report =>
+            shouldDisplayReport(report) &&
             report.submitterRole === 'partner' &&
             report.submittedBy === partnerUserId &&
             report.projectId === project.id
@@ -234,6 +303,7 @@ function buildPartnerProjectSummaries(
       const volunteerReports = reports
         .filter(
           report =>
+            shouldDisplayReport(report) &&
             report.submitterRole === 'volunteer' &&
             linkedEventIds.has(String(report.projectId || ''))
         )
@@ -243,6 +313,9 @@ function buildPartnerProjectSummaries(
         );
       const relatedCompletedLogs = volunteerTimeLogs.filter(
         log => linkedEventIds.has(log.projectId) && Boolean(log.timeOut)
+      );
+      const relatedEventJoinRecords = volunteerJoinRecords.filter(record =>
+        linkedEventIds.has(record.projectId)
       );
 
       const volunteerAccountsMap = new Map<string, PartnerVolunteerAccountSummary>();
@@ -257,7 +330,7 @@ function buildPartnerProjectSummaries(
           key,
           submitterName,
           reports: [],
-          volunteerHours: 0,
+          volunteerEventJoins: 0,
           verifiedAttendance: 0,
           beneficiariesServed: 0,
         };
@@ -265,11 +338,30 @@ function buildPartnerProjectSummaries(
         return created;
       };
 
+      relatedEventJoinRecords.forEach(record => {
+        const volunteer = volunteerById.get(record.volunteerId);
+        const accountKey =
+          record.volunteerUserId ||
+          volunteer?.userId ||
+          `volunteer:${record.volunteerId || record.id}`;
+        const account = ensureVolunteerAccount(
+          accountKey,
+          record.volunteerName || volunteer?.name || 'Volunteer'
+        );
+        account.volunteerEventJoins += 1;
+        if (
+          record.joinedAt &&
+          (!account.latestActivityAt ||
+            new Date(record.joinedAt).getTime() > new Date(account.latestActivityAt).getTime())
+        ) {
+          account.latestActivityAt = record.joinedAt;
+        }
+      });
+
       relatedCompletedLogs.forEach(log => {
         const volunteer = volunteerById.get(log.volunteerId);
         const accountKey = volunteer?.userId || `volunteer:${log.volunteerId}`;
         const account = ensureVolunteerAccount(accountKey, volunteer?.name || 'Volunteer');
-        account.volunteerHours += getCompletedVolunteerHours(log);
         account.verifiedAttendance += 1;
         const latestLogTime = log.timeOut || log.timeIn;
         if (
@@ -297,7 +389,6 @@ function buildPartnerProjectSummaries(
       const volunteerAccounts = Array.from(volunteerAccountsMap.values())
         .map(account => ({
           ...account,
-          volunteerHours: Number(account.volunteerHours.toFixed(1)),
           reports: [...account.reports].sort(
             (left, right) =>
               new Date(right.submittedAt).getTime() - new Date(left.submittedAt).getTime()
@@ -311,11 +402,7 @@ function buildPartnerProjectSummaries(
 
       const metrics: SubmittedReport['metrics'] = {
         activeVolunteers: volunteerAccounts.length,
-        volunteerHours: Number(
-          relatedCompletedLogs
-            .reduce((sum, log) => sum + getCompletedVolunteerHours(log), 0)
-            .toFixed(1)
-        ),
+        volunteerEventJoins: relatedEventJoinRecords.length,
         verifiedAttendance: relatedCompletedLogs.length,
         beneficiariesServed: volunteerReports.reduce(
           (sum, report) => sum + (report.metrics.beneficiariesServed || 0),
@@ -368,6 +455,7 @@ export default function ReportsScreen({ navigation, route }: any) {
   const [volunteerProfileId, setVolunteerProfileId] = useState<string | null>(null);
   const [volunteerTimedInProjectIds, setVolunteerTimedInProjectIds] = useState<string[]>([]);
   const [volunteerTimeLogs, setVolunteerTimeLogs] = useState<VolunteerTimeLog[]>([]);
+  const [volunteerJoinRecords, setVolunteerJoinRecords] = useState<VolunteerProjectJoinRecord[]>([]);
   const reportsLoadInFlightRef = useRef<Promise<void> | null>(null);
   const reportsReloadQueuedRef = useRef(false);
   const hasLoadedReportsRef = useRef(false);
@@ -378,11 +466,13 @@ export default function ReportsScreen({ navigation, route }: any) {
         'projects',
         'timeLogs',
         'volunteerProfile',
+        'volunteerProjectJoins',
       ]);
       setProjects(snapshot.projects);
       setPartnerApplications([]);
       setVolunteerProfileId(snapshot.volunteerProfile?.id || null);
       setVolunteerTimeLogs(snapshot.timeLogs);
+      setVolunteerJoinRecords(snapshot.volunteerJoinRecords || []);
       setVolunteerTimedInProjectIds(
         Array.from(
           new Set(
@@ -402,12 +492,14 @@ export default function ReportsScreen({ navigation, route }: any) {
       setPartnerApplications(snapshot.partnerApplications || []);
       setVolunteerProfileId(null);
       setVolunteerTimedInProjectIds([]);
+      setVolunteerJoinRecords([]);
       return snapshot.projects;
     }
 
     setVolunteerProfileId(null);
     setVolunteerTimedInProjectIds([]);
     setVolunteerTimeLogs([]);
+    setVolunteerJoinRecords([]);
     setPartnerApplications([]);
     const allProjects = await getAllProjects();
     setProjects(allProjects);
@@ -447,20 +539,23 @@ export default function ReportsScreen({ navigation, route }: any) {
 
     try {
       const allProjects = await loadProjects();
-      const [rawReports, allTimeLogs] = await Promise.all([
+      const [rawReports, allTimeLogs, allJoinRecords] = await Promise.all([
         user.role === 'admin' || user.role === 'partner'
           ? getAllPartnerReports()
           : getImpactHubReportsByUser(user.id),
         user.role === 'partner' ? getAllVolunteerTimeLogs() : Promise.resolve(null),
+        user.role === 'partner' ? getAllVolunteerProjectJoinRecords() : Promise.resolve(null),
       ]);
 
       if (user.role === 'partner') {
         setVolunteerTimeLogs(allTimeLogs || []);
+        setVolunteerJoinRecords(allJoinRecords || []);
       }
 
       setReports(
         rawReports
           .map(report => normalizeImpactHubReport(report, allProjects))
+          .filter(shouldDisplayReport)
           .sort(
             (left, right) =>
               new Date(right.submittedAt).getTime() - new Date(left.submittedAt).getTime()
@@ -504,7 +599,7 @@ export default function ReportsScreen({ navigation, route }: any) {
 
   useEffect(() => {
     return subscribeToStorageChanges(
-      ['partnerReports', 'projects', 'partnerProjectApplications', 'volunteerTimeLogs'],
+      ['partnerReports', 'projects', 'partnerProjectApplications', 'volunteerTimeLogs', 'volunteerProjectJoins'],
       async () => {
         await loadReportsCoalesced();
       }
@@ -555,10 +650,20 @@ export default function ReportsScreen({ navigation, route }: any) {
             reports,
             volunteers,
             partnerApplications,
-            volunteerTimeLogs
+            volunteerTimeLogs,
+            volunteerJoinRecords
           )
         : [],
-    [partnerApplications, projects, reports, user?.id, user?.role, volunteerTimeLogs, volunteers]
+    [
+      partnerApplications,
+      projects,
+      reports,
+      user?.id,
+      user?.role,
+      volunteerJoinRecords,
+      volunteerTimeLogs,
+      volunteers,
+    ]
   );
 
   const partnerAcceptedProjects = useMemo(
@@ -660,15 +765,15 @@ export default function ReportsScreen({ navigation, route }: any) {
         }
 
         setShowUploadModal(false);
-        await loadReportsCoalesced();
-        Alert.alert(
-          'Success',
-          user.role === 'volunteer'
-            ? hadActiveVolunteerLog
-              ? 'Your report was submitted for today\'s confirmed attendance.'
-              : 'Your report was submitted to the event reports.'
-            : 'Your report was submitted to the impact hub.'
-        );
+        const successMessage = user.role === 'volunteer'
+          ? hadActiveVolunteerLog
+            ? 'Your report was submitted for today\'s confirmed attendance.'
+            : 'Your report was submitted to the event reports.'
+          : 'Your report was submitted to the impact hub.';
+        
+        Alert.alert('Success', successMessage);
+        // Reload reports in background without blocking
+        void loadReportsCoalesced();
         return true;
       } catch (error: any) {
         console.error('Error submitting report:', error);
@@ -692,28 +797,84 @@ export default function ReportsScreen({ navigation, route }: any) {
     ]
   );
 
-  const handleViewReport = useCallback((report: SubmittedReport) => {
+  const handleViewReport = useCallback(async (report: SubmittedReport) => {
     setSelectedReport(report);
     setShowDetailsModal(true);
-  }, []);
+
+    if (user?.role === 'admin' && !report.viewedBy?.includes(user.id)) {
+      try {
+        const updatedViewedBy = [...(report.viewedBy || []), user.id];
+        const rawReports = await getAllPartnerReports();
+        const rawReport = rawReports.find(r => r.id === report.id);
+        if (rawReport) {
+          rawReport.viewedBy = updatedViewedBy;
+          await savePartnerReport(rawReport);
+        }
+      } catch (err) {
+        console.error('Error marking report as viewed:', err);
+      }
+    }
+  }, [user]);
 
   const handleCloseDetails = useCallback(() => {
     setShowDetailsModal(false);
     setSelectedReport(null);
   }, []);
 
+  const handleApproveReport = useCallback(
+    async (reportId: string, notes: string) => {
+      if (!user?.id) return;
+      try {
+        await reviewPartnerReport(reportId, user.id, 'Reviewed', notes || undefined);
+        setShowDetailsModal(false);
+        setSelectedReport(null);
+        Alert.alert('Approved', 'The report has been approved and the submitter has been notified.');
+        // Reload in background without blocking
+        void loadReportsCoalesced();
+      } catch (error: any) {
+        Alert.alert('Error', error?.message || 'Failed to approve report.');
+      }
+    },
+    [loadReportsCoalesced, user?.id]
+  );
+
+  const handleRejectReport = useCallback(
+    async (reportId: string, notes: string) => {
+      if (!user?.id) return;
+      try {
+        await reviewPartnerReport(reportId, user.id, 'Rejected', notes || undefined);
+        setShowDetailsModal(false);
+        setSelectedReport(null);
+        // Optimistically remove from display immediately
+        setReports(prev => prev.filter(report => report.id !== reportId));
+        Alert.alert('Rejected', 'The report has been rejected and the submitter has been notified.');
+        // Reload in background to sync any changes
+        void loadReportsCoalesced();
+      } catch (error: any) {
+        Alert.alert('Error', error?.message || 'Failed to reject report.');
+      }
+    },
+    [loadReportsCoalesced, user?.id]
+  );
+
   const handleCloseUploadModal = useCallback(() => {
     setShowUploadModal(false);
     setUploadModalInitialValues(null);
   }, []);
 
-  const userReports = useMemo(() => {
-    if (user?.role === 'admin') {
-      return reports;
-    }
+  const handleReviseReport = useCallback((report: SubmittedReport) => {
+    setUploadModalInitialValues({
+      projectId: report.projectId,
+      completionReport: report.description,
+      completionPhoto: report.mediaFile,
+    });
+    setShowUploadModal(true);
+  }, []);
 
-    return reports.filter(report => report.submittedBy === user?.id);
-  }, [reports, user?.id, user?.role]);
+  const userReports = useMemo(
+    () => (user?.role === 'admin' ? reports : reports.filter(report => report.submittedBy === user?.id)),
+    [reports, user?.id, user?.role]
+  );
 
   const volunteerEventProjects = useMemo(() => {
     if (user?.role !== 'volunteer') {
@@ -746,6 +907,10 @@ export default function ReportsScreen({ navigation, route }: any) {
     setShowUploadModal(true);
   }, [partnerAcceptedProjects.length, user?.role, volunteerEventProjects.length]);
 
+  const handleViewAnalytics = useCallback(() => {
+    navigation.navigate('Analytics');
+  }, [navigation]);
+
   const dashboard =
     user?.role === 'admin' ? (
       <AdminReportsDashboard
@@ -754,6 +919,7 @@ export default function ReportsScreen({ navigation, route }: any) {
         volunteers={volunteers}
         onUploadReport={handleOpenUploadModal}
         onViewReport={handleViewReport}
+        onViewAnalytics={handleViewAnalytics}
         loading={loading}
         onRefresh={onRefresh}
         refreshing={refreshing}
@@ -797,6 +963,7 @@ export default function ReportsScreen({ navigation, route }: any) {
         }
         userRole={user?.role}
         volunteerTimeLogs={user?.role === 'volunteer' ? volunteerTimeLogs : undefined}
+        volunteerJoinRecords={user?.role === 'volunteer' ? volunteerJoinRecords : undefined}
         fieldOfficerProjectIds={user?.role === 'volunteer' ? fieldOfficerProjectIds : undefined}
         volunteerProfileId={user?.role === 'volunteer' ? volunteerProfileId : undefined}
         initialProjectId={uploadModalInitialValues?.projectId}
@@ -809,8 +976,11 @@ export default function ReportsScreen({ navigation, route }: any) {
         visible={showDetailsModal}
         report={selectedReport}
         onClose={handleCloseDetails}
+        onApprove={user?.role === 'admin' ? handleApproveReport : undefined}
+        onReject={user?.role === 'admin' ? handleRejectReport : undefined}
+        onRevise={user?.role !== 'admin' ? handleReviseReport : undefined}
         userRole={user?.role}
-        showModerationActions={false}
+        showModerationActions={user?.role === 'admin'}
       />
     </>
   );

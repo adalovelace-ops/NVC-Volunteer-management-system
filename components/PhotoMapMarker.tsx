@@ -1,16 +1,24 @@
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 type PhotoMapMarkerProps = {
   accentColor: string;
+  count?: number;
 };
 
 // Renders a plain pin marker for native maps.
-export default function PhotoMapMarker({ accentColor }: PhotoMapMarkerProps) {
+export default function PhotoMapMarker({ accentColor, count }: PhotoMapMarkerProps) {
+  const countLabel = typeof count === 'number' && count >= 0 ? String(Math.min(count, 99)) : '';
+
   return (
     <View style={styles.wrapper}>
       <View style={[styles.bubble, { backgroundColor: accentColor }]}>
         <View style={styles.innerDot} />
+        {countLabel ? (
+          <View style={styles.countBadge}>
+            <Text style={styles.countBadgeText}>{countLabel}</Text>
+          </View>
+        ) : null}
       </View>
       <View style={[styles.pointer, { backgroundColor: accentColor }]} />
     </View>
@@ -41,6 +49,26 @@ const styles = StyleSheet.create({
     height: 14,
     borderRadius: 7,
     backgroundColor: '#ffffff',
+  },
+  countBadge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#166534',
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  countBadgeText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '800',
+    lineHeight: 12,
   },
   pointer: {
     width: 14,

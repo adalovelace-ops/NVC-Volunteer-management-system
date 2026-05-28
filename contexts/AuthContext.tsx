@@ -1,7 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Alert } from 'react-native';
 import { User } from '../models/types';
-import { getStorageItemsFast, setCurrentUser as saveCurrentUser, getCurrentUser } from '../models/storage';
+import {
+  getProjectsScreenSnapshot,
+  getStorageItemsFast,
+  setCurrentUser as saveCurrentUser,
+  getCurrentUser,
+} from '../models/storage';
 
 // Safe Platform accessor for web environments
 function getPlatformOS(): string {
@@ -11,6 +16,26 @@ function getPlatformOS(): string {
   } catch {
     return 'web';
   }
+}
+
+/**
+ * Returns true when running in a real web browser AND the user has NOT
+ * requested mobile-emulation mode via the `?mode=mobile` query param.
+ *
+ * When ?mode=mobile is present, volunteer and partner accounts are allowed
+ * to log in and get their full mobile UI (VolunteerNavigator / PartnerNavigator).
+ */
+function getIsWeb(): boolean {
+  if (getPlatformOS() !== 'web') return false;
+  try {
+    if (typeof window !== 'undefined' && window?.location?.search) {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('mode') === 'mobile') return false;
+    }
+  } catch {
+    // ignore
+  }
+  return true;
 }
 
 const PREFETCH_KEYS_BY_ROLE = {
@@ -24,6 +49,11 @@ const PREFETCH_KEYS_BY_ROLE = {
     'volunteerMatches',
     'volunteerTimeLogs',
     'partnerReports',
+    'volunteerProjectJoins',
+    'partnerProjectApplications',
+    'publishedImpactReports',
+    'adminPlanningCalendars',
+    'programs',
   ],
   volunteer: [
     'projects',
@@ -49,23 +79,30 @@ async function prefetchForUser(user: User | null): Promise<void> {
   }
   
   const platform = getPlatformOS();
-  // On mobile, prefetch only essential data to avoid slowing down app launch.
-  // Full prefetch happens on-demand when screens load.
-  // IMPORTANT: Keep prefetch minimal to prevent >2000ms launch warning
-  const keys = platform === 'web' 
-    ? ['statusUpdates'] // Only fetch status on web initially
-    : []; // Skip prefetch on mobile entirely for fastest startup - fetch on-demand
-    
-  if (!keys || keys.length === 0) {
-    return;
+  // Warm all role-specific keys in the background so the first screen loads from cache.
+  // On web, prefetch the full admin key set since the admin dashboard is the only web screen.
+  // On mobile, also warm the lightweight projects snapshot for the first screen.
+  const keys = Array.from(PREFETCH_KEYS_BY_ROLE[user.role] ?? []);
+
+  if (keys.length > 0) {
+    // Fire-and-forget prefetch: do not wait for completion to avoid blocking auth gate.
+    // Cache will be populated in the background for faster first screen load.
+    void getStorageItemsFast(Array.from(keys)).catch(error => {
+      console.debug(`[App] Background prefetch failed (non-blocking):`, error);
+    });
   }
-  // Fire-and-forget prefetch: do not wait for completion to avoid blocking auth gate.
-  // Cache will be populated in the background for faster first screen load.
-  void getStorageItemsFast(Array.from(keys)).then(() => {
-    return undefined;
-  }).catch(error => {
-    console.debug(`[App] Background prefetch failed (non-blocking):`, error);
-  });
+
+  if (platform !== 'web' && user.role !== 'admin') {
+    void getProjectsScreenSnapshot(user, ['projects', 'volunteerProfile']).catch(error => {
+      console.debug('[App] Background project snapshot prefetch failed:', error);
+    });
+  }
+  // In ?mode=mobile on web, also prefetch the snapshot for volunteer/partner
+  if (platform === 'web' && !getIsWeb() && user.role !== 'admin') {
+    void getProjectsScreenSnapshot(user, ['projects', 'volunteerProfile']).catch(error => {
+      console.debug('[App] Background project snapshot prefetch failed:', error);
+    });
+  }
 }
 
 interface AuthContextType {
@@ -88,10 +125,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     // Restore persistent session on mobile for faster startup.
-    // We only clear sessions on web to maintain a predictable entry point for admin tools.
+    // We only clear sessions on web (non-mobile-mode) to maintain a predictable
+    // entry point for admin tools. In ?mode=mobile, allow session restore.
     const platform = getPlatformOS();
     
-    if (platform === 'web') {
+    if (platform === 'web' && getIsWeb()) {
       setUser(null);
       setLoading(false);
       void saveCurrentUser(null).catch(() => null);
@@ -125,7 +163,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Saves the active user in memory and persistent storage after login.
   const login = async (userData: User) => {
     try {
-      if (getPlatformOS() === 'web' && userData.role !== 'admin') {
+      // Block non-admin logins on normal web mode.
+      // In ?mode=mobile, allow volunteer and partner to log in and get their full mobile UI.
+      if (getIsWeb() && userData.role !== 'admin') {
         Alert.alert(
           'Access Restricted',
           'Only the admin account can be opened on web. Please use the mobile app for volunteer or partner access.'

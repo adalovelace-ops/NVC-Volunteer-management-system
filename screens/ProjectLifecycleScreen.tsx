@@ -65,6 +65,7 @@ import {
   saveProject,
   saveStatusUpdate,
   subscribeToStorageChanges,
+  clearStorageCache,
 } from '../models/storage';
 import { Volunteer, VolunteerProjectJoinRecord, VolunteerProjectMatch } from '../models/types';
 import { useAuth } from '../contexts/AuthContext';
@@ -103,6 +104,79 @@ type LifecycleStatusMode = (typeof lifecycleStatusModes)[number];
 type ProgramSuiteModule = string;
 type ProgramSuiteView = 'programs' | 'projects' | 'events';
 
+const CORE_PROGRAM_TRACKS: ProgramTrack[] = [
+  {
+    id: 'Nutrition',
+    title: 'Nutrition',
+    description: 'Food security and health programs for children and families.',
+    icon: 'restaurant',
+    color: '#dc2626',
+    sortOrder: 10,
+    isActive: true,
+  },
+  {
+    id: 'Education',
+    title: 'Education',
+    description: 'Learning, literacy, and skill development for students.',
+    icon: 'school',
+    color: '#2563eb',
+    sortOrder: 20,
+    isActive: true,
+  },
+  {
+    id: 'Livelihood',
+    title: 'Livelihood',
+    description: 'Economic empowerment and vocational training programs.',
+    icon: 'work',
+    color: '#7c3aed',
+    sortOrder: 30,
+    isActive: true,
+  },
+  {
+    id: 'Disaster',
+    title: 'Disaster',
+    description: 'Preparedness, relief, and recovery programs for affected communities.',
+    icon: 'warning',
+    color: '#f97316',
+    sortOrder: 40,
+    isActive: true,
+  },
+];
+
+const CORE_PROGRAM_TRACK_IDS = new Set(CORE_PROGRAM_TRACKS.map(track => track.id));
+
+function isProgramSuiteView(value: unknown): value is ProgramSuiteView {
+  return value === 'programs' || value === 'projects' || value === 'events';
+}
+
+function getProgramSuiteViewFromRoute(route?: { name?: string; params?: { programSuiteView?: unknown } }): ProgramSuiteView {
+  if (isProgramSuiteView(route?.params?.programSuiteView)) {
+    return route.params.programSuiteView;
+  }
+
+  if (route?.name === 'Programs') {
+    return 'programs';
+  }
+
+  if (route?.name === 'Events') {
+    return 'events';
+  }
+
+  return 'projects';
+}
+
+function getProgramSuiteRouteName(view: ProgramSuiteView): 'Programs' | 'Projects' | 'Events' {
+  if (view === 'programs') {
+    return 'Programs';
+  }
+
+  if (view === 'events') {
+    return 'Events';
+  }
+
+  return 'Projects';
+}
+
 function normalizeProgramTrackIcon(icon?: string): keyof typeof MaterialIcons.glyphMap {
   if (!icon) {
     return 'category';
@@ -125,6 +199,31 @@ function getProjectProgramId(project: Project): string {
 function getProgramSuiteModuleForProject(project: Project, activeProgramTrackIds: Set<string>): string | null {
   const programId = getProjectProgramId(project);
   return activeProgramTrackIds.has(programId) ? programId : null;
+}
+
+function mergeProgramTracksWithCoreTracks(tracks: ProgramTrack[]): ProgramTrack[] {
+  const merged = new Map<string, ProgramTrack>();
+
+  CORE_PROGRAM_TRACKS.forEach(track => {
+    merged.set(track.id, track);
+  });
+
+  tracks.forEach(track => {
+    const id = String(track.id || '').trim();
+    if (!id) {
+      return;
+    }
+
+    const existing = merged.get(id);
+    merged.set(id, {
+      ...(existing || {}),
+      ...track,
+      id,
+      isActive: CORE_PROGRAM_TRACK_IDS.has(id) ? true : track.isActive,
+    });
+  });
+
+  return Array.from(merged.values());
 }
 
 type ProjectDraft = {
@@ -728,6 +827,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const [volunteerTimeLogs, setVolunteerTimeLogs] = useState<VolunteerTimeLog[]>([]);
   const [selectedAttendanceVolunteerId, setSelectedAttendanceVolunteerId] = useState<string | null>(null);
   const [selectedAttendanceDateKey, setSelectedAttendanceDateKey] = useState<string | null>(null);
+  const [attendancePickerVisible, setAttendancePickerVisible] = useState(false);
+  const [taskBoardModalVisible, setTaskBoardModalVisible] = useState(false);
   const [programTracks, setProgramTracks] = useState<ProgramTrack[]>([]);
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showProjectModal, setShowProjectModal] = useState(false);
@@ -741,6 +842,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const [projectSaveError, setProjectSaveError] = useState<string | null>(null);
   const [showAssignmentDropdown, setShowAssignmentDropdown] = useState(false);
   const [showSkillsDropdown, setShowSkillsDropdown] = useState(false);
+  const [showTaskList, setShowTaskList] = useState(false);
   const [showProgramProposalModal, setShowProgramProposalModal] = useState(false);
   const [showAddProgramModal, setShowAddProgramModal] = useState(false);
   const [newProgramName, setNewProgramName] = useState('');
@@ -759,10 +861,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const [isSchedulerMonthHovered, setIsSchedulerMonthHovered] = useState(false);
   const [selectedProgramWebModule, setSelectedProgramWebModule] = useState<ProgramSuiteModule | null>(null);
   const [programSuiteView, setProgramSuiteView] = useState<ProgramSuiteView>(
-    route?.params?.programSuiteView === 'programs' || route?.params?.programSuiteView === 'events'
-      ? route.params.programSuiteView
-      : 'projects'
+    () => getProgramSuiteViewFromRoute(route)
   );
+  // Status filter for the projects view — null means show all
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [statusUpdateMode, setStatusUpdateMode] = useState<LifecycleStatusMode>('System');
   const [newStatus, setNewStatus] = useState<Project['status']>('Planning');
@@ -780,6 +882,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const [customTaskSkill, setCustomTaskSkill] = useState('');
   const [customProjectSkill, setCustomProjectSkill] = useState('');
   const [expandedProgramModules, setExpandedProgramModules] = useState<Set<any>>(
+    () => new Set()
+  );
+  const [expandedVolunteerRequestIds, setExpandedVolunteerRequestIds] = useState<Set<string>>(
     () => new Set()
   );
   const programSectionAnimations = React.useRef<Record<string, Animated.Value>>({});
@@ -817,11 +922,18 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   }, [currentDate, selectedProject?.endDate, selectedProject?.id, selectedProject?.isEvent, selectedProject?.startDate]);
 
   useEffect(() => {
-    const requestedView = route?.params?.programSuiteView;
-    if (requestedView === 'programs' || requestedView === 'projects' || requestedView === 'events') {
-      setProgramSuiteView(requestedView);
+    setProgramSuiteView(getProgramSuiteViewFromRoute(route));
+  }, [route?.name, route?.params?.programSuiteView]);
+
+  const switchProgramSuiteView = (nextView: ProgramSuiteView) => {
+    setProgramSuiteView(nextView);
+
+    const routeName = getProgramSuiteRouteName(nextView);
+    const navigated = navigateToAvailableRoute(navigation, routeName, { programSuiteView: nextView });
+    if (!navigated) {
+      navigation?.setParams?.({ programSuiteView: nextView });
     }
-  }, [route?.params?.programSuiteView]);
+  };
 
   const openVolunteerAttendanceDetails = (volunteerId: string) => {
     setSelectedAttendanceVolunteerId(volunteerId);
@@ -1239,13 +1351,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         setActionLoadingKey(null);
       }
     };
-
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      if (window.confirm(`Delete program "${trackTitle}"? This cannot be undone.`)) {
-        void doDelete();
-      }
-      return;
-    }
 
     Alert.alert(
       'Delete Program',
@@ -1752,7 +1857,18 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       return null;
     }
 
-    return projects.find(project => project.id === selectedProject.id) || selectedProject;
+    const listedProject = projects.find(project => project.id === selectedProject.id) || null;
+    if (!listedProject) {
+      return selectedProject;
+    }
+
+    const selectedUpdatedAt = new Date(selectedProject.updatedAt || '').getTime();
+    const listedUpdatedAt = new Date(listedProject.updatedAt || '').getTime();
+    if (!Number.isNaN(selectedUpdatedAt) && !Number.isNaN(listedUpdatedAt) && selectedUpdatedAt > listedUpdatedAt) {
+      return selectedProject;
+    }
+
+    return listedProject;
   };
 
   const getSystemDerivedProjectStatus = (project: Project): Project['status'] =>
@@ -1975,6 +2091,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       } else {
         closeProjectModal();
         showTaskSaveNotice('Project created. The new project was saved successfully.', 1400);
+        Alert.alert('Project Created', 'Project was created and saved successfully.', [
+          { text: 'OK' },
+        ]);
         void loadAllPartnerApplications();
       }
     } catch (error) {
@@ -2012,13 +2131,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         );
       }
     };
-
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      if (window.confirm(`Delete ${projectToDelete.title}? This will remove its related join records, applications, and logs.`)) {
-        void doDelete();
-      }
-      return;
-    }
 
     Alert.alert(
       `Delete ${selectedRecordType}`,
@@ -2422,13 +2534,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       }
     };
 
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      if (window.confirm(`Delete "${project.title}"? This cannot be undone.`)) {
-        void doDelete();
-      }
-      return;
-    }
-
     Alert.alert(
       'Delete Project',
       `Delete "${project.title}"? This cannot be undone.`,
@@ -2647,6 +2752,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
     try {
       await saveProjectLikeRecord(updatedProject);
+      clearStorageCache(['projects', 'events']);
       const notificationTasks: Promise<void>[] = [];
       for (const previousVolunteer of notificationPreviousVolunteers) {
         if (previousTask) {
@@ -2671,6 +2777,11 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         await Promise.all(notificationTasks);
       }
       await loadProjects();
+      setProjects(currentProjects =>
+        currentProjects.map(project =>
+          project.id === updatedProject.id ? updatedProject : project
+        )
+      );
       setSelectedProject(updatedProject);
       setIsTaskSaveSuccess(true);
       setTaskSaveSuccessMessage(
@@ -2709,6 +2820,12 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
             try {
               await saveProjectLikeRecord(updatedProject);
+              clearStorageCache(['projects', 'events']);
+              setProjects(currentProjects =>
+                currentProjects.map(project =>
+                  project.id === updatedProject.id ? updatedProject : project
+                )
+              );
               setSelectedProject(updatedProject);
               if (editingTaskId === taskId) {
                 closeTaskModal();
@@ -2735,6 +2852,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       new Date(project.endDate),
       'EEE, dd MMM yyyy'
     )}`;
+
+    const projectAuthor = partnerApplicationByProjectId.get(project.id);
 
     return (
       <View
@@ -2815,6 +2934,21 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   </View>
                 </View>
               </View>
+              {projectAuthor ? (
+                <View style={styles.infoRow}>
+                  <View style={styles.infoRowLeading}>
+                    <View style={styles.infoIconWrap}>
+                      <MaterialIcons name="person" size={16} color="#475569" />
+                    </View>
+                    <View style={styles.infoRowCopy}>
+                      <Text style={styles.infoRowTitle}>Submitted by {projectAuthor.partnerName}</Text>
+                      {projectAuthor.partnerEmail ? (
+                        <Text style={styles.infoRowSubtitle}>{projectAuthor.partnerEmail}</Text>
+                      ) : null}
+                    </View>
+                  </View>
+                </View>
+              ) : null}
               <Text style={styles.description}>
                 {project.description}
               </Text>
@@ -2841,7 +2975,14 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const renderProgramSection = (
     section: (typeof programSections)[number]
   ) => {
-    const sectionProjects = section.projects.filter(project => !project.isEvent);
+    const sectionProjects = statusFilter
+      ? section.projects.filter(project => getProjectDisplayStatus(project) === statusFilter)
+      : section.projects;
+
+    // When a status filter is active and this section has no matching projects, hide it
+    if (statusFilter && sectionProjects.length === 0) {
+      return null;
+    }
 
     return (
       <View key={section.module} style={styles.programSuiteSection}>
@@ -3049,7 +3190,16 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const renderEventProjectSection = (
     section: (typeof eventProjectSections)[number]
   ) => {
-    const { project, events, programTitle } = section;
+    const { project, programTitle } = section;
+    // Apply status filter to events
+    const events = statusFilter
+      ? section.events.filter(event => getProjectDisplayStatus(event) === statusFilter)
+      : section.events;
+
+    // Hide section entirely when filter is active and no events match
+    if (statusFilter && events.length === 0) {
+      return null;
+    }
 
     return (
       <View key={`events-${project.id}`} style={[styles.programSuiteProjectsBlock, styles.eventProjectBox]}>
@@ -3323,12 +3473,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     </Modal>
   );
 
-  const renderProjectEditorModal = () => (
-    <Modal
-      visible={showProjectModal}
-      animationType="slide"
-      onRequestClose={closeProjectModal}
-    >
+  const renderProjectEditorModal = () => {
+    const isWeb = getPlatformOS() === 'web';
+
+    const formContent = (
       <View style={styles.modalContainer}>
         {isProjectSaveSuccess ? (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -3781,7 +3929,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         </ScrollView>
           </>
         )}
-      </View>
 
       {/* Date Picker Modal */}
       <Modal
@@ -3806,8 +3953,26 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           />
         </View>
       </Modal>
-    </Modal>
-  );
+      </View>
+    );
+
+    if (!showProjectModal) return null;
+
+    if (isWeb) {
+      return (
+        <View style={projectEditorStyles.webOverlay}>
+          <TouchableOpacity style={projectEditorStyles.overlayDismiss} activeOpacity={1} onPress={closeProjectModal} />
+          <View style={projectEditorStyles.drawer}>{formContent}</View>
+        </View>
+      );
+    }
+
+    return (
+      <Modal visible animationType="slide" onRequestClose={closeProjectModal}>
+        {formContent}
+      </Modal>
+    );
+  };
 
   const renderProgramProposalModal = () => {
     const module = selectedProgramProposalModule;
@@ -3990,9 +4155,12 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     }
 
     const overview = getProgramWebOverview(selectedProgramWebSection.title);
-    const linkedProjects = selectedProgramWebSection.projects.filter(project => !project.isEvent);
-    const linkedEvents = selectedProgramWebSection.projects.filter(project => project.isEvent);
-    const linkedProjectIds = new Set(selectedProgramWebSection.projects.map(project => project.id));
+    const linkedProjects = selectedProgramWebSection.projects;
+    const linkedEvents = selectedProgramWebSection.events;
+    const linkedProjectIds = new Set([
+      ...linkedProjects.map(project => project.id),
+      ...linkedEvents.map(event => event.id),
+    ]);
     const beneficiariesServed = allPartnerReports
       .filter(report => linkedProjectIds.has(report.projectId))
       .reduce((sum, report) => sum + getReportBeneficiariesServed(report), 0);
@@ -4015,190 +4183,233 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         description: 'Track event participation, progress, attendance, reports, and completion evidence in the system.',
       },
     ];
+    const accent = selectedProgramWebSection.accent;
+    const surface = selectedProgramWebSection.surface;
 
     return (
-      <View style={styles.programWebInlineCard}>
-            <View style={[styles.programWebModalHero, { backgroundColor: selectedProgramWebSection.accent }]}>
-              <View style={styles.programWebModalHeroTop}>
-                <View style={styles.programWebModalBrandRow}>
-                  <View style={styles.programWebModalIcon}>
-                    <MaterialIcons
-                      name={selectedProgramWebSection.icon}
-                      size={30}
-                      color={selectedProgramWebSection.accent}
-                    />
-                  </View>
-                  <View>
-                    <Text style={styles.programWebModalBrandText}>NVC Connect</Text>
-                    <Text style={styles.programWebModalBrandSubtext}>Program microsite</Text>
-                  </View>
-                </View>
+      <Modal
+        visible={Boolean(selectedProgramWebModule)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedProgramWebModule(null)}
+      >
+        <View style={programWebStyles.backdrop}>
+          <View style={programWebStyles.window}>
+
+            {/* Browser chrome bar */}
+            <View style={programWebStyles.browserBar}>
+              <View style={programWebStyles.browserDots}>
                 <TouchableOpacity
-                  style={styles.programWebInlineBackButton}
+                  style={[programWebStyles.browserDot, { backgroundColor: '#ef4444' }]}
                   onPress={() => setSelectedProgramWebModule(null)}
-                >
-                  <MaterialIcons name="arrow-back" size={18} color="#ffffff" />
-                  <Text style={styles.programWebInlineBackText}>Back to programs</Text>
-                </TouchableOpacity>
+                />
+                <View style={[programWebStyles.browserDot, { backgroundColor: '#f59e0b' }]} />
+                <View style={[programWebStyles.browserDot, { backgroundColor: '#22c55e' }]} />
               </View>
-              <View style={styles.programWebModalNav}>
-                {['Overview', 'Services', 'Workflow', 'Projects'].map(item => (
-                  <Text key={`${selectedProgramWebSection.module}-${item}`} style={styles.programWebModalNavItem}>
-                    {item}
-                  </Text>
-                ))}
+              <View style={programWebStyles.browserAddressBar}>
+                <MaterialIcons name="lock" size={12} color="#64748b" />
+                <Text style={programWebStyles.browserUrl} numberOfLines={1}>
+                  nvcconnect.local/{selectedProgramWebSection.title.toLowerCase().replace(/\s+/g, '-')}
+                </Text>
               </View>
-              <Text style={styles.programWebModalEyebrow}>Program Pillar</Text>
-              <Text style={styles.programWebModalTitle}>{selectedProgramWebSection.title}</Text>
-              <Text style={styles.programWebModalHeroText}>{overview.about}</Text>
-              <View style={styles.programWebModalHeroStats}>
-                {systemStats.map(stat => (
-                  <View key={`hero-${stat.label}`} style={styles.programWebModalHeroStat}>
-                    <MaterialIcons name={stat.icon} size={16} color="#ffffff" />
-                    <Text style={styles.programWebModalHeroStatValue}>{stat.value}</Text>
-                    <Text style={styles.programWebModalHeroStatLabel}>{stat.label}</Text>
-                  </View>
-                ))}
-              </View>
+              <TouchableOpacity onPress={() => setSelectedProgramWebModule(null)} style={programWebStyles.browserClose}>
+                <MaterialIcons name="close" size={18} color="#64748b" />
+              </TouchableOpacity>
             </View>
 
-            <View style={styles.programWebModalContent}>
-              <View style={styles.programWebModalIntroGrid}>
-                <View style={styles.programWebModalIntroMain}>
-                  <Text style={styles.programWebModalSectionLabel}>What this program does</Text>
-                  <Text style={styles.programWebModalIntroTitle}>
-                    Turning a program pillar into coordinated projects, events, and field outcomes.
-                  </Text>
-                  <Text style={styles.programWebModalBody}>
-                    {selectedProgramWebSection.context ||
-                      selectedProgramWebSection.description ||
-                      overview.about}
-                  </Text>
+            {/* Website content */}
+            <ScrollView style={programWebStyles.pageScroll} showsVerticalScrollIndicator={false}>
+
+              {/* Nav bar */}
+              <View style={[programWebStyles.navbar, { backgroundColor: accent }]}>
+                <View style={programWebStyles.navBrand}>
+                  <View style={programWebStyles.navLogo}>
+                    <MaterialIcons name={selectedProgramWebSection.icon} size={18} color={accent} />
+                  </View>
+                  <Text style={programWebStyles.navBrandText}>NVC</Text>
+                  <Text style={programWebStyles.navBrandSep}>|</Text>
+                  <Text style={programWebStyles.navBrandSub}>{selectedProgramWebSection.title}</Text>
                 </View>
-                <View style={styles.programWebModalAsideCard}>
-                  <Text style={styles.programWebModalAsideLabel}>Focus areas</Text>
-                  {overview.highlights.slice(0, 4).map(highlight => (
-                    <View key={`focus-${highlight.title}`} style={styles.programWebModalAsideRow}>
-                      <View style={[styles.programWebModalAsideDot, { backgroundColor: selectedProgramWebSection.accent }]} />
-                      <Text style={styles.programWebModalAsideText}>{highlight.title}</Text>
-                    </View>
+                <View style={programWebStyles.navLinks}>
+                  {['Overview', 'Services', 'Workflow', 'Projects'].map(item => (
+                    <Text key={item} style={programWebStyles.navLink}>{item}</Text>
                   ))}
+                </View>
+                <TouchableOpacity
+                  style={programWebStyles.navCta}
+                  onPress={() => {
+                    setExpandedProgramModules(current => new Set(current).add(selectedProgramWebSection.module));
+                    setSelectedProgramWebModule(null);
+                    switchProgramSuiteView('projects');
+                  }}
+                >
+                  <Text style={[programWebStyles.navCtaText, { color: accent }]}>View projects →</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Hero section */}
+              <View style={[programWebStyles.hero, { backgroundColor: accent }]}>
+                <View style={programWebStyles.heroContent}>
+                  <Text style={programWebStyles.heroEyebrow}>Program Pillar</Text>
+                  <Text style={programWebStyles.heroTitle}>{selectedProgramWebSection.title}</Text>
+                  <Text style={programWebStyles.heroBody}>{overview.about}</Text>
+                  <View style={programWebStyles.heroStats}>
+                    {systemStats.map(stat => (
+                      <View key={stat.label} style={programWebStyles.heroStat}>
+                        <MaterialIcons name={stat.icon} size={16} color="rgba(255,255,255,0.8)" />
+                        <Text style={programWebStyles.heroStatValue}>{stat.value}</Text>
+                        <Text style={programWebStyles.heroStatLabel}>{stat.label}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+                <View style={[programWebStyles.heroIconWrap, { backgroundColor: 'rgba(255,255,255,0.15)' }]}>
+                  <MaterialIcons name={selectedProgramWebSection.icon} size={64} color="rgba(255,255,255,0.9)" />
                 </View>
               </View>
 
-              <View style={styles.programWebModalSection}>
-                <Text style={styles.programWebModalSectionLabel}>Program services</Text>
-                <View style={styles.programWebModalDetailGrid}>
-                  {overview.highlights.map((highlight, index) => (
-                    <View key={`modal-${selectedProgramWebSection.module}-${highlight.title}`} style={styles.programWebModalDetailCard}>
-                      <View style={[styles.programWebModalDetailIcon, { backgroundColor: selectedProgramWebSection.surface }]}>
+              {/* Intro grid */}
+              <View style={programWebStyles.section}>
+                <View style={programWebStyles.introGrid}>
+                  <View style={programWebStyles.introMain}>
+                    <Text style={programWebStyles.sectionEyebrow}>What this program does</Text>
+                    <Text style={programWebStyles.introTitle}>
+                      Turning a program pillar into coordinated projects, events, and field outcomes.
+                    </Text>
+                    <Text style={programWebStyles.bodyText}>
+                      {selectedProgramWebSection.context || selectedProgramWebSection.description || overview.about}
+                    </Text>
+                  </View>
+                  <View style={[programWebStyles.asideCard, { borderColor: accent + '44', backgroundColor: surface }]}>
+                    <Text style={[programWebStyles.asideLabel, { color: accent }]}>Focus areas</Text>
+                    {overview.highlights.slice(0, 4).map(h => (
+                      <View key={h.title} style={programWebStyles.asideRow}>
+                        <View style={[programWebStyles.asideDot, { backgroundColor: accent }]} />
+                        <Text style={programWebStyles.asideText}>{h.title}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              </View>
+
+              {/* Services */}
+              <View style={[programWebStyles.section, { backgroundColor: '#f8fafc' }]}>
+                <Text style={programWebStyles.sectionEyebrow}>Program services</Text>
+                <Text style={programWebStyles.sectionTitle}>What we deliver on the ground</Text>
+                <View style={programWebStyles.serviceGrid}>
+                  {overview.highlights.map((h, i) => (
+                    <View key={h.title} style={[programWebStyles.serviceCard, { borderTopColor: accent, backgroundColor: '#ffffff' }]}>
+                      <View style={[programWebStyles.serviceIcon, { backgroundColor: surface }]}>
                         <MaterialIcons
-                          name={(index % 2 === 0 ? 'volunteer-activism' : 'auto-awesome') as keyof typeof MaterialIcons.glyphMap}
-                          size={18}
-                          color={selectedProgramWebSection.accent}
+                          name={(i % 2 === 0 ? 'volunteer-activism' : 'auto-awesome') as keyof typeof MaterialIcons.glyphMap}
+                          size={20}
+                          color={accent}
                         />
                       </View>
-                      <Text style={styles.programWebModalDetailTitle}>{highlight.title}</Text>
-                      <Text style={styles.programWebModalDetailText}>{highlight.description}</Text>
+                      <Text style={programWebStyles.serviceTitle}>{h.title}</Text>
+                      <Text style={programWebStyles.serviceText}>{h.description}</Text>
                     </View>
                   ))}
                 </View>
               </View>
 
-              <View style={styles.programWebModalSection}>
-                <Text style={styles.programWebModalSectionLabel}>Delivery workflow</Text>
-                <View style={styles.programWebModalWorkflow}>
-                  {workflowSteps.map((step, index) => (
-                    <View key={`workflow-${step.title}`} style={styles.programWebModalWorkflowRow}>
-                      <View style={[styles.programWebModalWorkflowNumber, { backgroundColor: selectedProgramWebSection.accent }]}>
-                        <Text style={styles.programWebModalWorkflowNumberText}>{index + 1}</Text>
+              {/* Workflow */}
+              <View style={programWebStyles.section}>
+                <Text style={programWebStyles.sectionEyebrow}>Delivery workflow</Text>
+                <Text style={programWebStyles.sectionTitle}>How we plan and execute</Text>
+                <View style={programWebStyles.workflowList}>
+                  {workflowSteps.map((step, i) => (
+                    <View key={step.title} style={programWebStyles.workflowRow}>
+                      <View style={[programWebStyles.workflowNum, { backgroundColor: accent }]}>
+                        <Text style={programWebStyles.workflowNumText}>{i + 1}</Text>
                       </View>
-                      <View style={styles.programWebModalWorkflowCopy}>
-                        <Text style={styles.programWebModalWorkflowTitle}>{step.title}</Text>
-                        <Text style={styles.programWebModalWorkflowText}>{step.description}</Text>
+                      <View style={programWebStyles.workflowCopy}>
+                        <Text style={programWebStyles.workflowTitle}>{step.title}</Text>
+                        <Text style={programWebStyles.workflowText}>{step.description}</Text>
                       </View>
                     </View>
                   ))}
                 </View>
               </View>
 
-              <View style={styles.programWebModalSection}>
-                <Text style={styles.programWebModalSectionLabel}>Impact and activity</Text>
-                <View style={styles.programWebModalStatsRow}>
-                <View style={styles.programWebModalStatCard}>
-                  <Text style={[styles.programWebModalStatValue, { color: selectedProgramWebSection.accent }]}>
-                    {formatImpactCount(beneficiariesServed)}
-                  </Text>
-                  <Text style={styles.programWebModalStatLabel}>beneficiaries served based on system reports</Text>
+              {/* Impact stats */}
+              <View style={[programWebStyles.section, { backgroundColor: accent }]}>
+                <Text style={[programWebStyles.sectionEyebrow, { color: 'rgba(255,255,255,0.75)' }]}>Impact and activity</Text>
+                <Text style={[programWebStyles.sectionTitle, { color: '#ffffff' }]}>Numbers from the system</Text>
+                <View style={programWebStyles.impactGrid}>
+                  {[
+                    { value: formatImpactCount(beneficiariesServed), label: 'Beneficiaries served' },
+                    { value: String(linkedProjects.length), label: 'Projects in system' },
+                    { value: String(linkedEvents.length), label: 'Events in system' },
+                    { value: String(selectedProgramWebSection.inProgressCount), label: 'Active projects' },
+                  ].map(stat => (
+                    <View key={stat.label} style={programWebStyles.impactCard}>
+                      <Text style={[programWebStyles.impactValue, { color: accent }]}>{stat.value}</Text>
+                      <Text style={programWebStyles.impactLabel}>{stat.label}</Text>
+                    </View>
+                  ))}
                 </View>
-                <View style={styles.programWebModalStatCard}>
-                  <Text style={[styles.programWebModalStatValue, { color: selectedProgramWebSection.accent }]}>
-                    {linkedProjects.length}
-                  </Text>
-                  <Text style={styles.programWebModalStatLabel}>projects in this system</Text>
-                </View>
-                <View style={styles.programWebModalStatCard}>
-                  <Text style={[styles.programWebModalStatValue, { color: selectedProgramWebSection.accent }]}>
-                    {linkedEvents.length}
-                  </Text>
-                  <Text style={styles.programWebModalStatLabel}>events in this system</Text>
-                </View>
-                <View style={styles.programWebModalStatCard}>
-                  <Text style={[styles.programWebModalStatValue, { color: selectedProgramWebSection.accent }]}>
-                    {selectedProgramWebSection.inProgressCount}
-                  </Text>
-                  <Text style={styles.programWebModalStatLabel}>active projects</Text>
-                </View>
-              </View>
               </View>
 
-              <View style={styles.programWebModalSection}>
-                <Text style={styles.programWebModalSectionLabel}>System projects</Text>
+              {/* Projects list */}
+              <View style={programWebStyles.section}>
+                <Text style={programWebStyles.sectionEyebrow}>System projects</Text>
+                <Text style={programWebStyles.sectionTitle}>Active and planned projects</Text>
                 {linkedProjects.length ? (
-                  linkedProjects.slice(0, 5).map(project => (
-                    <View key={`modal-project-${project.id}`} style={styles.programWebModalLinkedRow}>
-                      <View style={[styles.programWebModalLinkedIcon, { backgroundColor: selectedProgramWebSection.surface }]}>
-                        <MaterialIcons name="folder" size={17} color={selectedProgramWebSection.accent} />
+                  linkedProjects.map(project => (
+                    <View key={project.id} style={programWebStyles.projectRow}>
+                      <View style={[programWebStyles.projectRowIcon, { backgroundColor: surface }]}>
+                        <MaterialIcons name="folder" size={18} color={accent} />
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.programWebModalLinkedTitle}>{project.title}</Text>
-                        <Text style={styles.programWebModalLinkedMeta}>
-                          {getProjectDisplayStatus(project)} | {formatProjectDateRangeLabel(project.startDate, project.endDate)}
+                        <Text style={programWebStyles.projectRowTitle}>{project.title}</Text>
+                        <Text style={programWebStyles.projectRowMeta}>
+                          {getProjectDisplayStatus(project)} · {formatProjectDateRangeLabel(project.startDate, project.endDate)}
+                        </Text>
+                      </View>
+                      <View style={[programWebStyles.projectRowBadge, { backgroundColor: getProjectStatusColor(project) + '22' }]}>
+                        <Text style={[programWebStyles.projectRowBadgeText, { color: getProjectStatusColor(project) }]}>
+                          {getProjectDisplayStatus(project)}
                         </Text>
                       </View>
                     </View>
                   ))
                 ) : (
-                  <View style={styles.programWebModalEmptyPanel}>
-                    <Text style={styles.programWebModalEmptyTitle}>No projects yet</Text>
-                    <Text style={styles.programWebModalEmptyText}>
-                      Create a project under this program to start tracking events, volunteers, and reports.
-                    </Text>
+                  <View style={programWebStyles.emptyPanel}>
+                    <MaterialIcons name="folder-open" size={28} color="#94a3b8" />
+                    <Text style={programWebStyles.emptyTitle}>No projects yet</Text>
+                    <Text style={programWebStyles.emptyText}>Create a project under this program to start tracking events, volunteers, and reports.</Text>
                   </View>
                 )}
               </View>
-            </View>
 
-            <View style={styles.programWebModalActions}>
-              <TouchableOpacity
-                style={styles.programWebModalSecondaryButton}
-                onPress={() => setSelectedProgramWebModule(null)}
-              >
-                <Text style={styles.programWebModalSecondaryText}>Close</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.programWebModalPrimaryButton, { backgroundColor: selectedProgramWebSection.accent }]}
-                onPress={() => {
-                  setExpandedProgramModules(current => new Set(current).add(selectedProgramWebSection.module));
-                  setSelectedProgramWebModule(null);
-                  setProgramSuiteView('projects');
-                }}
-              >
-                <Text style={styles.programWebModalPrimaryText}>View projects</Text>
-                <MaterialIcons name="arrow-forward" size={18} color="#ffffff" />
-              </TouchableOpacity>
-            </View>
-      </View>
+              {/* Footer */}
+              <View style={[programWebStyles.footer, { backgroundColor: accent }]}>
+                <Text style={programWebStyles.footerText}>NVC · {selectedProgramWebSection.title} Program</Text>
+                <View style={programWebStyles.footerActions}>
+                  <TouchableOpacity
+                    style={programWebStyles.footerSecondary}
+                    onPress={() => setSelectedProgramWebModule(null)}
+                  >
+                    <Text style={programWebStyles.footerSecondaryText}>Close</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[programWebStyles.footerPrimary, { backgroundColor: '#ffffff' }]}
+                    onPress={() => {
+                      setExpandedProgramModules(current => new Set(current).add(selectedProgramWebSection.module));
+                      setSelectedProgramWebModule(null);
+                      switchProgramSuiteView('projects');
+                    }}
+                  >
+                    <Text style={[programWebStyles.footerPrimaryText, { color: accent }]}>View projects →</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     );
   };
 
@@ -4251,7 +4462,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
   const activeProgramTracks = useMemo(
     () =>
-      programTracks
+      mergeProgramTracksWithCoreTracks(programTracks)
         .filter(track => track.isActive !== false)
         .sort(
           (left, right) =>
@@ -4374,6 +4585,20 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     [projects]
   );
 
+  const partnerApplicationByProjectId = useMemo(() => {
+    const map = new Map<string, PartnerProjectApplication>();
+    allPartnerApplications.forEach(application => {
+      const existing = map.get(application.projectId);
+      if (
+        !existing ||
+        new Date(application.requestedAt).getTime() > new Date(existing.requestedAt).getTime()
+      ) {
+        map.set(application.projectId, application);
+      }
+    });
+    return map;
+  }, [allPartnerApplications]);
+
   const programSections = useMemo(
     () =>
       activeProgramTracks.map(track => {
@@ -4384,9 +4609,17 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               application.status === 'Pending' &&
               getProgramModuleFromProposalProjectId(application.projectId) === module
           ) || null;
-        const sectionProjects = projects
-          .filter(project => getProgramSuiteModuleForProject(project, activeProgramTrackIds) === module)
+        const sectionItems = projects
+          .filter(project => {
+            const result = getProgramSuiteModuleForProject(project, activeProgramTrackIds);
+            if (!result && projects.length < 20) {
+              console.log(`[DEBUG] Project filtered out: ${project.title} (id=${project.id}) module=${getProjectProgramId(project)} looking for=${module}`);
+            }
+            return result === module;
+          })
           .sort((left, right) => new Date(left.startDate).getTime() - new Date(right.startDate).getTime());
+        const sectionProjects = sectionItems.filter(project => !project.isEvent);
+        const sectionEvents = sectionItems.filter(project => project.isEvent);
 
         return {
           module,
@@ -4399,10 +4632,17 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           border: '#ddd6fe',
           imageUrl: track.imageUrl,
           projects: sectionProjects,
-          totalPrograms: sectionProjects.filter(project => !project.isEvent).length,
+          events: sectionEvents,
+          totalPrograms: sectionProjects.length,
           inProgressCount: sectionProjects.filter(project => getProjectDisplayStatus(project) === 'In Progress').length,
           planningCount: sectionProjects.filter(project => getProjectDisplayStatus(project) === 'Planning').length,
-          eventCount: sectionProjects.filter(project => project.isEvent).length,
+          completedCount: sectionProjects.filter(project => getProjectDisplayStatus(project) === 'Completed').length,
+          cancelledCount: sectionProjects.filter(project => getProjectDisplayStatus(project) === 'Cancelled').length,
+          eventCount: sectionEvents.length,
+          eventInProgressCount: sectionEvents.filter(event => getProjectDisplayStatus(event) === 'In Progress').length,
+          eventPlanningCount: sectionEvents.filter(event => getProjectDisplayStatus(event) === 'Planning').length,
+          eventCompletedCount: sectionEvents.filter(event => getProjectDisplayStatus(event) === 'Completed').length,
+          eventCancelledCount: sectionEvents.filter(event => getProjectDisplayStatus(event) === 'Cancelled').length,
           pendingProposalCount: pendingProposalApplication ? 1 : 0,
         };
       }),
@@ -4435,7 +4675,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           events: projects
             .filter(event => event.isEvent && event.parentProjectId === project.id)
             .sort((left, right) => new Date(left.startDate).getTime() - new Date(right.startDate).getTime()),
-        })),
+        }))
+        .filter(section => section.events.length > 0),
     [activeProgramTrackIds, activeProgramTracks, projects]
   );
 
@@ -5165,69 +5406,131 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               <Text style={styles.emptyText}>No event tasks added yet</Text>
             ) : (
               <View style={styles.updatesList}>
-                {internalTasks.map(task => (
-                  <View key={task.id} style={styles.taskCard}>
-                    <View style={styles.taskCardHeader}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.taskTitle}>{task.title}</Text>
-                        <Text style={styles.taskMeta}>
-                          {task.category} - {task.priority} Priority
-                        </Text>
-                        {task.isFieldOfficer ? (
-                          <Text style={styles.taskAssignmentText}>
-                            Field Officer permissions enabled for this event
-                          </Text>
-                        ) : null}
-                      </View>
-                      <View
-                        style={[
-                          styles.taskStatusBadge,
-                          task.status === 'Completed'
-                            ? styles.taskStatusCompleted
-                            : task.status === 'In Progress'
-                              ? styles.taskStatusInProgress
-                              : task.status === 'Assigned'
-                                ? styles.taskStatusAssigned
-                                : styles.taskStatusUnassigned,
-                        ]}
-                      >
-                        <Text style={styles.taskStatusText}>{task.status}</Text>
-                      </View>
+                {/* Main Collapsed Task Card */}
+                <TouchableOpacity
+                  style={styles.taskCard}
+                  onPress={() => setShowTaskList(true)}
+                  activeOpacity={0.85}
+                >
+                  <View style={styles.taskCardHeader}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.taskTitle}>Task Assignments</Text>
+                      <Text style={styles.taskMeta}>
+                        {internalTasks.length} total task{internalTasks.length !== 1 ? 's' : ''} • {internalTasks.filter(t => getTaskAssignedVolunteerIds(t).length > 0).length} assigned
+                      </Text>
+                    </View>
+                    <MaterialIcons
+                      name="chevron-right"
+                      size={28}
+                      color="#0F766E"
+                    />
+                  </View>
+                </TouchableOpacity>
+
+                {/* Task List Modal Popup */}
+                <Modal
+                  visible={showTaskList}
+                  animationType="slide"
+                  onRequestClose={() => setShowTaskList(false)}
+                >
+                  <View style={styles.modalContainer}>
+                    <View style={styles.modalHeader}>
+                      <TouchableOpacity onPress={() => setShowTaskList(false)}>
+                        <MaterialIcons name="close" size={24} color="#333" />
+                      </TouchableOpacity>
+                      <Text style={styles.modalTitle}>Task Assignments</Text>
+                      <View style={{ width: 24 }} />
                     </View>
 
-                    <Text style={styles.taskDescription}>{task.description}</Text>
-                    {task.skillsNeeded && task.skillsNeeded.length > 0 && (
-                      <Text style={styles.taskSkillsText}>
-                        Skills needed: {task.skillsNeeded.join(', ')}
-                      </Text>
-                    )}
-                    <Text style={styles.taskAssignmentText}>
-                      Assigned to: {getTaskAssignedVolunteerNames(task).length
-                        ? getTaskAssignedVolunteerNames(task).join(', ')
-                        : 'Unassigned'}
-                    </Text>
-                    <Text style={styles.taskUpdatedText}>
-                      Last updated: {format(new Date(task.updatedAt), 'PPp')}
-                    </Text>
+                    <ScrollView style={styles.modalContent} contentContainerStyle={{ paddingBottom: 40 }}>
+                      <View style={{ padding: 16 }}>
+                        <Text style={[styles.sectionHint, { marginBottom: 16 }]}>
+                          Assign event tasks to joined volunteers so the day stays organized and easy to follow.
+                        </Text>
+                        
+                        <View style={styles.expandedTaskList}>
+                          {internalTasks.map((task, index) => (
+                            <View key={task.id} style={[styles.taskListItem, index !== internalTasks.length - 1 && styles.taskListItemDivider]}>
+                              <View style={styles.taskListItemHeader}>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.taskListItemTitle}>{task.title}</Text>
+                                  <Text style={styles.taskListItemMeta}>
+                                    {task.category} - {task.priority} Priority
+                                  </Text>
+                                </View>
+                                <View
+                                  style={[
+                                    styles.taskStatusBadge,
+                                    task.status === 'Completed'
+                                      ? styles.taskStatusCompleted
+                                      : task.status === 'In Progress'
+                                        ? styles.taskStatusInProgress
+                                        : task.status === 'Assigned'
+                                          ? styles.taskStatusAssigned
+                                          : styles.taskStatusUnassigned,
+                                  ]}
+                                >
+                                  <Text style={styles.taskStatusText}>{task.status}</Text>
+                                </View>
+                              </View>
 
-                    {isAdmin && (
-                      <View style={styles.taskActionRow}>
-                        <TouchableOpacity
-                          style={[styles.applicationButton, styles.approveButton]}
-                          onPress={() => openEditTaskModal(task)}
-                        >
-                          <Text style={styles.applicationButtonText}>Edit / Assign</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[styles.applicationButton, styles.rejectButton]}
-                          onPress={() => handleDeleteInternalTask(task.id)}
-                        >
-                          <Text style={styles.applicationButtonText}>Delete</Text>
-                        </TouchableOpacity>
+                              <Text style={styles.taskListItemDescription}>{task.description}</Text>
+
+                              {task.skillsNeeded && task.skillsNeeded.length > 0 && (
+                                <Text style={styles.taskSkillsText}>
+                                  Skills needed: {task.skillsNeeded.join(', ')}
+                                </Text>
+                              )}
+
+                              <View style={styles.taskListItemAssignment}>
+                                <Text style={styles.taskListItemAssignmentLabel}>
+                                  Assigned to:
+                                </Text>
+                                {getTaskAssignedVolunteerNames(task).length > 0 ? (
+                                  <View style={styles.assignedVolunteersList}>
+                                    {getTaskAssignedVolunteerNames(task).map((volunteerName, idx) => (
+                                      <View key={`${task.id}-volunteer-${idx}`} style={styles.assignedVolunteerChip}>
+                                        <Text style={styles.assignedVolunteerChipText}>{volunteerName}</Text>
+                                      </View>
+                                    ))}
+                                  </View>
+                                ) : (
+                                  <Text style={styles.unassignedText}>Unassigned</Text>
+                                )}
+                              </View>
+
+                              {task.isFieldOfficer && (
+                                <Text style={styles.taskFieldOfficerNote}>
+                                  ⚡ Field Officer permissions enabled for this event
+                                </Text>
+                              )}
+
+                              {isAdmin && (
+                                <View style={styles.taskActionRow}>
+                                  <TouchableOpacity
+                                    style={[styles.applicationButton, styles.approveButton]}
+                                    onPress={() => {
+                                      setShowTaskList(false);
+                                      openEditTaskModal(task);
+                                    }}
+                                  >
+                                    <Text style={styles.applicationButtonText}>Assign</Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    style={[styles.applicationButton, styles.rejectButton]}
+                                    onPress={() => handleDeleteInternalTask(task.id)}
+                                  >
+                                    <Text style={styles.applicationButtonText}>Delete</Text>
+                                  </TouchableOpacity>
+                                </View>
+                              )}
+                            </View>
+                          ))}
+                        </View>
                       </View>
-                    )}
+                    </ScrollView>
                   </View>
-                ))}
+                </Modal>
               </View>
             )}
           </View>
@@ -5262,32 +5565,43 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   Choose an event day, review the uploaded photo, then see which volunteers were marked as attended for that date.
                 </Text>
 
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.attendanceDatePickerRow}
-                >
-                  {availableAttendanceDateKeys.map(dateKey => (
-                    <TouchableOpacity
-                      key={dateKey}
-                      style={[
-                        styles.attendanceDateChip,
-                        resolvedAttendanceDateKey === dateKey && styles.attendanceDateChipActive,
-                      ]}
-                      onPress={() => setSelectedAttendanceDateKey(dateKey)}
-                      activeOpacity={0.85}
-                    >
-                      <Text
-                        style={[
-                          styles.attendanceDateChipText,
-                          resolvedAttendanceDateKey === dateKey && styles.attendanceDateChipTextActive,
-                        ]}
+                <View style={styles.attendanceDatePickerContainer}>
+                  <Text style={styles.attendanceDatePickerLabel}>Attendance day</Text>
+                  <View style={styles.attendanceDatePickerWrapper}>
+                    {isDesktop ? (
+                      <Picker
+                        selectedValue={resolvedAttendanceDateKey}
+                        onValueChange={(value) => setSelectedAttendanceDateKey(value)}
+                        style={styles.attendanceDatePicker}
+                        dropdownIconColor="#64748b"
                       >
-                        {format(new Date(`${dateKey}T00:00:00`), 'MMM d')}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
+                        {availableAttendanceDateKeys.length > 0 ? (
+                          availableAttendanceDateKeys.map(dateKey => (
+                            <Picker.Item
+                              key={dateKey}
+                              label={format(new Date(`${dateKey}T00:00:00`), 'EEE, MMM d')}
+                              value={dateKey}
+                            />
+                          ))
+                        ) : (
+                          <Picker.Item label="No dates available" value="" />
+                        )}
+                      </Picker>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.attendanceDateDropdownMobile}
+                        onPress={() => setAttendancePickerVisible(true)}
+                      >
+                        <Text style={styles.attendanceDateDropdownText} numberOfLines={1}>
+                          {availableAttendanceDateKeys.length > 0
+                            ? format(new Date(`${resolvedAttendanceDateKey}T00:00:00`), 'EEE, MMM d')
+                            : 'No dates available'}
+                        </Text>
+                        <MaterialIcons name="arrow-drop-down" size={24} color="#64748b" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
 
                 <View style={styles.detailsQuickGrid}>
                   <View style={styles.detailsQuickCard}>
@@ -5391,48 +5705,78 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   <View style={styles.updatesList}>
                     {pendingVolunteerRequestEntries.map(requestEntry => (
                       <View key={requestEntry.id} style={styles.applicationCard}>
-                        <View style={styles.applicationHeader}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.applicationName}>{requestEntry.volunteerName}</Text>
-                            <Text style={styles.applicationMeta}>{requestEntry.volunteerEmail}</Text>
-                            <Text style={styles.applicationMeta}>
-                              Requested {format(new Date(requestEntry.requestedAt), 'PPpp')}
-                            </Text>
-                          </View>
-                          <View
-                            style={[
-                              styles.applicationStatusBadge,
-                              styles.applicationStatusPending,
-                            ]}
-                          >
-                            <Text style={styles.applicationStatusText}>{requestEntry.status}</Text>
-                          </View>
-                        </View>
-
-                        {isAdmin && (
-                          <View style={styles.applicationActions}>
-                            <TouchableOpacity
-                              style={[styles.applicationButton, styles.approveButton]}
-                              onPress={() => confirmReviewVolunteerRequest(requestEntry, 'Matched')}
-                            >
-                              <Text style={styles.applicationButtonText}>Approve</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={[styles.applicationButton, styles.rejectButton]}
-                              onPress={() => confirmReviewVolunteerRequest(requestEntry, 'Rejected')}
-                            >
-                              <Text style={styles.applicationButtonText}>Reject</Text>
-                            </TouchableOpacity>
-                          </View>
-                        )}
-
                         <TouchableOpacity
-                          style={styles.viewVolunteerProfileButton}
-                          onPress={() => openVolunteerProfile(requestEntry.volunteerId)}
+                          style={styles.applicationHeaderToggle}
+                          onPress={() => {
+                            setExpandedVolunteerRequestIds(current => {
+                              const next = new Set(current);
+                              if (next.has(requestEntry.id)) {
+                                next.delete(requestEntry.id);
+                              } else {
+                                next.add(requestEntry.id);
+                              }
+                              return next;
+                            });
+                          }}
                         >
-                          <MaterialIcons name="person-search" size={16} color="#2563eb" />
-                          <Text style={styles.viewVolunteerProfileText}>Open Volunteer Profile</Text>
+                          <View style={styles.applicationHeader}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.applicationName}>{requestEntry.volunteerName}</Text>
+                              {expandedVolunteerRequestIds.has(requestEntry.id) && (
+                                <>
+                                  <Text style={styles.applicationMeta}>{requestEntry.volunteerEmail}</Text>
+                                  <Text style={styles.applicationMeta}>
+                                    Requested {format(new Date(requestEntry.requestedAt), 'PPpp')}
+                                  </Text>
+                                </>
+                              )}
+                            </View>
+                            <View style={styles.applicationHeaderRight}>
+                              <View
+                                style={[
+                                  styles.applicationStatusBadge,
+                                  styles.applicationStatusPending,
+                                ]}
+                              >
+                                <Text style={styles.applicationStatusText}>{requestEntry.status}</Text>
+                              </View>
+                              <MaterialIcons
+                                name={expandedVolunteerRequestIds.has(requestEntry.id) ? 'expand-less' : 'expand-more'}
+                                size={20}
+                                color="#64748b"
+                              />
+                            </View>
+                          </View>
                         </TouchableOpacity>
+
+                        {expandedVolunteerRequestIds.has(requestEntry.id) && (
+                          <>
+                            {isAdmin && (
+                              <View style={styles.applicationActions}>
+                                <TouchableOpacity
+                                  style={[styles.applicationButton, styles.approveButton]}
+                                  onPress={() => confirmReviewVolunteerRequest(requestEntry, 'Matched')}
+                                >
+                                  <Text style={styles.applicationButtonText}>Approve</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  style={[styles.applicationButton, styles.rejectButton]}
+                                  onPress={() => confirmReviewVolunteerRequest(requestEntry, 'Rejected')}
+                                >
+                                  <Text style={styles.applicationButtonText}>Reject</Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
+
+                            <TouchableOpacity
+                              style={styles.viewVolunteerProfileButton}
+                              onPress={() => openVolunteerProfile(requestEntry.volunteerId)}
+                            >
+                              <MaterialIcons name="person-search" size={16} color="#2563eb" />
+                              <Text style={styles.viewVolunteerProfileText}>Open Volunteer Profile</Text>
+                            </TouchableOpacity>
+                          </>
+                        )}
                       </View>
                     ))}
                   </View>
@@ -5654,7 +5998,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                     <MaterialIcons name="close" size={24} color="#333" />
                   </TouchableOpacity>
                   <Text style={styles.modalTitle}>
-                    {editingTaskId ? 'Edit Internal Task' : 'Add Internal Task'}
+                    {editingTaskId ? 'Assign Task' : 'Add Internal Task'}
                   </Text>
                   <TouchableOpacity onPress={handleSaveInternalTask}>
                     <Text style={styles.projectModalSave}>Save</Text>
@@ -5662,193 +6006,215 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 </View>
 
                 <ScrollView style={styles.modalContent}>
-              <View style={[styles.formRow, styles.formRowReverse]}>
-                <TextInput
-                  style={[styles.textArea, styles.inputWithLabel, styles.singleLineInput]}
-                  placeholder="Task title"
-                  placeholderTextColor="#999"
-                  value={taskDraft.title}
-                  onChangeText={value => handleTaskDraftChange('title', value)}
-                />
-                <Text style={styles.labelRight}>Title</Text>
-              </View>
-
-              <View style={[styles.formRow, styles.formRowReverse, styles.formRowTop]}>
-                <TextInput
-                  style={[styles.textArea, styles.inputWithLabel]}
-                  placeholder="Describe what needs to be done"
-                  placeholderTextColor="#999"
-                  multiline
-                  numberOfLines={4}
-                  value={taskDraft.description}
-                  onChangeText={value => handleTaskDraftChange('description', value)}
-                />
-                <Text style={[styles.labelRight, styles.labelTop]}>Description</Text>
-              </View>
-
-              <View style={[styles.formRow, styles.formRowReverse]}>
-                <TextInput
-                  style={[styles.textArea, styles.inputWithLabel, styles.singleLineInput]}
-                  placeholder="Task category"
-                  placeholderTextColor="#999"
-                  value={taskDraft.category}
-                  onChangeText={value => handleTaskDraftChange('category', value)}
-                />
-                <Text style={styles.labelRight}>Category</Text>
-              </View>
-
-              <View style={[styles.formRow, styles.formRowReverse, styles.formRowTop]}>
-                <View style={[styles.statusOptions, styles.statusOptionsCard]}>
-                  {(['High', 'Medium', 'Low'] as const).map(priority => (
-                    <TouchableOpacity
-                      key={priority}
-                      style={[
-                        styles.statusOption,
-                        taskDraft.priority === priority && styles.statusOptionSelected,
-                      ]}
-                      onPress={() => handleTaskDraftChange('priority', priority)}
-                    >
-                      <Text
-                        style={[
-                          styles.statusOptionText,
-                          taskDraft.priority === priority && styles.statusOptionTextSelected,
-                        ]}
-                      >
-                        {priority}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <Text style={[styles.labelRight, styles.labelTop]}>Priority</Text>
-              </View>
-
-              <View style={[styles.formRow, styles.formRowReverse, styles.formRowTop]}>
-                <View style={[styles.statusOptions, styles.statusOptionsCard]}>
-                  {([
-                    { label: 'Standard Task', value: false },
-                    { label: 'Field Officer', value: true },
-                  ] as const).map(option => (
-                    <TouchableOpacity
-                      key={option.label}
-                      style={[
-                        styles.statusOption,
-                        taskDraft.isFieldOfficer === option.value && styles.statusOptionSelected,
-                      ]}
-                      onPress={() => handleTaskDraftChange('isFieldOfficer', option.value)}
-                    >
-                      <Text
-                        style={[
-                          styles.statusOptionText,
-                          taskDraft.isFieldOfficer === option.value &&
-                          styles.statusOptionTextSelected,
-                        ]}
-                      >
-                        {option.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <Text style={[styles.labelRight, styles.labelTop]}>Task Type</Text>
-              </View>
-
-              <View style={[styles.formRow, styles.formRowReverse, styles.formRowTop]}>
-                <View style={[styles.statusOptions, styles.statusOptionsCard]}>
-                  {(['Unassigned', 'Assigned', 'In Progress', 'Completed'] as const).map(status => (
-                    <TouchableOpacity
-                      key={status}
-                      style={[
-                        styles.statusOption,
-                        taskDraft.status === status && styles.statusOptionSelected,
-                      ]}
-                      onPress={() => handleTaskDraftChange('status', status)}
-                    >
-                      <Text
-                        style={[
-                          styles.statusOptionText,
-                          taskDraft.status === status && styles.statusOptionTextSelected,
-                        ]}
-                      >
-                        {status}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <Text style={[styles.labelRight, styles.labelTop]}>Status</Text>
-              </View>
-
-              <View style={[styles.formRow, styles.formRowReverse, styles.formRowTop]}>
-                <View style={styles.dropdownWrapper}>
-                  <TouchableOpacity
-                    style={styles.dropdownButton}
-                    onPress={() => setShowSkillsDropdown(!showSkillsDropdown)}
-                  >
-                    <Text style={styles.dropdownButtonText}>
-                      {taskDraft.skillsNeeded.length > 0
-                        ? `${taskDraft.skillsNeeded.length} skill(s) selected`
-                        : 'Select Skills'}
-                    </Text>
-                    <MaterialIcons
-                      name={showSkillsDropdown ? 'expand-less' : 'expand-more'}
-                      size={24}
-                      color="#666"
-                    />
-                  </TouchableOpacity>
-
-                  {showSkillsDropdown && (
-                    <View style={styles.dropdownContent}>
-                      <ScrollView style={{ maxHeight: 200 }}>
-                        {TASK_SKILL_OPTIONS.map(skill => {
-                          const isSelected = taskDraft.skillsNeeded.includes(skill);
-                          return (
-                            <TouchableOpacity
-                              key={skill}
-                              style={[styles.dropdownOption, isSelected && styles.dropdownOptionSelected]}
-                              onPress={() => toggleTaskSkill(skill)}
-                            >
-                              <MaterialIcons
-                                name={isSelected ? 'check-box' : 'check-box-outline-blank'}
-                                size={20}
-                                color={isSelected ? '#0F766E' : '#ccc'}
-                              />
-                              <Text style={styles.dropdownOptionText}>{skill}</Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </ScrollView>
-                      <View style={[styles.customSkillRow, { padding: 8, borderTopWidth: 1, borderColor: '#f3f4f6' }]}>
-                        <TextInput
-                          style={styles.customSkillInput}
-                          placeholder="Add custom skill"
-                          placeholderTextColor="#9ca3af"
-                          value={customTaskSkill}
-                          onChangeText={setCustomTaskSkill}
-                          onSubmitEditing={handleAddCustomTaskSkill}
-                          returnKeyType="done"
-                        />
-                        <TouchableOpacity style={styles.customSkillAddButton} onPress={handleAddCustomTaskSkill}>
-                          <MaterialIcons name="add" size={18} color="#fff" />
-                        </TouchableOpacity>
-                      </View>
+              {editingTaskId ? (
+                // Simplified assignment-only view when editing
+                <>
+                  <View style={[styles.formRow, styles.formRowReverse]}>
+                    <View style={[styles.textArea, styles.inputWithLabel, styles.singleLineInput, { justifyContent: 'center', paddingVertical: 12 }]}>
+                      <Text style={{ fontSize: 16, color: '#333', fontWeight: '500' }}>{taskDraft.title}</Text>
                     </View>
-                  )}
+                    <Text style={styles.labelRight}>Task Name</Text>
+                  </View>
 
-                  {taskDraft.skillsNeeded.length > 0 ? (
-                    <View style={styles.selectedSkillChips}>
-                      {taskDraft.skillsNeeded.map(skill => (
+                  <View style={[styles.formRow, styles.formRowReverse, styles.formRowTop]}>
+                    <View style={[styles.textArea, styles.inputWithLabel, { justifyContent: 'center', paddingVertical: 12 }]}>
+                      <Text style={{ fontSize: 14, color: '#666' }}>{taskDraft.description || 'No description'}</Text>
+                    </View>
+                    <Text style={[styles.labelRight, styles.labelTop]}>Description</Text>
+                  </View>
+                </>
+              ) : (
+                // Full form view when creating new task
+                <>
+                  <View style={[styles.formRow, styles.formRowReverse]}>
+                    <TextInput
+                      style={[styles.textArea, styles.inputWithLabel, styles.singleLineInput]}
+                      placeholder="Task title"
+                      placeholderTextColor="#999"
+                      value={taskDraft.title}
+                      onChangeText={value => handleTaskDraftChange('title', value)}
+                    />
+                    <Text style={styles.labelRight}>Title</Text>
+                  </View>
+
+                  <View style={[styles.formRow, styles.formRowReverse, styles.formRowTop]}>
+                    <TextInput
+                      style={[styles.textArea, styles.inputWithLabel]}
+                      placeholder="Describe what needs to be done"
+                      placeholderTextColor="#999"
+                      multiline
+                      numberOfLines={4}
+                      value={taskDraft.description}
+                      onChangeText={value => handleTaskDraftChange('description', value)}
+                    />
+                    <Text style={[styles.labelRight, styles.labelTop]}>Description</Text>
+                  </View>
+
+                  <View style={[styles.formRow, styles.formRowReverse]}>
+                    <TextInput
+                      style={[styles.textArea, styles.inputWithLabel, styles.singleLineInput]}
+                      placeholder="Task category"
+                      placeholderTextColor="#999"
+                      value={taskDraft.category}
+                      onChangeText={value => handleTaskDraftChange('category', value)}
+                    />
+                    <Text style={styles.labelRight}>Category</Text>
+                  </View>
+
+                  <View style={[styles.formRow, styles.formRowReverse, styles.formRowTop]}>
+                    <View style={[styles.statusOptions, styles.statusOptionsCard]}>
+                      {(['High', 'Medium', 'Low'] as const).map(priority => (
                         <TouchableOpacity
-                          key={skill}
-                          style={styles.selectedSkillChip}
-                          onPress={() => toggleTaskSkill(skill)}
+                          key={priority}
+                          style={[
+                            styles.statusOption,
+                            taskDraft.priority === priority && styles.statusOptionSelected,
+                          ]}
+                          onPress={() => handleTaskDraftChange('priority', priority)}
                         >
-                          <Text style={styles.selectedSkillChipText}>{skill}</Text>
-                          <MaterialIcons name="close" size={14} color="#0F766E" />
+                          <Text
+                            style={[
+                              styles.statusOptionText,
+                              taskDraft.priority === priority && styles.statusOptionTextSelected,
+                            ]}
+                          >
+                            {priority}
+                          </Text>
                         </TouchableOpacity>
                       ))}
                     </View>
-                  ) : null}
-                </View>
-                <Text style={[styles.labelRight, styles.labelTop]}>Skills</Text>
-              </View>
+                    <Text style={[styles.labelRight, styles.labelTop]}>Priority</Text>
+                  </View>
+
+                  <View style={[styles.formRow, styles.formRowReverse, styles.formRowTop]}>
+                    <View style={[styles.statusOptions, styles.statusOptionsCard]}>
+                      {([
+                        { label: 'Standard Task', value: false },
+                        { label: 'Field Officer', value: true },
+                      ] as const).map(option => (
+                        <TouchableOpacity
+                          key={option.label}
+                          style={[
+                            styles.statusOption,
+                            taskDraft.isFieldOfficer === option.value && styles.statusOptionSelected,
+                          ]}
+                          onPress={() => handleTaskDraftChange('isFieldOfficer', option.value)}
+                        >
+                          <Text
+                            style={[
+                              styles.statusOptionText,
+                              taskDraft.isFieldOfficer === option.value &&
+                              styles.statusOptionTextSelected,
+                            ]}
+                          >
+                            {option.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <Text style={[styles.labelRight, styles.labelTop]}>Task Type</Text>
+                  </View>
+
+                  <View style={[styles.formRow, styles.formRowReverse, styles.formRowTop]}>
+                    <View style={[styles.statusOptions, styles.statusOptionsCard]}>
+                      {(['Unassigned', 'Assigned', 'In Progress', 'Completed'] as const).map(status => (
+                        <TouchableOpacity
+                          key={status}
+                          style={[
+                            styles.statusOption,
+                            taskDraft.status === status && styles.statusOptionSelected,
+                          ]}
+                          onPress={() => handleTaskDraftChange('status', status)}
+                        >
+                          <Text
+                            style={[
+                              styles.statusOptionText,
+                              taskDraft.status === status && styles.statusOptionTextSelected,
+                            ]}
+                          >
+                            {status}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <Text style={[styles.labelRight, styles.labelTop]}>Status</Text>
+                  </View>
+
+                  <View style={[styles.formRow, styles.formRowReverse, styles.formRowTop]}>
+                    <View style={styles.dropdownWrapper}>
+                      <TouchableOpacity
+                        style={styles.dropdownButton}
+                        onPress={() => setShowSkillsDropdown(!showSkillsDropdown)}
+                      >
+                        <Text style={styles.dropdownButtonText}>
+                          {taskDraft.skillsNeeded.length > 0
+                            ? `${taskDraft.skillsNeeded.length} skill(s) selected`
+                            : 'Select Skills'}
+                        </Text>
+                        <MaterialIcons
+                          name={showSkillsDropdown ? 'expand-less' : 'expand-more'}
+                          size={24}
+                          color="#666"
+                        />
+                      </TouchableOpacity>
+
+                      {showSkillsDropdown && (
+                        <View style={styles.dropdownContent}>
+                          <ScrollView style={{ maxHeight: 200 }}>
+                            {TASK_SKILL_OPTIONS.map(skill => {
+                              const isSelected = taskDraft.skillsNeeded.includes(skill);
+                              return (
+                                <TouchableOpacity
+                                  key={skill}
+                                  style={[styles.dropdownOption, isSelected && styles.dropdownOptionSelected]}
+                                  onPress={() => toggleTaskSkill(skill)}
+                                >
+                                  <MaterialIcons
+                                    name={isSelected ? 'check-box' : 'check-box-outline-blank'}
+                                    size={20}
+                                    color={isSelected ? '#0F766E' : '#ccc'}
+                                  />
+                                  <Text style={styles.dropdownOptionText}>{skill}</Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </ScrollView>
+                          <View style={[styles.customSkillRow, { padding: 8, borderTopWidth: 1, borderColor: '#f3f4f6' }]}>
+                            <TextInput
+                              style={styles.customSkillInput}
+                              placeholder="Add custom skill"
+                              placeholderTextColor="#9ca3af"
+                              value={customTaskSkill}
+                              onChangeText={setCustomTaskSkill}
+                              onSubmitEditing={handleAddCustomTaskSkill}
+                              returnKeyType="done"
+                            />
+                            <TouchableOpacity style={styles.customSkillAddButton} onPress={handleAddCustomTaskSkill}>
+                              <MaterialIcons name="add" size={18} color="#fff" />
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      )}
+
+                      {taskDraft.skillsNeeded.length > 0 ? (
+                        <View style={styles.selectedSkillChips}>
+                          {taskDraft.skillsNeeded.map(skill => (
+                            <TouchableOpacity
+                              key={skill}
+                              style={styles.selectedSkillChip}
+                              onPress={() => toggleTaskSkill(skill)}
+                            >
+                              <Text style={styles.selectedSkillChipText}>{skill}</Text>
+                              <MaterialIcons name="close" size={14} color="#0F766E" />
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text style={[styles.labelRight, styles.labelTop]}>Skills</Text>
+                  </View>
+                </>
+              )}
 
               <View style={[styles.formRow, styles.formRowReverse, styles.formRowTop]}>
                 <View style={styles.dropdownWrapper}>
@@ -5960,6 +6326,49 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             </ScrollView>
               </>
             )}
+          </View>
+        </Modal>
+        <Modal
+          visible={attendancePickerVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setAttendancePickerVisible(false)}
+        >
+          <View style={styles.proposalModalBackdrop}>
+            <View style={styles.attendancePickerModalCard}>
+              <View style={styles.proposalModalHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.proposalModalTitle}>Select Attendance Day</Text>
+                  <Text style={styles.proposalModalSubtitle}>Choose a date to review</Text>
+                </View>
+                <TouchableOpacity onPress={() => setAttendancePickerVisible(false)} style={styles.proposalModalClose}>
+                  <MaterialIcons name="close" size={18} color="#0f172a" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.attendancePickerModalBody}>
+                <Picker
+                  selectedValue={resolvedAttendanceDateKey}
+                  onValueChange={(value) => setSelectedAttendanceDateKey(value)}
+                  style={styles.attendanceDatePicker}
+                >
+                  {availableAttendanceDateKeys.length > 0 ? (
+                    availableAttendanceDateKeys.map(dateKey => (
+                      <Picker.Item
+                        key={dateKey}
+                        label={format(new Date(`${dateKey}T00:00:00`), 'EEE, MMM d')}
+                        value={dateKey}
+                      />
+                    ))
+                  ) : (
+                    <Picker.Item label="No dates available" value="" />
+                  )}
+                </Picker>
+                <TouchableOpacity style={styles.modalPrimaryButton} onPress={() => setAttendancePickerVisible(false)}>
+                  <Text style={styles.modalPrimaryButtonText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           </View>
         </Modal>
 
@@ -6161,8 +6570,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           </View>
         </Modal>
         {renderProgramProposalModal()}
-        {renderProjectEditorModal()}
       </ScrollView>
+      {renderProjectEditorModal()}
       </View>
     );
   }
@@ -6170,6 +6579,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   return (
     <View style={styles.screenShell}>
       {renderTaskSaveToast()}
+
       <ScrollView
         ref={listScrollViewRef}
         style={styles.container}
@@ -6188,32 +6598,87 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         </View>
       </View>
 
-      <View style={styles.lifecycleStatsRow}>
-        <View style={styles.lifecycleStatPill}>
-          <Text style={styles.lifecycleStatValue}>{projects.filter(project => !project.isEvent).length}</Text>
-          <Text style={styles.lifecycleStatLabel}>Projects</Text>
-        </View>
-        <View style={styles.lifecycleStatPill}>
-          <Text style={styles.lifecycleStatValue}>{availableProgramCount}</Text>
-          <Text style={styles.lifecycleStatLabel}>Programs</Text>
-        </View>
-        <View style={styles.lifecycleStatPill}>
-          <Text style={styles.lifecycleStatValue}>
-            {projects.filter(project => getProjectDisplayStatus(project) === 'In Progress').length}
-          </Text>
-          <Text style={styles.lifecycleStatLabel}>In progress</Text>
-        </View>
-        <View style={styles.lifecycleStatPill}>
-          <Text style={styles.lifecycleStatValue}>
-            {projects.filter(project => getProjectDisplayStatus(project) === 'Planning').length}
-          </Text>
-          <Text style={styles.lifecycleStatLabel}>Planning</Text>
-        </View>
-        <View style={styles.lifecycleStatPill}>
-          <Text style={styles.lifecycleStatValue}>{projects.filter(project => project.isEvent).length}</Text>
-          <Text style={styles.lifecycleStatLabel}>Events</Text>
+      {/* Project status count pills - clickable to filter - only show in projects view */}
+      {programSuiteView === 'projects' && (
+      <View style={{ paddingHorizontal: 12, marginTop: 12, marginBottom: 8 }}>
+        <Text style={{ fontSize: 14, fontWeight: '700', color: '#64748b', marginBottom: 12 }}>Projects</Text>
+        <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-start', backgroundColor: '#f8fafc', padding: 14, borderRadius: 8 }}>
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: statusFilter === 'In Progress' ? '#0369a1' : '#dbeafe', borderRadius: 8 }}
+            onPress={() => setStatusFilter(statusFilter === 'In Progress' ? null : 'In Progress')}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 18, fontWeight: '700', color: statusFilter === 'In Progress' ? '#fff' : '#0369a1' }}>{projects.filter(p => !p.isEvent && getProjectDisplayStatus(p) === 'In Progress').length}</Text>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: statusFilter === 'In Progress' ? '#fff' : '#0369a1' }}>In Progress</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: statusFilter === 'Planning' ? '#92400e' : '#fef3c7', borderRadius: 8 }}
+            onPress={() => setStatusFilter(statusFilter === 'Planning' ? null : 'Planning')}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 18, fontWeight: '700', color: statusFilter === 'Planning' ? '#fff' : '#92400e' }}>{projects.filter(p => !p.isEvent && getProjectDisplayStatus(p) === 'Planning').length}</Text>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: statusFilter === 'Planning' ? '#fff' : '#92400e' }}>Planning</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: statusFilter === 'Completed' ? '#166534' : '#dcfce7', borderRadius: 8 }}
+            onPress={() => setStatusFilter(statusFilter === 'Completed' ? null : 'Completed')}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 18, fontWeight: '700', color: statusFilter === 'Completed' ? '#fff' : '#166534' }}>{projects.filter(p => !p.isEvent && getProjectDisplayStatus(p) === 'Completed').length}</Text>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: statusFilter === 'Completed' ? '#fff' : '#166534' }}>Completed</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: statusFilter === 'Cancelled' ? '#991b1b' : '#fee2e2', borderRadius: 8 }}
+            onPress={() => setStatusFilter(statusFilter === 'Cancelled' ? null : 'Cancelled')}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 18, fontWeight: '700', color: statusFilter === 'Cancelled' ? '#fff' : '#991b1b' }}>{projects.filter(p => !p.isEvent && getProjectDisplayStatus(p) === 'Cancelled').length}</Text>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: statusFilter === 'Cancelled' ? '#fff' : '#991b1b' }}>Cancelled</Text>
+          </TouchableOpacity>
         </View>
       </View>
+      )}
+
+      {/* Event status count pills - clickable to filter - only show in events view */}
+      {programSuiteView === 'events' && (
+      <View style={{ paddingHorizontal: 12, marginBottom: 12 }}>
+        <Text style={{ fontSize: 14, fontWeight: '700', color: '#64748b', marginBottom: 12 }}>Events</Text>
+        <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-start', backgroundColor: '#f0fdf4', padding: 14, borderRadius: 8 }}>
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: statusFilter === 'In Progress' ? '#0369a1' : '#dbeafe', borderRadius: 8 }}
+            onPress={() => setStatusFilter(statusFilter === 'In Progress' ? null : 'In Progress')}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 18, fontWeight: '700', color: statusFilter === 'In Progress' ? '#fff' : '#0369a1' }}>{projects.filter(p => p.isEvent && getProjectDisplayStatus(p) === 'In Progress').length}</Text>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: statusFilter === 'In Progress' ? '#fff' : '#0369a1' }}>In Progress</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: statusFilter === 'Planning' ? '#92400e' : '#fef3c7', borderRadius: 8 }}
+            onPress={() => setStatusFilter(statusFilter === 'Planning' ? null : 'Planning')}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 18, fontWeight: '700', color: statusFilter === 'Planning' ? '#fff' : '#92400e' }}>{projects.filter(p => p.isEvent && getProjectDisplayStatus(p) === 'Planning').length}</Text>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: statusFilter === 'Planning' ? '#fff' : '#92400e' }}>Planning</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: statusFilter === 'Completed' ? '#166534' : '#dcfce7', borderRadius: 8 }}
+            onPress={() => setStatusFilter(statusFilter === 'Completed' ? null : 'Completed')}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 18, fontWeight: '700', color: statusFilter === 'Completed' ? '#fff' : '#166534' }}>{projects.filter(p => p.isEvent && getProjectDisplayStatus(p) === 'Completed').length}</Text>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: statusFilter === 'Completed' ? '#fff' : '#166534' }}>Completed</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: statusFilter === 'Cancelled' ? '#991b1b' : '#fee2e2', borderRadius: 8 }}
+            onPress={() => setStatusFilter(statusFilter === 'Cancelled' ? null : 'Cancelled')}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 18, fontWeight: '700', color: statusFilter === 'Cancelled' ? '#fff' : '#991b1b' }}>{projects.filter(p => p.isEvent && getProjectDisplayStatus(p) === 'Cancelled').length}</Text>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: statusFilter === 'Cancelled' ? '#fff' : '#991b1b' }}>Cancelled</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+      )}
 
       {loadError ? (
         <View style={styles.inlineErrorWrap}>
@@ -6232,74 +6697,31 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       ) : null}
       {!loadError ? (
         <>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-            <TouchableOpacity
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 8,
-                borderRadius: 8,
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                backgroundColor: programSuiteView === 'programs' ? '#166534' : '#ffffff',
-                borderWidth: 1,
-                borderColor: programSuiteView === 'programs' ? '#166534' : '#bbf7d0',
-              }}
-              onPress={() => {
-                setProgramSuiteView('programs');
-                navigation?.setParams?.({ programSuiteView: 'programs' });
-              }}
-              activeOpacity={0.85}
-            >
-              <MaterialIcons name="work" size={18} color={programSuiteView === 'programs' ? '#ffffff' : '#166534'} />
-              <Text style={{ color: programSuiteView === 'programs' ? '#ffffff' : '#166534', fontWeight: '800' }}>Programs</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 8,
-                borderRadius: 8,
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                backgroundColor: programSuiteView === 'projects' ? '#166534' : '#ffffff',
-                borderWidth: 1,
-                borderColor: programSuiteView === 'projects' ? '#166534' : '#bbf7d0',
-              }}
-              onPress={() => {
-                setProgramSuiteView('projects');
-                navigation?.setParams?.({ programSuiteView: 'projects' });
-              }}
-              activeOpacity={0.85}
-            >
-              <MaterialIcons name="folder" size={18} color={programSuiteView === 'projects' ? '#ffffff' : '#166534'} />
-              <Text style={{ color: programSuiteView === 'projects' ? '#ffffff' : '#166534', fontWeight: '800' }}>Projects</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 8,
-                borderRadius: 8,
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                backgroundColor: programSuiteView === 'events' ? '#166534' : '#ffffff',
-                borderWidth: 1,
-                borderColor: programSuiteView === 'events' ? '#166534' : '#bbf7d0',
-              }}
-              onPress={() => {
-                setProgramSuiteView('events');
-                navigation?.setParams?.({ programSuiteView: 'events' });
-              }}
-              activeOpacity={0.85}
-            >
-              <MaterialIcons name="event" size={18} color={programSuiteView === 'events' ? '#ffffff' : '#166534'} />
-              <Text style={{ color: programSuiteView === 'events' ? '#ffffff' : '#166534', fontWeight: '800' }}>Events</Text>
-            </TouchableOpacity>
-          </View>
-
           {programSuiteView === 'programs' ? (
             <>
+          {statusFilter ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12, paddingHorizontal: 4, paddingVertical: 8, backgroundColor: '#f0fdf4', borderRadius: 8, borderWidth: 1, borderColor: '#bbf7d0' }}>
+              <MaterialIcons name="filter-list" size={16} color="#166534" />
+              <Text style={{ flex: 1, fontSize: 13, fontWeight: '700', color: '#166534' }}>
+                Status filter active:{' '}
+                <Text style={{
+                  color: statusFilter === 'In Progress' ? '#1d4ed8'
+                    : statusFilter === 'Planning' ? '#b45309'
+                    : statusFilter === 'Completed' ? '#15803d'
+                    : '#be123c'
+                }}>{statusFilter}</Text>
+                {' '}— switch to Projects or Events to see filtered results.
+              </Text>
+              <TouchableOpacity
+                onPress={() => setStatusFilter(null)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, backgroundColor: '#dcfce7' }}
+                activeOpacity={0.8}
+              >
+                <MaterialIcons name="close" size={14} color="#166534" />
+                <Text style={{ fontSize: 12, fontWeight: '800', color: '#166534' }}>Clear</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
           <View style={{ marginBottom: 24 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
               <Text style={{ fontSize: 20, fontWeight: '700', color: '#1e293b' }}>Programs</Text>
@@ -6310,19 +6732,19 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 </View>
               )}
             </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 16, paddingRight: 20 }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}>
               {programSections.map(section => {
                 const track = activeProgramTracks.find(t => t.id === section.module);
                 const overview = getProgramWebOverview(section.title);
                 return (
-                  <View key={section.module} style={{ position: 'relative' }}>
+                  <View key={section.module} style={{ position: 'relative', flexBasis: 260, flexGrow: 1, maxWidth: 340 }}>
                     <TouchableOpacity
                       style={[
                         styles.programSuiteHeaderCard,
                         {
                           backgroundColor: section.surface,
                           borderColor: expandedProgramModules.has(section.module) ? section.accent : section.border,
-                          width: 360,
+                          width: '100%',
                           minHeight: 300,
                           justifyContent: 'flex-start',
                         },
@@ -6449,7 +6871,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               {isAdmin && (
                 <TouchableOpacity
                   style={{
-                    width: 260,
+                    flexBasis: 260,
+                    flexGrow: 1,
+                    maxWidth: 340,
                     minHeight: 300,
                     borderWidth: 2,
                     borderColor: '#cbd5e1',
@@ -6466,15 +6890,52 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   <Text style={{ color: '#64748b', fontWeight: '600', marginTop: 8 }}>Add program +</Text>
                 </TouchableOpacity>
               )}
-            </ScrollView>
-            {renderProgramWebDetailsModal()}
+            </View>
           </View>
             </>
           ) : programSuiteView === 'projects' ? (
             <>
 
+          {/* Status filter active banner */}
+          {statusFilter ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12, paddingHorizontal: 4, paddingVertical: 8, backgroundColor: '#f0fdf4', borderRadius: 8, borderWidth: 1, borderColor: '#bbf7d0' }}>
+              <MaterialIcons name="filter-list" size={16} color="#166534" />
+              <Text style={{ flex: 1, fontSize: 13, fontWeight: '700', color: '#166534' }}>
+                Showing:{' '}
+                <Text style={{
+                  color: statusFilter === 'In Progress' ? '#1d4ed8'
+                    : statusFilter === 'Planning' ? '#b45309'
+                    : statusFilter === 'Completed' ? '#15803d'
+                    : '#be123c'
+                }}>{statusFilter}</Text>
+                {' '}projects only
+              </Text>
+              <TouchableOpacity
+                onPress={() => setStatusFilter(null)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, backgroundColor: '#dcfce7' }}
+                activeOpacity={0.8}
+              >
+                <MaterialIcons name="close" size={14} color="#166534" />
+                <Text style={{ fontSize: 12, fontWeight: '800', color: '#166534' }}>Clear</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
           <View style={styles.programSuiteStack}>
             {programSections.map(renderProgramSection)}
+            {statusFilter && programSections.every(section =>
+              section.projects.filter(p => !p.isEvent && getProjectDisplayStatus(p) === statusFilter).length === 0
+            ) ? (
+              <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                <MaterialIcons name="search-off" size={36} color="#94a3b8" />
+                <Text style={{ marginTop: 12, fontSize: 15, fontWeight: '700', color: '#64748b' }}>
+                  No {statusFilter} projects
+                </Text>
+                <Text style={{ marginTop: 4, fontSize: 13, color: '#94a3b8' }}>
+                  No projects match this status filter.
+                </Text>
+              </View>
+            ) : null}
           </View>
 
           <View
@@ -6850,16 +7311,50 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 </View>
               </View>
               {eventProjectSections.length ? (
-                eventProjectSections.map(renderEventProjectSection)
-              ) : (
-                <View style={styles.programSuiteEmptyState}>
-                  <MaterialIcons name="folder-open" size={32} color="#94a3b8" />
-                  <Text style={styles.programSuiteEmptyTitle}>Create a project first</Text>
-                  <Text style={styles.programSuiteEmptyMeta}>
-                    Events need a parent project before they can be saved.
-                  </Text>
-                </View>
-              )}
+                <>
+                  {statusFilter ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12, paddingHorizontal: 4, paddingVertical: 8, backgroundColor: '#f0fdf4', borderRadius: 8, borderWidth: 1, borderColor: '#bbf7d0' }}>
+                      <MaterialIcons name="filter-list" size={16} color="#166534" />
+                      <Text style={{ flex: 1, fontSize: 13, fontWeight: '700', color: '#166534' }}>
+                        Showing:{' '}
+                        <Text style={{
+                          color: statusFilter === 'In Progress' ? '#1d4ed8'
+                            : statusFilter === 'Planning' ? '#b45309'
+                            : statusFilter === 'Completed' ? '#15803d'
+                            : '#be123c'
+                        }}>{statusFilter}</Text>
+                        {' '}events only
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => setStatusFilter(null)}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, backgroundColor: '#dcfce7' }}
+                        activeOpacity={0.8}
+                      >
+                        <MaterialIcons name="close" size={14} color="#166534" />
+                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#166534' }}>Clear</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                  {eventProjectSections.map(renderEventProjectSection)}
+                  {statusFilter && eventProjectSections.every(s =>
+                    s.events.filter(e => getProjectDisplayStatus(e) === statusFilter).length === 0
+                  ) ? (
+                    <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                      <MaterialIcons name="search-off" size={36} color="#94a3b8" />
+                      <Text style={{ marginTop: 12, fontSize: 15, fontWeight: '700', color: '#64748b' }}>No {statusFilter} events</Text>
+                      <Text style={{ marginTop: 4, fontSize: 13, color: '#94a3b8' }}>No events match this status filter.</Text>
+                    </View>
+                  ) : null}
+                </>
+            ) : (
+              <View style={styles.programSuiteEmptyState}>
+                <MaterialIcons name="event-busy" size={32} color="#94a3b8" />
+                <Text style={styles.programSuiteEmptyTitle}>No events yet</Text>
+                <Text style={styles.programSuiteEmptyMeta}>
+                  Create an event from a project and it will appear here.
+                </Text>
+              </View>
+            )}
             </View>
           )}
         </>
@@ -6873,8 +7368,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
       {renderProgramProposalModal()}
       {renderProgramCrudModal()}
-      {renderProjectEditorModal()}
+      {renderProgramWebDetailsModal()}
     </ScrollView>
+    {renderProjectEditorModal()}
     </View>
   );
 }
@@ -6901,18 +7397,18 @@ const styles = StyleSheet.create({
   detailsHeaderBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
-    marginBottom: 18,
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-    borderRadius: 22,
+    gap: 10,
+    marginBottom: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#dbe7df',
     backgroundColor: '#f8fcfa',
     shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.05,
-    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
     elevation: 2,
   },
   detailsBackButton: {
@@ -6944,24 +7440,24 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   detailsHeaderTitle: {
-    fontSize: 26,
+    fontSize: 20,
     fontWeight: '800',
     color: '#0f172a',
   },
   detailsHeaderMeta: {
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 11,
+    lineHeight: 16,
     color: '#475569',
   },
   detailsHeaderStatusPill: {
     borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     alignSelf: 'flex-start',
   },
   detailsHeaderStatusText: {
     color: '#ffffff',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
   },
   lifecycleHero: {
@@ -6995,27 +7491,93 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   lifecycleStatPill: {
-    minWidth: 102,
+    minWidth: 84,
     backgroundColor: '#ecfdf5',
     borderWidth: 1,
     borderColor: '#bbf7d0',
     borderRadius: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
     alignItems: 'center',
   },
+  lifecycleStatPillActive: {
+    backgroundColor: '#166534',
+    borderColor: '#166534',
+  },
+  lifecycleStatPillInProgress: {
+    backgroundColor: '#eff6ff',
+    borderColor: '#bfdbfe',
+  },
+  lifecycleStatPillActiveInProgress: {
+    backgroundColor: '#1d4ed8',
+    borderColor: '#1d4ed8',
+  },
+  lifecycleStatPillPlanning: {
+    backgroundColor: '#fefce8',
+    borderColor: '#fde68a',
+  },
+  lifecycleStatPillActivePlanning: {
+    backgroundColor: '#b45309',
+    borderColor: '#b45309',
+  },
+  lifecycleStatPillEvents: {
+    backgroundColor: '#fdf4ff',
+    borderColor: '#e9d5ff',
+  },
+  lifecycleStatPillActiveEvents: {
+    backgroundColor: '#7c3aed',
+    borderColor: '#7c3aed',
+  },
+  lifecycleStatPillCompleted: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#86efac',
+  },
+  lifecycleStatPillActiveCompleted: {
+    backgroundColor: '#15803d',
+    borderColor: '#15803d',
+  },
+  lifecycleStatPillCancelled: {
+    backgroundColor: '#fff1f2',
+    borderColor: '#fecdd3',
+  },
+  lifecycleStatPillActiveCancelled: {
+    backgroundColor: '#be123c',
+    borderColor: '#be123c',
+  },
   lifecycleStatValue: {
-    fontSize: 24,
-    lineHeight: 28,
+    fontSize: 18,
+    lineHeight: 22,
     fontWeight: '800',
     color: '#14532d',
   },
+  lifecycleStatValueActive: { color: '#ffffff' },
+  lifecycleStatValueInProgress: { color: '#1d4ed8' },
+  lifecycleStatValueActiveInProgress: { color: '#ffffff' },
+  lifecycleStatValuePlanning: { color: '#b45309' },
+  lifecycleStatValueActivePlanning: { color: '#ffffff' },
+  lifecycleStatValueEvents: { color: '#7c3aed' },
+  lifecycleStatValueActiveEvents: { color: '#ffffff' },
+  lifecycleStatValueCompleted: { color: '#15803d' },
+  lifecycleStatValueActiveCompleted: { color: '#ffffff' },
+  lifecycleStatValueCancelled: { color: '#be123c' },
+  lifecycleStatValueActiveCancelled: { color: '#ffffff' },
   lifecycleStatLabel: {
     marginTop: 2,
     fontSize: 11,
     color: '#166534',
     fontWeight: '700',
   },
+  lifecycleStatLabelActive: { color: '#bbf7d0' },
+  lifecycleStatLabelInProgress: { color: '#1d4ed8' },
+  lifecycleStatLabelActiveInProgress: { color: '#bfdbfe' },
+  lifecycleStatLabelPlanning: { color: '#b45309' },
+  lifecycleStatLabelActivePlanning: { color: '#fde68a' },
+  lifecycleStatLabelEvents: { color: '#7c3aed' },
+  lifecycleStatLabelActiveEvents: { color: '#e9d5ff' },
+  lifecycleStatLabelCompleted: { color: '#15803d' },
+  lifecycleStatLabelActiveCompleted: { color: '#bbf7d0' },
+  lifecycleStatLabelCancelled: { color: '#be123c' },
+  lifecycleStatLabelActiveCancelled: { color: '#fecdd3' },
   inlineErrorWrap: {
     marginBottom: 16,
   },
@@ -7061,19 +7623,19 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
   },
   programSuiteIconWrap: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   programSuiteTitleWrap: {
     flex: 1,
-    gap: 6,
+    gap: 4,
   },
   programSuiteTitle: {
-    fontSize: 28,
+    fontSize: 20,
     fontWeight: '800',
     color: '#0f172a',
   },
@@ -7171,11 +7733,11 @@ const styles = StyleSheet.create({
     marginBottom: 3,
   },
   programWebsiteCardTitle: {
-    fontSize: 24,
-    lineHeight: 29,
+    fontSize: 18,
+    lineHeight: 22,
     fontWeight: '900',
     color: '#0f172a',
-    marginBottom: 6,
+    marginBottom: 4,
   },
   programWebsiteCardLead: {
     fontSize: 12,
@@ -7197,7 +7759,7 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   programWebsiteCardMetricValue: {
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: '900',
   },
   programWebsiteCardMetricLabel: {
@@ -7685,21 +8247,21 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   programSuiteMetricPill: {
-    minWidth: 108,
+    minWidth: 90,
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderRadius: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 7,
     alignItems: 'center',
   },
   programSuiteMetricValue: {
-    fontSize: 22,
+    fontSize: 17,
     fontWeight: '800',
   },
   programSuiteMetricLabel: {
-    marginTop: 3,
-    fontSize: 11,
+    marginTop: 2,
+    fontSize: 10,
     fontWeight: '700',
     color: '#475569',
     textTransform: 'uppercase',
@@ -7796,14 +8358,14 @@ const styles = StyleSheet.create({
     width: '35%',
     minWidth: 260,
     backgroundColor: '#2f8f45',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   compactCalendarAgendaPane: {
     width: '30%',
-    minWidth: 220,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    minWidth: 200,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   programSuiteSchedulerAgendaPaneStacked: {
     width: '100%',
@@ -7811,14 +8373,14 @@ const styles = StyleSheet.create({
   },
   programSuiteSchedulerAgendaTitle: {
     color: '#f1fff4',
-    fontSize: 17,
+    fontSize: 14,
     fontWeight: '700',
-    marginBottom: 8,
+    marginBottom: 5,
   },
   programSuiteSchedulerAgendaMeta: {
     color: '#d6f8de',
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: 11,
+    lineHeight: 16,
     fontWeight: '600',
   },
   programSuiteSchedulerControls: {
@@ -8015,33 +8577,33 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#bbf7d0',
-    padding: 16,
+    padding: 10,
     shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
     elevation: 2,
   },
   programProjectBox: {
     backgroundColor: '#ffffff',
     borderRadius: 10,
     borderWidth: 1,
-    padding: 16,
+    padding: 10,
     shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
     elevation: 2,
   },
   eventProjectBoxHeaderCopy: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
   },
   eventProjectBoxIcon: {
-    width: 42,
-    height: 42,
+    width: 34,
+    height: 34,
     borderRadius: 8,
     backgroundColor: '#dcfce7',
     borderWidth: 1,
@@ -8064,34 +8626,34 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   projectBox: {
-    width: 220,
-    minHeight: 150,
+    width: 200,
+    minHeight: 130,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#dbeafe',
     backgroundColor: '#ffffff',
-    padding: 12,
-    gap: 8,
+    padding: 10,
+    gap: 6,
     shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
   },
   eventBox: {
-    width: 220,
-    minHeight: 150,
+    width: 200,
+    minHeight: 130,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#99f6e4',
     backgroundColor: '#ffffff',
-    padding: 12,
-    gap: 8,
+    padding: 10,
+    gap: 6,
     shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
   },
   eventBoxTopRow: {
     flexDirection: 'row',
@@ -8241,24 +8803,24 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   infoRow: {
-    minHeight: 66,
+    minHeight: 50,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   infoRowLeading: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
   },
   infoIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     backgroundColor: '#ecfdf5',
     alignItems: 'center',
     justifyContent: 'center',
@@ -8267,14 +8829,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   infoRowTitle: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '700',
     color: '#2b2f42',
-    lineHeight: 21,
+    lineHeight: 18,
   },
   infoRowSubtitle: {
-    marginTop: 3,
-    fontSize: 13,
+    marginTop: 2,
+    fontSize: 11,
     color: '#7b859f',
   },
   infoDivider: {
@@ -8297,29 +8859,29 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
     backgroundColor: '#f8fafc',
-    paddingHorizontal: 14,
-    paddingTop: 14,
-    paddingBottom: 16,
-    gap: 12,
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    paddingBottom: 10,
+    gap: 8,
   },
   projectEventPanelHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    gap: 12,
+    gap: 8,
   },
   projectEventPanelCopy: {
     flex: 1,
-    gap: 4,
+    gap: 2,
   },
   projectEventPanelTitle: {
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: '800',
     color: '#0f172a',
   },
   projectEventPanelMeta: {
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: 11,
+    lineHeight: 16,
     color: '#64748b',
   },
   projectEventPanelButton: {
@@ -8361,32 +8923,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 10,
+    gap: 8,
     backgroundColor: '#ffffff',
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#97a8b8',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   projectEventListItemCopy: {
     flex: 1,
-    gap: 4,
+    gap: 2,
   },
   projectEventListItemTitle: {
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '800',
     color: '#0f172a',
   },
   projectEventListItemMeta: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#475569',
-    lineHeight: 18,
+    lineHeight: 15,
   },
   projectEventListItemSummary: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#64748b',
-    lineHeight: 18,
+    lineHeight: 15,
   },
   pointsBadge: {
     flexDirection: 'row',
@@ -8476,55 +9038,55 @@ const styles = StyleSheet.create({
   },
   detailsCard: {
     backgroundColor: '#fcfdfc',
-    borderRadius: 28,
-    padding: 24,
+    borderRadius: 20,
+    padding: 16,
     borderWidth: 1,
     borderColor: '#9fb4a6',
     shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.08,
-    shadowRadius: 26,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 18,
+    elevation: 3,
   },
   detailsHero: {
     backgroundColor: '#f4fbf6',
     borderWidth: 1,
     borderColor: '#98b5a3',
-    borderRadius: 26,
-    padding: 22,
-    marginBottom: 26,
+    borderRadius: 18,
+    padding: 14,
+    marginBottom: 16,
   },
   detailsHeroHeader: {
-    gap: 14,
-    marginBottom: 18,
+    gap: 10,
+    marginBottom: 12,
   },
   detailsHeroCopy: {
-    gap: 10,
+    gap: 6,
   },
   detailsHeroHighlights: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: 18,
+    gap: 8,
+    marginBottom: 12,
   },
   detailsHeroHighlight: {
-    minWidth: 190,
+    minWidth: 160,
     flexGrow: 1,
     flexShrink: 1,
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 18,
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#9fb4a6',
     backgroundColor: '#ffffff',
   },
   detailsHeroHighlightIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#ecfdf5',
@@ -8653,15 +9215,15 @@ const styles = StyleSheet.create({
     letterSpacing: 0.9,
   },
   detailsTitle: {
-    fontSize: 30,
+    fontSize: 22,
     fontWeight: '800',
     color: '#0f172a',
-    lineHeight: 36,
+    lineHeight: 28,
   },
   detailsSubtitle: {
-    fontSize: 15,
+    fontSize: 13,
     color: '#475569',
-    lineHeight: 25,
+    lineHeight: 20,
   },
   detailsHeroStatus: {
     paddingHorizontal: 14,
@@ -8959,6 +9521,34 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingBottom: 4,
     paddingRight: 8,
+  },
+  attendanceDatePickerContainer: {
+    marginTop: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    backgroundColor: '#ffffff',
+    padding: 12,
+  },
+  attendanceDatePickerLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  attendanceDatePickerWrapper: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+  },
+  attendanceDatePicker: {
+    color: '#0f172a',
+    fontSize: 14,
+    paddingHorizontal: 10,
+    minHeight: 44,
   },
   attendanceDateChip: {
     borderRadius: 999,
@@ -9360,6 +9950,85 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0f172a',
   },
+  expandedTaskList: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginTop: 2,
+  },
+  taskListItem: {
+    padding: 14,
+    backgroundColor: '#ffffff',
+  },
+  taskListItemDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  taskListItemHeader: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'flex-start',
+    marginBottom: 10,
+  },
+  taskListItemTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  taskListItemMeta: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 4,
+  },
+  taskListItemDescription: {
+    fontSize: 12,
+    color: '#475569',
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  taskListItemAssignment: {
+    marginTop: 10,
+    marginBottom: 10,
+  },
+  taskListItemAssignmentLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0f172a',
+    marginBottom: 8,
+  },
+  assignedVolunteersList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 6,
+  },
+  assignedVolunteerChip: {
+    backgroundColor: '#dbeafe',
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#0284c7',
+  },
+  assignedVolunteerChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#0c4a6e',
+  },
+  unassignedText: {
+    fontSize: 12,
+    color: '#94a3b8',
+    fontStyle: 'italic',
+  },
+  taskFieldOfficerNote: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#ea580c',
+    marginTop: 8,
+    marginBottom: 8,
+  },
   volunteerCard: {
     backgroundColor: '#ffffff',
     borderRadius: 18,
@@ -9457,6 +10126,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  applicationHeaderToggle: {
+    paddingVertical: 8,
+  },
+  applicationHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   applicationButton: {
     flex: 1,
@@ -10029,6 +10706,71 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
+  attendanceDateDropdownMobile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  attendanceDateDropdownText: {
+    fontSize: 14,
+    color: '#0f172a',
+    flex: 1,
+    marginRight: 8,
+  },
+  attendancePickerModalCard: {
+    width: '100%',
+    maxWidth: 520,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.16,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 12,
+    gap: 14,
+  },
+  attendancePickerModalBody: {
+    gap: 12,
+    paddingTop: 6,
+  },
+  taskBoardModalCard: {
+    width: '100%',
+    maxWidth: 820,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.16,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 12,
+    gap: 14,
+  },
+  taskBoardModalScroll: {
+    maxHeight: Platform.select({ web: 680, default: 520 }),
+  },
+  taskBoardModalScrollContent: {
+    paddingBottom: 12,
+  },
+  modalPrimaryButton: {
+    marginTop: 8,
+    borderRadius: 12,
+    backgroundColor: '#166534',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  modalPrimaryButtonText: {
+    color: '#fff',
+    fontWeight: '800',
+  },
   attendanceModalStatValue: {
     fontSize: 22,
     fontWeight: '800',
@@ -10582,3 +11324,482 @@ const styles = StyleSheet.create({
 
 
 
+
+const programWebStyles = StyleSheet.create({
+  // Modal backdrop
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  window: {
+    width: '100%',
+    maxWidth: 960,
+    maxHeight: '92%',
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 24,
+    elevation: 16,
+  },
+  // Browser chrome
+  browserBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#f1f5f9',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  browserDots: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  browserDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  browserAddressBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#ffffff',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  browserUrl: {
+    flex: 1,
+    fontSize: 12,
+    color: '#475569',
+    fontFamily: 'monospace',
+  },
+  browserClose: {
+    padding: 4,
+  },
+  // Page scroll
+  pageScroll: {
+    flex: 1,
+  },
+  // Navbar
+  navbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 12,
+  },
+  navBrand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  navLogo: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navBrandText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  navBrandSep: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 14,
+  },
+  navBrandSub: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.85)',
+    fontWeight: '600',
+  },
+  navLinks: {
+    flexDirection: 'row',
+    gap: 18,
+  },
+  navLink: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.85)',
+    fontWeight: '600',
+  },
+  navCta: {
+    backgroundColor: '#ffffff',
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  navCtaText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  // Hero
+  hero: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingVertical: 40,
+    gap: 24,
+  },
+  heroContent: {
+    flex: 1,
+  },
+  heroEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: 'rgba(255,255,255,0.7)',
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+    marginBottom: 8,
+  },
+  heroTitle: {
+    fontSize: 36,
+    fontWeight: '900',
+    color: '#ffffff',
+    marginBottom: 12,
+    lineHeight: 42,
+  },
+  heroBody: {
+    fontSize: 15,
+    lineHeight: 24,
+    color: 'rgba(255,255,255,0.85)',
+    marginBottom: 24,
+  },
+  heroStats: {
+    flexDirection: 'row',
+    gap: 20,
+  },
+  heroStat: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  heroStatValue: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#ffffff',
+  },
+  heroStatLabel: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.7)',
+    fontWeight: '600',
+  },
+  heroIconWrap: {
+    width: 120,
+    height: 120,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Sections
+  section: {
+    paddingHorizontal: 32,
+    paddingVertical: 32,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  sectionEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  sectionTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 20,
+  },
+  bodyText: {
+    fontSize: 14,
+    lineHeight: 22,
+    color: '#475569',
+  },
+  // Intro grid
+  introGrid: {
+    flexDirection: 'row',
+    gap: 24,
+    flexWrap: 'wrap',
+  },
+  introMain: {
+    flex: 2,
+    minWidth: 240,
+    gap: 12,
+  },
+  introTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0f172a',
+    lineHeight: 28,
+    marginBottom: 8,
+  },
+  asideCard: {
+    flex: 1,
+    minWidth: 180,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 16,
+    gap: 10,
+  },
+  asideLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
+  asideRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  asideDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  asideText: {
+    fontSize: 13,
+    color: '#334155',
+    fontWeight: '600',
+  },
+  // Services
+  serviceGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 14,
+  },
+  serviceCard: {
+    flexBasis: 200,
+    flexGrow: 1,
+    borderTopWidth: 3,
+    borderRadius: 10,
+    padding: 16,
+    gap: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  serviceIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  serviceTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  serviceText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#64748b',
+  },
+  // Workflow
+  workflowList: {
+    gap: 16,
+  },
+  workflowRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 16,
+  },
+  workflowNum: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  workflowNumText: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#ffffff',
+  },
+  workflowCopy: {
+    flex: 1,
+    paddingTop: 4,
+  },
+  workflowTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 4,
+  },
+  workflowText: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: '#475569',
+  },
+  // Impact
+  impactGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  impactCard: {
+    flexBasis: 160,
+    flexGrow: 1,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+  },
+  impactValue: {
+    fontSize: 28,
+    fontWeight: '900',
+    marginBottom: 4,
+  },
+  impactLabel: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  // Projects list
+  projectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  projectRowIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  projectRowTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  projectRowMeta: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  projectRowBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  projectRowBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  // Empty state
+  emptyPanel: {
+    alignItems: 'center',
+    paddingVertical: 32,
+    gap: 8,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  emptyText: {
+    fontSize: 13,
+    color: '#94a3b8',
+    textAlign: 'center',
+    maxWidth: 320,
+  },
+  // Footer
+  footer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 32,
+    paddingVertical: 20,
+    gap: 12,
+  },
+  footerText: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.8)',
+    fontWeight: '600',
+  },
+  footerActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  footerSecondary: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.4)',
+  },
+  footerSecondaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  footerPrimary: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  footerPrimaryText: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+});
+
+const projectEditorStyles = StyleSheet.create({
+  // Web: keep the editor inside the content area so the left navigation remains usable.
+  webOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    zIndex: 100,
+  },
+  // Mobile: full-screen overlay via Modal
+  overlay: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  overlayDismiss: {
+    flex: 1,
+  },
+  drawer: {
+    width: '55%',
+    minWidth: 680,
+    maxWidth: 960,
+    backgroundColor: '#ffffff',
+    shadowColor: '#000',
+    shadowOffset: { width: -4, height: 0 },
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+});

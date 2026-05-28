@@ -58,8 +58,7 @@ DATA_QUALITY_CONSTRAINT_SPECS = [
     ("volunteers", "volunteers_workplace_len_chk", "workplace_or_school is null or length(workplace_or_school) <= 120"),
     ("volunteers", "volunteers_college_course_len_chk", "college_course is null or length(college_course) <= 120"),
     ("volunteers", "volunteers_certifications_len_chk", "certifications_or_trainings is null or length(certifications_or_trainings) <= 1000"),
-    ("volunteers", "volunteers_hobbies_len_chk", "hobbies_and_interests is null or length(hobbies_and_interests) <= 1000"),
-    ("volunteers", "volunteers_special_skills_len_chk", "special_skills is null or length(special_skills) <= 1000"),
+    
     ("volunteers", "volunteers_video_url_len_chk", "video_briefing_url is null or length(video_briefing_url) <= 500"),
     ("projects", "projects_id_len_chk", "length(projects_id) between 1 and 64"),
     ("projects", "projects_volunteers_needed_chk", "volunteers_needed >= 0"),

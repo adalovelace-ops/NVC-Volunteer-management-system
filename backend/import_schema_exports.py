@@ -159,8 +159,6 @@ def _volunteer_item(row: dict[str, str]) -> dict[str, Any]:
         "workplaceOrSchool": _clean_string(row.get("workplace_or_school")),
         "collegeCourse": _clean_string(row.get("college_course")),
         "certificationsOrTrainings": _clean_string(row.get("certifications_or_trainings")),
-        "hobbiesAndInterests": _clean_string(row.get("hobbies_and_interests")),
-        "specialSkills": _clean_string(row.get("special_skills")),
         "videoBriefingUrl": _clean_string(row.get("video_briefing_url")),
         "affiliations": _parse_json_field(row.get("affiliations"), []),
         "registrationStatus": _clean_string(row.get("registration_status")),

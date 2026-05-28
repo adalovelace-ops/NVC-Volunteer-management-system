@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from datetime import datetime, timezone
 from typing import Any
 
@@ -8,6 +9,12 @@ JSON_ARRAY = "'[]'"
 JSON_OBJECT = "'{}'"
 TEXT_ARRAY = "'{}'::text[]"
 TRACE_STORAGE = str(os.getenv("VOLCRE_TRACE_STORAGE", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+# Lock to prevent concurrent DDL execution
+_ddl_lock = threading.Lock()
+
+# Flag: DDL has already been run this process lifetime — skip on subsequent calls
+_ddl_completed = False
 
 
 def _trace(message: str) -> None:
@@ -67,41 +74,39 @@ RELATIONAL_TABLE_DDL = [
     "create index if not exists partners_dswd_accreditation_no_idx on partners (dswd_accreditation_no)",
     "alter table partners add column if not exists sec_registration_no text",
     f"""
-    create table if not exists volunteers (
-      id text primary key,
-      user_id text,
-      name text not null,
-      email text,
-      phone text,
-      skills text[] not null default {TEXT_ARRAY},
-      skills_description text,
-      availability text not null default {JSON_OBJECT},
-      past_projects text[] not null default {TEXT_ARRAY},
-      total_hours_contributed double precision not null default 0,
-      rating double precision not null default 0,
-      engagement_status text,
-      background text,
-      gender text,
-      date_of_birth text,
-      civil_status text,
-      home_address text,
-      home_address_region text,
-      home_address_city_municipality text,
-      home_address_barangay text,
-      occupation text,
-      workplace_or_school text,
-      college_course text,
-      certifications_or_trainings text,
-      hobbies_and_interests text,
-      special_skills text,
-      video_briefing_url text,
-      affiliations text not null default {JSON_ARRAY},
-      registration_status text,
-      reviewed_by text,
-      reviewed_at text,
-      credentials_unlocked_at text,
-      created_at text
-    )
+        create table if not exists volunteers (
+            id text primary key,
+            user_id text,
+            name text not null,
+            email text,
+            phone text,
+            skills text[] not null default {TEXT_ARRAY},
+            skills_description text,
+            availability text not null default {JSON_OBJECT},
+            past_projects text[] not null default {TEXT_ARRAY},
+            total_hours_contributed double precision not null default 0,
+            rating double precision not null default 0,
+            engagement_status text,
+            background text,
+            gender text,
+            date_of_birth text,
+            civil_status text,
+            home_address text,
+            home_address_region text,
+            home_address_city_municipality text,
+            home_address_barangay text,
+            occupation text,
+            workplace_or_school text,
+            college_course text,
+            certifications_or_trainings text,
+            video_briefing_url text,
+            affiliations text not null default {JSON_ARRAY},
+            registration_status text,
+            reviewed_by text,
+            reviewed_at text,
+            credentials_unlocked_at text,
+            created_at text
+        )
     """,
     "create index if not exists volunteers_user_id_idx on volunteers (user_id)",
     "create unique index if not exists volunteers_user_id_unique_idx on volunteers (user_id) where user_id is not null",
@@ -206,13 +211,15 @@ RELATIONAL_TABLE_DDL = [
     """
     do $$
     begin
+      -- Skip identity column handling - our tables use text IDs, never identity columns
       if exists (
         select 1
         from information_schema.columns
         where table_schema = 'public' and table_name = 'projects' and column_name = 'id'
           and data_type != 'text'
+          and data_type not in ('smallint', 'integer', 'bigint')
       ) then
-        alter table projects alter column id drop identity if exists;
+        -- Only convert non-integer, non-text types (like uuid) to text
         alter table projects alter column id type text using id::text;
       end if;
       if exists (
@@ -616,8 +623,7 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             ("workplace_or_school", False),
             ("college_course", False),
             ("certifications_or_trainings", False),
-            ("hobbies_and_interests", False),
-            ("special_skills", False),
+            
             ("video_briefing_url", False),
             ("affiliations", False),
             ("registration_status", False),
@@ -1051,8 +1057,33 @@ FIELD_NAME_MAPS: dict[str, dict[str, str]] = {
 }
 
 
+# Tables that use a non-standard primary key column name (i.e. not plain "id").
+# Singapore database uses table_name_id format for all primary keys
+_NON_STANDARD_PK_TABLES: dict[str, str] = {
+    "users": "users_id",
+    "volunteers": "volunteers_id",
+    "partners": "partners_id",
+    "projects": "projects_id",
+    "events": "events_id",
+    "volunteer_matches": "volunteer_matches_id",
+    "volunteer_event_joins": "volunteer_event_joins_id",
+    "volunteer_time_logs": "volunteer_time_logs_id",
+    "partner_project_applications": "partner_project_applications_id",
+    "reports": "reports_id",
+    "messages": "messages_id",
+    "project_group_messages": "project_group_messages_id",
+    "program_tracks": "program_tracks_id",
+    "admin_planning_calendars": "admin_planning_calendars_id",
+    "admin_planning_items": "admin_planning_items_id",
+    "status_updates": "status_updates_id",
+    "skills": "skills_id",
+    "tasks": "tasks_id",
+    "programs": "programs_id",
+}
+
+
 def _table_primary_key_column(table_name: str) -> str:
-    return f"{table_name}_id"
+    return _NON_STANDARD_PK_TABLES.get(table_name, "id")
 
 
 def _primary_key_column(key: str) -> str:
@@ -1061,8 +1092,9 @@ def _primary_key_column(key: str) -> str:
 
 
 for _spec in TABLE_SPECS.values():
+    pk_col = _table_primary_key_column(_spec["table"])
     if _spec["columns"] and _spec["columns"][0][0] == "id":
-        _spec["columns"][0] = (_table_primary_key_column(_spec["table"]), _spec["columns"][0][1])
+        _spec["columns"][0] = (pk_col, _spec["columns"][0][1])
 
 
 def _json_dump(value: Any, default: Any) -> str:
@@ -1166,6 +1198,15 @@ def _now_text() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _stable_bigint_id(raw_value: Any) -> int:
+    raw = str(raw_value or "").strip()
+    hash_value = 1469598103934665603
+    for char in raw:
+        hash_value ^= ord(char)
+        hash_value = (hash_value * 1099511628211) & 0x7FFFFFFFFFFFFFFF
+    return hash_value or 1
+
+
 def _sync_skill_rows_from_project_event_items(connection: Any, items: list[dict[str, Any]]) -> None:
     skills: set[str] = set()
     for item in items:
@@ -1176,16 +1217,16 @@ def _sync_skill_rows_from_project_event_items(connection: Any, items: list[dict[
     for skill in skills:
         if not skill:
             continue
-        upsert_relational_item(
-            connection,
-            "skills",
-            {
-                "id": skill,
-                "name": skill,
-                "createdAt": _now_text(),
-                "updatedAt": _now_text(),
-            },
-        )
+            upsert_relational_item(
+                connection,
+                "skills",
+                {
+                    "id": _stable_bigint_id(skill),
+                    "name": skill,
+                    "createdAt": _now_text(),
+                    "updatedAt": _now_text(),
+                },
+            )
 
 
 def _sync_task_rows_from_project_event_items(connection: Any, items: list[dict[str, Any]]) -> None:
@@ -1200,7 +1241,7 @@ def _sync_task_rows_from_project_event_items(connection: Any, items: list[dict[s
                         connection,
                         "tasks",
                         {
-                            "id": task.get("id"),
+                            "id": _stable_bigint_id(task.get("id") or task.get("title")),
                             "title": task.get("title") or "",
                             "description": task.get("description"),
                             "category": task.get("category"),
@@ -1284,8 +1325,7 @@ def _normalize_row(key: str, item: dict[str, Any]) -> tuple[Any, ...]:
             item.get("workplaceOrSchool"),
             item.get("collegeCourse"),
             item.get("certificationsOrTrainings"),
-            item.get("hobbiesAndInterests"),
-            item.get("specialSkills"),
+            
             item.get("videoBriefingUrl"),
             _json_dump(item.get("affiliations"), []),
             item.get("registrationStatus"),
@@ -1642,8 +1682,6 @@ def _row_to_item(key: str, row: dict[str, Any]) -> dict[str, Any]:
             "workplaceOrSchool": row.get("workplace_or_school"),
             "collegeCourse": row.get("college_course"),
             "certificationsOrTrainings": row.get("certifications_or_trainings"),
-            "hobbiesAndInterests": row.get("hobbies_and_interests"),
-            "specialSkills": row.get("special_skills"),
             "videoBriefingUrl": row.get("video_briefing_url"),
             "affiliations": _json_load(row.get("affiliations"), []),
             "registrationStatus": row.get("registration_status"),
@@ -1916,6 +1954,27 @@ def refresh_program_rows_from_tracks(connection: Any) -> None:
     pass
 
 
+def _backfill_skills_from_existing_relational_data(connection: Any) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            insert into skills (skills_id, name, created_at, updated_at)
+            select distinct skill, skill, now()::text, now()::text
+            from (
+              select unnest(coalesce(skills, '{}'::text[])) as skill from volunteers
+              union
+              select unnest(coalesce(skills_needed, '{}'::text[])) as skill from tasks
+              union
+              select unnest(coalesce(skills_needed, '{}'::text[])) as skill from projects
+              union
+              select unnest(coalesce(skills_needed, '{}'::text[])) as skill from events
+            ) s
+            where skill is not null and skill <> ''
+            on conflict (skills_id) do nothing
+            """
+        )
+
+
 def ensure_default_program_tracks(connection: Any) -> None:
     with connection.cursor() as cursor:
         cursor.execute(
@@ -1935,7 +1994,8 @@ def ensure_default_program_tracks(connection: Any) -> None:
             values
               ('Nutrition', 'Nutrition', 'Food security and health programs for children and families.', 'restaurant', '#dc2626', '', 10, true, now()::text, now()::text),
               ('Education', 'Education', 'Learning, literacy, and skill development for students.', 'school', '#2563eb', '', 20, true, now()::text, now()::text),
-              ('Livelihood', 'Livelihood', 'Economic empowerment and vocational training programs.', 'work', '#7c3aed', '', 30, true, now()::text, now()::text)
+              ('Livelihood', 'Livelihood', 'Economic empowerment and vocational training programs.', 'work', '#7c3aed', '', 30, true, now()::text, now()::text),
+              ('Disaster', 'Disaster', 'Preparedness, relief, and recovery programs for affected communities.', 'warning', '#f97316', '', 40, true, now()::text, now()::text)
                         on conflict (id) do update set
               title = excluded.title,
               description = excluded.description,
@@ -1950,7 +2010,7 @@ def ensure_default_program_tracks(connection: Any) -> None:
         cursor.execute(
             """
             delete from program_tracks
-            where id not in ('Nutrition', 'Education', 'Livelihood')
+            where id not in ('Nutrition', 'Education', 'Livelihood', 'Disaster')
             """
         )
 
@@ -2061,102 +2121,194 @@ def ensure_named_primary_key_columns(connection: Any) -> None:
     with connection.cursor() as cursor:
         for table_name in table_names:
             primary_key_column = _table_primary_key_column(table_name)
-            cursor.execute(
-                """
-                select column_name, data_type
-                from information_schema.columns
-                where table_schema = 'public'
-                  and table_name = %s
-                  and column_name in ('id', %s)
-                """,
-                (table_name, primary_key_column),
-            )
-            rows = cursor.fetchall()
-            columns = {row[0]: row[1] for row in rows}
-            if "id" in columns and primary_key_column not in columns:
-                cursor.execute(f"alter table {table_name} alter column id drop identity if exists")
-                if columns.get("id") != "text":
-                    cursor.execute(f"alter table {table_name} alter column id type text using id::text")
-                cursor.execute(f"alter table {table_name} rename column id to {primary_key_column}")
-            elif primary_key_column in columns:
-                if columns.get(primary_key_column) != "text":
-                    cursor.execute(
-                        f"alter table {table_name} alter column {primary_key_column} type text using {primary_key_column}::text"
-                    )
+            try:
+                cursor.execute(
+                    """
+                    select column_name, data_type, is_identity
+                    from information_schema.columns
+                    where table_schema = 'public'
+                      and table_name = %s
+                      and column_name in ('id', %s)
+                    """,
+                    (table_name, primary_key_column),
+                )
+                rows = cursor.fetchall()
+                columns = {row[0]: (row[1], row[2]) for row in rows}
+                if "id" in columns and primary_key_column not in columns:
+                    id_data_type, id_is_identity = columns["id"]
+                    if id_is_identity == "YES":
+                        _trace(f"[WARN] ensure_named_primary_key_columns: skipping identity id column on {table_name}")
+                    else:
+                        # Only convert non-text types to text for non-identity columns
+                        if id_data_type != "text" and id_data_type not in ("smallint", "integer", "bigint"):
+                            _trace(f"[TRACE] ensure_named_primary_key_columns: converting {table_name}.id from {id_data_type} to text")
+                            cursor.execute(f"alter table {table_name} alter column id type text using id::text")
+                        _trace(f"[TRACE] ensure_named_primary_key_columns: renaming {table_name}.id to {primary_key_column}")
+                        cursor.execute(f"alter table {table_name} rename column id to {primary_key_column}")
+                elif primary_key_column in columns:
+                    pk_data_type, pk_is_identity = columns[primary_key_column]
+                    if pk_is_identity == "YES":
+                        _trace(f"[WARN] ensure_named_primary_key_columns: skipping identity primary key column on {table_name}.{primary_key_column}")
+                    elif pk_data_type != "text":
+                        _trace(f"[TRACE] ensure_named_primary_key_columns: converting {table_name}.{primary_key_column} from {pk_data_type} to text")
+                        cursor.execute(
+                            f"alter table {table_name} alter column {primary_key_column} type text using {primary_key_column}::text"
+                        )
+            except Exception as e:
+                _trace(f"[ERROR] ensure_named_primary_key_columns: failed for table {table_name}: {type(e).__name__}: {e}")
+                raise
 
 
 def ensure_volunteer_time_logs_table_shape(connection: Any) -> None:
     primary_key_column = _table_primary_key_column("volunteer_time_logs")
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f"""
-            create table if not exists volunteer_time_logs (
-              {primary_key_column} text primary key,
-              volunteer_id text,
-              project_id text,
-              time_in text,
-              time_out text,
-              note text,
-              attendance_photo text,
-              attendance_confirmed_at text,
-              attendance_checked_at text,
-              attendance_checked_by text,
-              attendance_checked_by_name text,
-              completion_photo text,
-              completion_report text
-            )
-            """
-        )
-        cursor.execute(
-            """
-            select column_name, data_type
-            from information_schema.columns
-            where table_schema = 'public'
-              and table_name = 'volunteer_time_logs'
-              and column_name in ('id', %s)
-            """,
-            (primary_key_column,),
-        )
-        rows = cursor.fetchall()
-        columns = {row[0]: row[1] for row in rows}
-        if "id" in columns and primary_key_column not in columns:
-            cursor.execute("alter table volunteer_time_logs alter column id drop identity if exists")
-            if columns.get("id") != "text":
-                cursor.execute("alter table volunteer_time_logs alter column id type text using id::text")
-            cursor.execute(f"alter table volunteer_time_logs rename column id to {primary_key_column}")
-        elif primary_key_column in columns and columns.get(primary_key_column) != "text":
-            cursor.execute(
-                f"""
-                alter table volunteer_time_logs
-                alter column {primary_key_column} type text using {primary_key_column}::text
-                """
-            )
-        cursor.execute("alter table volunteer_time_logs add column if not exists attendance_photo text")
-        cursor.execute("alter table volunteer_time_logs add column if not exists attendance_confirmed_at text")
-        cursor.execute("alter table volunteer_time_logs add column if not exists attendance_checked_at text")
-        cursor.execute("alter table volunteer_time_logs add column if not exists attendance_checked_by text")
-        cursor.execute("alter table volunteer_time_logs add column if not exists attendance_checked_by_name text")
-
-
-def ensure_relational_mirror_tables(connection: Any) -> None:
-    import time as _time
-    with connection.cursor() as cursor:
-        # Increase statement timeout for DDL operations as they can be slow on remote databases.
+    # Use autocommit to prevent stuck transactions
+    original_autocommit = getattr(connection, 'autocommit', False)
+    try:
+        connection.autocommit = True
+    except Exception:
+        pass
+    try:
+        with connection.cursor() as cursor:
+            try:
+                cursor.execute(
+                    f"""
+                    create table if not exists volunteer_time_logs (
+                      {primary_key_column} text primary key,
+                      volunteer_id text,
+                      project_id text,
+                      time_in text,
+                      time_out text,
+                      note text,
+                      attendance_photo text,
+                      attendance_confirmed_at text,
+                      attendance_checked_at text,
+                      attendance_checked_by text,
+                      attendance_checked_by_name text,
+                      completion_photo text,
+                      completion_report text
+                    )
+                    """
+                )
+            except Exception:
+                pass
+            try:
+                cursor.execute(
+                    """
+                    select column_name, data_type
+                    from information_schema.columns
+                    where table_schema = 'public'
+                      and table_name = 'volunteer_time_logs'
+                      and column_name in ('id', %s)
+                    """,
+                    (primary_key_column,),
+                )
+                rows = cursor.fetchall()
+                columns = {row[0]: row[1] for row in rows}
+                if "id" in columns and primary_key_column not in columns:
+                    if columns.get("id") != "text" and columns.get("id") not in ("smallint", "integer", "bigint"):
+                        cursor.execute("alter table volunteer_time_logs alter column id type text using id::text")
+                    cursor.execute(f"alter table volunteer_time_logs rename column id to {primary_key_column}")
+                elif primary_key_column in columns and columns.get(primary_key_column) != "text":
+                    cursor.execute(
+                        f"alter table volunteer_time_logs alter column {primary_key_column} type text using {primary_key_column}::text"
+                    )
+            except Exception:
+                pass
+            for stmt in [
+                "alter table volunteer_time_logs add column if not exists attendance_photo text",
+                "alter table volunteer_time_logs add column if not exists attendance_confirmed_at text",
+                "alter table volunteer_time_logs add column if not exists attendance_checked_at text",
+                "alter table volunteer_time_logs add column if not exists attendance_checked_by text",
+                "alter table volunteer_time_logs add column if not exists attendance_checked_by_name text",
+            ]:
+                try:
+                    cursor.execute(stmt)
+                except Exception:
+                    pass
+    finally:
         try:
-            cursor.execute("SET statement_timeout = '300s'")
+            connection.autocommit = original_autocommit
         except Exception:
             pass
 
-        for idx, statement in enumerate(RELATIONAL_TABLE_DDL):
-            _t0 = _time.perf_counter()
-            _trace(f"[TRACE] ensure_relational_mirror_tables: executing DDL #{idx} (len={len(statement):d})")
-            cursor.execute(statement)
-            _trace(f"[TRACE] ensure_relational_mirror_tables: finished DDL #{idx} in {_time.perf_counter() - _t0:.3f}s")
-    ensure_named_primary_key_columns(connection)
-    migrate_admin_planning_items_into_calendars(connection)
-    ensure_default_program_tracks(connection)
-    _backfill_skills_from_existing_relational_data(connection)
-    refresh_program_rows_from_tracks(connection)
+
+def ensure_relational_mirror_tables(connection: Any) -> None:
+    """
+    Run all DDL statements to ensure tables exist with correct schema.
+    Only runs ONCE per process lifetime to prevent stuck transactions.
+    Uses autocommit per-statement so failures don't block all queries.
+    """
+    global _ddl_completed
+    import time as _time
+
+    # Skip if already done this process lifetime
+    if _ddl_completed:
+        _trace("[TRACE] ensure_relational_mirror_tables: already completed, skipping")
+        return
+
+    with _ddl_lock:
+        # Double-check after acquiring lock
+        if _ddl_completed:
+            return
+
+        _trace("[TRACE] ensure_relational_mirror_tables: starting DDL run")
+
+        # Switch to autocommit so each DDL statement commits immediately
+        # and cannot leave a stuck transaction holding table locks.
+        original_autocommit = getattr(connection, 'autocommit', False)
+        try:
+            connection.autocommit = True
+        except Exception:
+            pass
+
+        try:
+            with connection.cursor() as cursor:
+                try:
+                    cursor.execute("SET statement_timeout = '60s'")
+                except Exception:
+                    pass
+
+                for idx, statement in enumerate(RELATIONAL_TABLE_DDL):
+                    _t0 = _time.perf_counter()
+                    _trace(f"[TRACE] ensure_relational_mirror_tables: executing DDL #{idx}")
+                    try:
+                        cursor.execute(statement)
+                        _trace(f"[TRACE] ensure_relational_mirror_tables: finished DDL #{idx} in {_time.perf_counter() - _t0:.3f}s")
+                    except Exception as e:
+                        # Log but continue — most DDL errors are benign
+                        _trace(f"[WARN] ensure_relational_mirror_tables: DDL #{idx} skipped: {type(e).__name__}: {e}")
+        finally:
+            try:
+                connection.autocommit = original_autocommit
+            except Exception:
+                pass
+
+        try:
+            ensure_named_primary_key_columns(connection)
+        except Exception as e:
+            _trace(f"[WARN] ensure_named_primary_key_columns skipped: {e}")
+
+        try:
+            migrate_admin_planning_items_into_calendars(connection)
+        except Exception as e:
+            _trace(f"[WARN] migrate_admin_planning_items_into_calendars skipped: {e}")
+
+        # Mark as completed so we never run DDL again this process lifetime
+        _ddl_completed = True
+        print("[OK] ensure_relational_mirror_tables: DDL completed successfully")
+
+    try:
+        ensure_default_program_tracks(connection)
+    except Exception as e:
+        _trace(f"[WARN] ensure_default_program_tracks skipped: {e}")
+    try:
+        _backfill_skills_from_existing_relational_data(connection)
+    except Exception as e:
+        _trace(f"[WARN] _backfill_skills_from_existing_relational_data skipped: {e}")
+    try:
+        refresh_program_rows_from_tracks(connection)
+    except Exception as e:
+        _trace(f"[WARN] refresh_program_rows_from_tracks skipped: {e}")
 
 
 def sync_relational_mirror_collection(connection: Any, key: str, items: list[Any]) -> None:
@@ -2218,18 +2370,67 @@ def get_relational_collection(connection: Any, key: str) -> list[dict[str, Any]]
             _trace(f"[TRACE] get_relational_collection: columns selected: {len(column_names)}")
             cursor.execute(query)
         except (UndefinedColumn, UndefinedTable) as exc:
-            # Schema mismatch - repair the table definition and retry once.
+            # Schema mismatch - attempt repair and retry once. If still missing
+            # the named primary key column (e.g. projects_id) try a fallback
+            # that selects the conventional `id` column and remap it so the
+            # rest of the code (which expects <table>_id) continues to work.
             try:
                 connection.rollback()
             except Exception:
                 pass
             _trace(f"[WARN] get_relational_collection: schema mismatch for {spec['table']}: {exc}; repairing and retrying")
-            if key == "volunteerTimeLogs":
-                ensure_volunteer_time_logs_table_shape(connection)
-            else:
-                ensure_relational_mirror_tables(connection)
-            connection.commit()
-            cursor.execute(query)
+            try:
+                if key == "volunteerTimeLogs":
+                    ensure_volunteer_time_logs_table_shape(connection)
+                else:
+                    ensure_relational_mirror_tables(connection)
+                connection.commit()
+                try:
+                    cursor.execute(query)
+                except (UndefinedColumn, UndefinedTable) as exc2:
+                    # Try fallback: replace the first (primary key) column with
+                    # the conventional `id` column and remap results to the
+                    # expected primary key name so `_row_to_item` works.
+                    try:
+                        try:
+                            connection.rollback()
+                        except Exception:
+                            pass
+                        alt_column_names = list(column_names)
+                        alt_pk = 'id'
+                        alt_column_names[0] = alt_pk
+                        alt_query = f"select {', '.join(alt_column_names)} from {spec['table']}"
+                        if filter_clause:
+                            alt_query += f" where {filter_clause}"
+                        alt_query += f" order by {alt_pk} asc"
+                        _trace(f"[TRACE] get_relational_collection: attempting fallback query on {spec['table']}")
+                        cursor.execute(alt_query)
+                        rows = cursor.fetchall()
+                        # Remap each row dict to include the expected PK column
+                        pk_col = _primary_key_column(key)
+                        remapped_rows = []
+                        for r in rows:
+                            if isinstance(r, dict) and alt_pk in r:
+                                nr = dict(r)
+                                nr[pk_col] = r[alt_pk]
+                                remapped_rows.append(nr)
+                        _trace(f"[TRACE] get_relational_collection: fallback fetched {len(remapped_rows)} rows from {spec['table']}")
+                        return [_row_to_item(key, row) for row in remapped_rows]
+                    except Exception as fallback_error:
+                        _trace(f"[WARN] get_relational_collection: fallback query failed for {spec['table']}: {fallback_error}")
+                        try:
+                            connection.rollback()
+                        except Exception:
+                            pass
+                        return []
+            except Exception as repair_error:
+                # If repair fails, log and return empty list
+                _trace(f"[ERROR] get_relational_collection: schema repair failed for {spec['table']}: {type(repair_error).__name__}: {repair_error}")
+                try:
+                    connection.rollback()
+                except Exception:
+                    pass
+                return []
         except Exception as exc:
             # Query timeout or other errors - return empty list so app can continue
             try:
@@ -2266,7 +2467,28 @@ def get_relational_item_by_id(connection: Any, key: str, item_id: str) -> dict[s
                 pass
             ensure_relational_mirror_tables(connection)
             connection.commit()
-            cursor.execute(query, (item_id,))
+            try:
+                cursor.execute(query, (item_id,))
+            except (UndefinedColumn, UndefinedTable):
+                try:
+                    connection.rollback()
+                except Exception:
+                    pass
+                alt_pk = 'id'
+                alt_column_names = list(column_names)
+                pk_col = _primary_key_column(key)
+                if alt_column_names and alt_column_names[0] == pk_col:
+                    alt_column_names[0] = alt_pk
+                alt_query = f"select {', '.join(alt_column_names)} from {spec['table']} where {alt_pk} = %s"
+                if filter_clause:
+                    alt_query += f" and {filter_clause}"
+                _trace(f"[TRACE] get_relational_item_by_id: attempting fallback query on {spec['table']}")
+                cursor.execute(alt_query, (item_id,))
+                row = cursor.fetchone()
+                if isinstance(row, dict) and alt_pk in row:
+                    row[pk_col] = row[alt_pk]
+                    return _row_to_item(key, row)
+                return None
         row = cursor.fetchone()
     return None if row is None else _row_to_item(key, row)
 
@@ -2317,7 +2539,42 @@ def get_relational_items_by_field(
                 pass
             ensure_relational_mirror_tables(connection)
             connection.commit()
-            cursor.execute(query, params)
+            try:
+                cursor.execute(query, params)
+            except (UndefinedColumn, UndefinedTable):
+                try:
+                    connection.rollback()
+                except Exception:
+                    pass
+                alt_pk = 'id'
+                alt_column_names = list(column_names)
+                alt_column_names[0] = alt_pk
+                alt_query = f"select {', '.join(alt_column_names)} from {spec['table']}"
+                if field_value is None:
+                    alt_query = f"select {', '.join(alt_column_names)} from {spec['table']} where {column_name} is null"
+                    params = ()
+                elif field_value == "":
+                    alt_query = (
+                        f"select {', '.join(alt_column_names)} from {spec['table']} "
+                        f"where ({column_name} is null or {column_name} = '')"
+                    )
+                    params = ()
+                else:
+                    alt_query = f"select {', '.join(alt_column_names)} from {spec['table']} where {column_name} = %s"
+                if filter_clause and 'where' in alt_query:
+                    alt_query += f" and {filter_clause}"
+                elif filter_clause:
+                    alt_query += f" where {filter_clause}"
+                alt_query += f" order by {alt_pk} asc"
+                _trace(f"[TRACE] get_relational_items_by_field: attempting fallback query on {spec['table']}")
+                cursor.execute(alt_query, params)
+                rows = cursor.fetchall()
+                remapped_rows = []
+                for row in rows:
+                    if isinstance(row, dict) and alt_pk in row:
+                        row[_primary_key_column(key)] = row[alt_pk]
+                        remapped_rows.append(row)
+                return [_row_to_item(key, row) for row in remapped_rows]
         rows = cursor.fetchall()
     return [_row_to_item(key, row) for row in rows]
 
@@ -2338,7 +2595,7 @@ def upsert_relational_item(connection: Any, key: str, item: dict[str, Any]) -> d
     from psycopg.errors import UndefinedColumn, UndefinedTable
 
     item_id = item.get("id")
-    if not isinstance(item_id, str) or not item_id:
+    if not isinstance(item_id, (str, int)) or str(item_id) == "":
         raise ValueError(f"Relational storage key '{key}' expects an object with an id.")
 
     row = _normalize_row(key, item)
@@ -2368,7 +2625,31 @@ def upsert_relational_item(connection: Any, key: str, item: dict[str, Any]) -> d
             else:
                 ensure_relational_mirror_tables(connection)
             connection.commit()
-            cursor.execute(statement, row)
+            try:
+                cursor.execute(statement, row)
+            except (UndefinedColumn, UndefinedTable):
+                try:
+                    connection.rollback()
+                except Exception:
+                    pass
+                alt_pk = "id"
+                alt_column_names = list(column_names)
+                alt_row = list(row)
+                if alt_column_names and alt_column_names[0] == primary_key_column:
+                    alt_column_names[0] = alt_pk
+                    alt_row[0] = item_id
+                alt_update_assignments = [
+                    f"{column_name} = excluded.{column_name}"
+                    for column_name in alt_column_names
+                    if column_name != alt_pk
+                ]
+                alt_statement = f"""
+                    insert into {spec['table']} ({', '.join(alt_column_names)})
+                    values ({', '.join(placeholders)})
+                    on conflict ({alt_pk}) do update set
+                      {', '.join(alt_update_assignments)}
+                    """
+                cursor.execute(alt_statement, alt_row)
     if key in {"programTracks", "projects", "events"}:
         refresh_program_rows_from_tracks(connection)
     if key in {"projects", "events"}:

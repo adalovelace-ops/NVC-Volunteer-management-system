@@ -1,134 +1,89 @@
 ﻿$ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$pidDir = Join-Path $projectRoot '.dev-pids'
-$backendLog = Join-Path $pidDir 'backend.log'
-$expoLog = Join-Path $pidDir 'expo.log'
+$pidDir      = Join-Path $projectRoot '.dev-pids'
+$backendLog  = Join-Path $pidDir 'backend.log'
+$backendErr  = Join-Path $pidDir 'backend.err.log'
+$expoLog     = Join-Path $pidDir 'expo.log'
 
-if (-not (Test-Path $projectRoot)) {
-  throw "Project folder not found: $projectRoot"
-}
+Write-Host ""
+Write-Host "==========================================="
+Write-Host " STARTING VOLUNTEER SYSTEM"
+Write-Host "==========================================="
+Write-Host ""
 
+# ── 0. Ensure .dev-pids directory exists ───────────────────────────────────
 if (-not (Test-Path $pidDir)) {
   New-Item -Path $pidDir -ItemType Directory | Out-Null
 }
 
-function Wait-BackendHealthy {
-  param(
-    [int]$ProcessId,
-    [int]$MaxSeconds = 25
-  )
+# ── 1. Force-stop anything on ports 8000 / 8081 before starting ────────────
+foreach ($port in @(8000, 8081)) {
+  $pids = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+          Select-Object -ExpandProperty OwningProcess -Unique
+  foreach ($p in $pids) {
+    Stop-Process -Id $p -Force -ErrorAction SilentlyContinue
+    Write-Host "  Cleared port $port (PID $p)"
+  }
+}
 
-  for ($elapsed = 0; $elapsed -lt $MaxSeconds; $elapsed++) {
-    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
-    if (-not $process) {
-      $tail = ''
-      if (Test-Path $backendLog) {
-        $tail = (Get-Content $backendLog -Tail 40) -join [Environment]::NewLine
-      }
-      throw "Backend process exited early. Last log lines:`n$tail"
+# Wait for ports to release
+Start-Sleep -Seconds 2
+
+# ── 2. Start backend ────────────────────────────────────────────────────────
+Write-Host "  Starting backend on port 8000..."
+
+if (Test-Path $backendLog) { Remove-Item $backendLog -Force -ErrorAction SilentlyContinue }
+if (Test-Path $backendErr) { Remove-Item $backendErr -Force -ErrorAction SilentlyContinue }
+
+$escapedRoot = $projectRoot.Replace("'", "''")
+$backendCmd  = "Set-Location '$escapedRoot'; npm run backend:stable 2>&1 | Tee-Object -FilePath '$($backendLog.Replace("'","''"))'"
+
+$backendProc = Start-Process -FilePath 'powershell.exe' `
+  -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $backendCmd) `
+  -PassThru -WindowStyle Hidden
+
+Set-Content -Path (Join-Path $pidDir 'backend.pid') -Value $backendProc.Id
+Write-Host "  Backend started (PID $($backendProc.Id))"
+
+# ── 3. Wait for backend to be healthy (max 30 s) ───────────────────────────
+Write-Host "  Waiting for backend to be ready..."
+$healthy = $false
+for ($i = 0; $i -lt 30; $i++) {
+  # Check the process is still alive
+  $alive = Get-Process -Id $backendProc.Id -ErrorAction SilentlyContinue
+  if (-not $alive) {
+    Write-Warning "  Backend process exited unexpectedly. Check $backendLog"
+    break
+  }
+
+  try {
+    $resp = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -Method Get -TimeoutSec 2 -ErrorAction Stop
+    if ($resp.status -eq 'ok') {
+      $healthy = $true
+      Write-Host "  Backend is healthy! (mode: $($resp.mode))" -ForegroundColor Green
+      break
     }
-
-    try {
-      $response = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -Method Get -TimeoutSec 2
-      if ($response) {
-        return
-      }
-    } catch {
-      # keep waiting while backend initializes
-    }
-
-    Start-Sleep -Seconds 1
+  } catch {
+    # still starting up
   }
-
-  throw "Backend did not become healthy within $MaxSeconds seconds."
-}
-
-function Start-ServiceProcess {
-  param(
-    [string]$Name,
-    [string]$Command,
-    [string]$LogPath,
-    [switch]$WaitForBackendHealth
-  )
-
-  $pidFile = Join-Path $pidDir ("$Name.pid")
-
-  if (Test-Path $pidFile) {
-    $existingPid = Get-Content $pidFile -ErrorAction SilentlyContinue
-    if ($existingPid) {
-      $existing = Get-Process -Id ([int]$existingPid) -ErrorAction SilentlyContinue
-      if ($existing) {
-        Write-Host "$Name already running (PID $existingPid)."
-        return
-      }
-    }
-
-    Remove-Item $pidFile -ErrorAction SilentlyContinue
-  }
-
-  if (Test-Path $LogPath) {
-    Remove-Item $LogPath -ErrorAction SilentlyContinue
-  }
-
-  $escapedProjectRoot = $projectRoot.Replace("'", "''")
-  $escapedLogPath = $LogPath.Replace("'", "''")
-  $innerCommand = "Set-Location '$escapedProjectRoot'; $Command *> '$escapedLogPath'"
-
-  $process = Start-Process -FilePath 'powershell.exe' `
-    -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $innerCommand) `
-    -PassThru -WindowStyle Hidden
-
-  Set-Content -Path $pidFile -Value $process.Id
-
-  if ($WaitForBackendHealth) {
-    Wait-BackendHealthy -ProcessId $process.Id
-  }
-
-  Write-Host "Started $Name (PID $($process.Id))."
-}
-
-$backendStarted = $false
-$backendWarning = $null
-
-try {
-  Start-ServiceProcess -Name 'backend' -Command 'npm run backend:stable' -LogPath $backendLog -WaitForBackendHealth
-  $backendStarted = $true
-} catch {
-  $backendWarning = $_.Exception.Message
-  Write-Warning "Backend failed to start cleanly. Expo will still start so the app can load, but API features may stay offline."
-  if ($backendWarning) {
-    Write-Warning $backendWarning
-  }
-}
-
-Write-Host ""
-Write-Host "==========================================="
-Write-Host "VOLUNTEER SYSTEM STARTED"
-Write-Host "==========================================="
-Write-Host ""
-if ($backendStarted) {
-  Write-Host "BACKEND: http://127.0.0.1:8000"
-} else {
-  Write-Host "BACKEND: unavailable (see .dev-pids\\backend.log)"
-}
-Write-Host "WEB APP: http://localhost:8081 (auto-opens after startup)"
-Write-Host ""
-Write-Host "==========================================="
-Write-Host ""
-
-# Kill any process using port 8081 (in case it's still lingering)
-$port = 8081
-$process = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess
-if ($process) {
-  Stop-Process -Id $process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 1
 }
 
-# Give backend a moment to be ready
-Start-Sleep -Seconds 2
+if (-not $healthy) {
+  Write-Warning "  Backend did not respond in time — Expo will still start."
+}
 
-# Run Expo in foreground with QR code display
+# ── 4. Start Expo web (in foreground so QR code displays) ──────────────────
+Write-Host "  Starting Expo web on port 8081..."
+Write-Host ""
+Write-Host "  Press Ctrl+C to stop the entire system."
+Write-Host ""
+
+# Save backend PID so stop script can clean it up
+Set-Content -Path (Join-Path $pidDir 'backend.pid') -Value $backendProc.Id
+
+# Run Expo directly in this terminal so QR code shows
 Set-Location $projectRoot
-npm run expo:start
+npx expo start --web --clear
 

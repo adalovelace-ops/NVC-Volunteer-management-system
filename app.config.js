@@ -107,7 +107,7 @@ module.exports = () => {
 
   return {
     expo: {
-      name: 'NVC CONNECT',
+      name: 'NVC',
       slug: 'volcre',
       version: '1.0.0',
       orientation: 'portrait',

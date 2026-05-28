@@ -17,8 +17,8 @@ import type {
   PartnerProjectReportSummary,
   SubmittedReport,
 } from '../screens/ReportsScreen';
-import type { Project, VolunteerTimeLog } from '../models/types';
-import { isImageMediaUri } from '../utils/media';
+import type { Project, VolunteerProjectJoinRecord, VolunteerTimeLog } from '../models/types';
+import { isImageMediaUri, pickImageFromDevice } from '../utils/media';
 
 type MaterialIconName = keyof typeof MaterialIcons.glyphMap;
 
@@ -34,6 +34,7 @@ interface ReportUploadModalProps {
   projects?: any[];
   userRole?: SubmittedReport['submitterRole'];
   volunteerTimeLogs?: VolunteerTimeLog[];
+  volunteerJoinRecords?: VolunteerProjectJoinRecord[];
   fieldOfficerProjectIds?: string[];
   initialProjectId?: string;
   initialDescription?: string;
@@ -48,6 +49,7 @@ export default function ReportUploadModal({
   projects = [],
   userRole,
   volunteerTimeLogs,
+  volunteerJoinRecords,
   fieldOfficerProjectIds = [],
   initialProjectId,
   initialDescription,
@@ -65,8 +67,9 @@ export default function ReportUploadModal({
   const [collaborationFeedback, setCollaborationFeedback] = useState('');
   const [volunteerPraise, setVolunteerPraise] = useState('');
   const [gratitudeNote, setGratitudeNote] = useState('');
+  const [selectedReportPhoto, setSelectedReportPhoto] = useState('');
   const [metrics, setMetrics] = useState({
-    volunteerHours: '',
+    volunteerEventJoins: '',
     verifiedAttendance: '',
     activeVolunteers: '',
     beneficiariesServed: '',
@@ -118,7 +121,7 @@ export default function ReportUploadModal({
   const volunteerMetrics = useMemo(() => {
     if (!isVolunteer || !selectedProject) {
       return {
-        volunteerHours: 0,
+        volunteerEventJoins: 0,
         tasksCompleted: 0,
         attendanceDays: 0,
         latestAttendancePhoto: '',
@@ -127,24 +130,17 @@ export default function ReportUploadModal({
     }
 
     const logsForProject = (volunteerTimeLogs || []).filter(log => log.projectId === selectedProject);
+    const eventJoinCount = (volunteerJoinRecords || []).filter(
+      record =>
+        record.projectId === selectedProject &&
+        (!volunteerProfileId || record.volunteerId === volunteerProfileId)
+    ).length;
     const attendanceDays = new Set(
       logsForProject
         .filter(log => Boolean(log.attendanceConfirmedAt || log.timeIn))
         .map(log => getLocalDateKey(log.attendanceConfirmedAt || log.timeIn || ''))
         .filter(Boolean)
     ).size;
-    const totalHours = logsForProject.reduce((sum, log) => {
-      if (!log.timeIn) {
-        return sum;
-      }
-
-      const start = new Date(log.timeIn).getTime();
-      const end = log.timeOut ? new Date(log.timeOut).getTime() : Date.now();
-      if (Number.isNaN(start) || Number.isNaN(end) || end <= start) {
-        return sum;
-      }
-      return sum + (end - start) / 3_600_000;
-    }, 0);
     const latestPhotoLog = [...logsForProject]
       .sort(
         (left, right) =>
@@ -162,13 +158,21 @@ export default function ReportUploadModal({
       : [];
 
     return {
-      volunteerHours: Number(totalHours.toFixed(1)),
+      volunteerEventJoins: eventJoinCount,
       tasksCompleted: assignedTaskTitles.length,
       attendanceDays,
       latestAttendancePhoto: latestPhotoLog?.attendancePhoto || latestPhotoLog?.completionPhoto || '',
       assignedTaskTitles,
     };
-  }, [isVolunteer, isVolunteerAssignedToTask, projects, selectedProject, volunteerTimeLogs]);
+  }, [
+    isVolunteer,
+    isVolunteerAssignedToTask,
+    projects,
+    selectedProject,
+    volunteerJoinRecords,
+    volunteerProfileId,
+    volunteerTimeLogs,
+  ]);
 
   const selectedProjectData = useMemo(
     () =>
@@ -275,7 +279,7 @@ export default function ReportUploadModal({
       return ['beneficiariesServed'];
     }
 
-    const baseFields = ['volunteerHours', 'verifiedAttendance', 'activeVolunteers'];
+    const baseFields = ['volunteerEventJoins', 'verifiedAttendance', 'activeVolunteers'];
 
     switch (reportType) {
       case 'field_report':
@@ -342,8 +346,9 @@ export default function ReportUploadModal({
     setCollaborationFeedback('');
     setVolunteerPraise('');
     setGratitudeNote('');
+    setSelectedReportPhoto('');
     setMetrics({
-      volunteerHours: '',
+      volunteerEventJoins: '',
       verifiedAttendance: '',
       activeVolunteers: '',
       beneficiariesServed: '',
@@ -368,6 +373,21 @@ export default function ReportUploadModal({
       [field]: numericValue,
     }));
   };
+
+  const handlePickReportPhoto = useCallback(async () => {
+    try {
+      const pickedImage = await pickImageFromDevice();
+      if (pickedImage) {
+        setSelectedReportPhoto(pickedImage);
+      }
+    } catch (error: any) {
+      Alert.alert('Photo Access Needed', error?.message || 'Unable to open your photo library.');
+    }
+  }, []);
+
+  const handleRemoveReportPhoto = useCallback(() => {
+    setSelectedReportPhoto('');
+  }, []);
 
   const handleSubmit = useCallback(async () => {
     if (!validateForm()) {
@@ -430,7 +450,7 @@ export default function ReportUploadModal({
 
     const volunteerMetricValues = isVolunteer
       ? {
-          volunteerHours: volunteerMetrics.volunteerHours,
+          volunteerEventJoins: volunteerMetrics.volunteerEventJoins,
           verifiedAttendance: volunteerMetrics.attendanceDays,
           tasksCompleted: volunteerMetrics.tasksCompleted,
         }
@@ -486,7 +506,7 @@ export default function ReportUploadModal({
       metrics: metricsData,
       attachments: [],
       mediaFile: isVolunteer
-        ? volunteerMetrics.latestAttendancePhoto || undefined
+        ? selectedReportPhoto || volunteerMetrics.latestAttendancePhoto || undefined
         : undefined,
       status: 'Submitted',
     };
@@ -521,7 +541,8 @@ export default function ReportUploadModal({
     volunteerMetrics.attendanceDays,
     volunteerMetrics.latestAttendancePhoto,
     volunteerMetrics.tasksCompleted,
-    volunteerMetrics.volunteerHours,
+    volunteerMetrics.volunteerEventJoins,
+    selectedReportPhoto,
     volunteerSummary,
     volunteerTimeLogs,
     onClose,
@@ -536,7 +557,7 @@ export default function ReportUploadModal({
         <View style={styles.partnerIntroContent}>
           <Text style={styles.partnerIntroTitle}>Approved Project Report</Text>
           <Text style={styles.partnerIntroText}>
-            Choose one approved project that your account proposed. The title, description, and metrics are generated automatically from linked events, volunteer reports, and verified time logs.
+            Choose one approved project that your account proposed. The title, description, and metrics are generated automatically from linked events, volunteer event joins, volunteer reports, and verified time logs.
           </Text>
         </View>
       </View>
@@ -610,10 +631,14 @@ export default function ReportUploadModal({
           />
         </View>
         <View style={styles.metricInput}>
-          <Text style={styles.metricLabel}>Volunteer Hours</Text>
+          <Text style={styles.metricLabel}>Volunteer Event Joins</Text>
           <TextInput
             style={styles.metricInputField}
-            value={String(selectedPartnerProjectSummary?.metrics.volunteerHours || 0)}
+            value={String(
+              selectedPartnerProjectSummary?.metrics.volunteerEventJoins ??
+                selectedPartnerProjectSummary?.metrics.volunteerHours ??
+                0
+            )}
             editable={false}
             placeholder="0"
             placeholderTextColor="#cbd5e1"
@@ -836,22 +861,22 @@ export default function ReportUploadModal({
           </Text>
         </View>
         <View style={styles.autoMetricRow}>
-          <Text style={styles.autoMetricLabel}>Volunteer Hours</Text>
+          <Text style={styles.autoMetricLabel}>Volunteer Event Joins</Text>
           <Text style={styles.autoMetricValue}>
-            {selectedProject ? `${volunteerMetrics.volunteerHours.toFixed(1)} hrs` : 'Select an event'}
+            {selectedProject ? volunteerMetrics.volunteerEventJoins : 'Select an event'}
           </Text>
         </View>
       </View>
 
-      <Text style={styles.sectionTitle}>Field Photo</Text>
+      <Text style={styles.sectionTitle}>Report Photo</Text>
       <Text style={styles.sectionHelper}>
-        This photo is pulled automatically from your attendance confirmation for the selected event.
+        Add a supporting photo from your device. If you do not choose one, the attendance photo from your event record will be used automatically.
       </Text>
-      {volunteerMetrics.latestAttendancePhoto ? (
+      {selectedReportPhoto ? (
         <View style={styles.photoPreviewCard}>
-          {isImageMediaUri(volunteerMetrics.latestAttendancePhoto) ? (
+          {isImageMediaUri(selectedReportPhoto) ? (
             <Image
-              source={{ uri: volunteerMetrics.latestAttendancePhoto }}
+              source={{ uri: selectedReportPhoto }}
               style={styles.photoPreview}
               resizeMode="cover"
             />
@@ -861,16 +886,44 @@ export default function ReportUploadModal({
             </View>
           )}
           <View style={styles.photoPreviewMeta}>
-            <Text style={styles.photoPreviewTitle}>Attendance photo ready for this report</Text>
+            <Text style={styles.photoPreviewTitle}>Selected photo for this report</Text>
+            <TouchableOpacity onPress={handleRemoveReportPhoto} style={styles.photoRemoveButton}>
+              <Text style={styles.photoRemoveText}>Remove</Text>
+            </TouchableOpacity>
           </View>
         </View>
       ) : (
-        <View style={styles.readOnlyCard}>
-          <Text style={styles.readOnlyDescription}>
-            {selectedProject
-              ? 'No attendance photo found yet for this event.'
-              : 'Select an event to load the field photo.'}
-          </Text>
+        <View>
+          <TouchableOpacity style={styles.photoButton} onPress={handlePickReportPhoto}>
+            <MaterialIcons name="photo-library" size={20} color="#166534" />
+            <Text style={styles.photoButtonText}>Add Photo</Text>
+          </TouchableOpacity>
+          {volunteerMetrics.latestAttendancePhoto ? (
+            <View style={styles.photoPreviewCard}>
+              {isImageMediaUri(volunteerMetrics.latestAttendancePhoto) ? (
+                <Image
+                  source={{ uri: volunteerMetrics.latestAttendancePhoto }}
+                  style={styles.photoPreview}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.photoFallbackCard}>
+                  <MaterialIcons name="image" size={24} color="#166534" />
+                </View>
+              )}
+              <View style={styles.photoPreviewMeta}>
+                <Text style={styles.photoPreviewTitle}>Attendance photo available for this report</Text>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.readOnlyCard}>
+              <Text style={styles.readOnlyDescription}>
+                {selectedProject
+                  ? 'No attendance photo found yet for this event.'
+                  : 'Select an event to load the field photo.'}
+              </Text>
+            </View>
+          )}
         </View>
       )}
 
@@ -1068,7 +1121,8 @@ export default function ReportUploadModal({
 
 function formatMetricLabel(field: string, isVolunteer = false): string {
   const labels: Record<string, string> = {
-    volunteerHours: isVolunteer ? 'Hours You Volunteered' : 'Volunteer Hours',
+    volunteerHours: 'Volunteer Event Joins',
+    volunteerEventJoins: isVolunteer ? 'Your Event Joins' : 'Volunteer Event Joins',
     verifiedAttendance: 'Verified Attendance',
     activeVolunteers: 'Active Volunteers',
     beneficiariesServed: isVolunteer ? 'People You Helped' : 'Beneficiaries Served',
@@ -1425,6 +1479,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 12,
+  },
+  photoRemoveButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
   },
   photoPreviewTitle: {
     flex: 1,

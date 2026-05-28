@@ -121,14 +121,6 @@ export default function SystemSettingsScreen() {
   };
 
   const handleLogout = async () => {
-    if (Platform.OS === 'web') {
-      const confirmed = typeof window !== 'undefined' ? window.confirm('Are you sure you want to logout?') : true;
-      if (confirmed) {
-        await logout();
-      }
-      return;
-    }
-
     Alert.alert('Logout', 'Are you sure you want to logout?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Logout', onPress: async () => await logout() },
@@ -230,7 +222,7 @@ export default function SystemSettingsScreen() {
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Application</Text>
         <Text style={styles.infoLabel}>App Name</Text>
-        <Text style={styles.infoText}>{Constants.expoConfig?.name || 'NVC CONNECT'}</Text>
+        <Text style={styles.infoText}>{Constants.expoConfig?.name || 'NVC'}</Text>
         <Text style={styles.infoLabel}>Version</Text>
         <Text style={styles.infoText}>{Constants.expoConfig?.version || '1.0.0'}</Text>
         <Text style={styles.infoLabel}>Backend URL</Text>

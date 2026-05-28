@@ -28,16 +28,16 @@ def auto_seed_if_empty():
                 
                 # Add users
                 cur.execute("""
-                    INSERT INTO users (id, email, name, role, password, created_at, updated_at) 
-                    VALUES (gen_random_uuid()::text, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO users (id, email, name, role, password, approval_status, created_at, updated_at) 
+                    VALUES (gen_random_uuid()::text, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT DO NOTHING
-                """, ('admin@nvc.org', 'Admin Account', 'admin', 'hashed', today, today))
+                """, ('admin@nvc.org', 'Admin Account', 'admin', 'hashed', 'approved', today, today))
                 
                 cur.execute("""
-                    INSERT INTO users (id, email, name, role, password, created_at, updated_at) 
-                    VALUES (gen_random_uuid()::text, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO users (id, email, name, role, password, approval_status, created_at, updated_at) 
+                    VALUES (gen_random_uuid()::text, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT DO NOTHING  
-                """, ('volunteer@example.org', 'Sample Volunteer', 'volunteer', 'hashed', today, today))
+                """, ('volunteer@example.org', 'Sample Volunteer', 'volunteer', 'hashed', 'approved', today, today))
                 
                 # Add programs
                 for i in range(1, 5):

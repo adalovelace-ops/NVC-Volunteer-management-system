@@ -151,16 +151,17 @@ function getMapEmptyStateMessage(
   }
 
   const targetLabel = selectedMapStyleKey === 'volunteer-view' ? 'volunteer' : 'partner';
+  const itemLabel = selectedMapStyleKey === 'volunteer-view' ? 'events' : 'projects';
 
   if (currentAccountOptions.length === 0) {
-    return `No ${targetLabel} accounts with mapped projects are available yet.`;
+    return `No ${targetLabel} accounts with mapped ${itemLabel} are available yet.`;
   }
 
   if (!selectedAccountOption) {
     return `Pick a ${targetLabel} account to load its map.`;
   }
 
-  return `No mapped projects were found for ${selectedAccountOption.label}.`;
+  return `No mapped ${itemLabel} were found for ${selectedAccountOption.label}.`;
 }
 
 function getAccountPickerLabel(
@@ -180,6 +181,14 @@ function getAccountPickerTitle(selectedMapStyleKey: MapStylePresetKey) {
 
 function getAccountIconName(selectedMapStyleKey: MapStylePresetKey): 'person-outline' | 'business' {
   return selectedMapStyleKey === 'volunteer-view' ? 'person-outline' : 'business';
+}
+
+function getMappedCountLabel(selectedMapStyleKey: MapStylePresetKey, count: number) {
+  if (selectedMapStyleKey === 'volunteer-view') {
+    return `${count} mapped ${count === 1 ? 'event' : 'events'}`;
+  }
+
+  return `${count} mapped ${count === 1 ? 'project' : 'projects'}`;
 }
 
 // Displays the project impact map using the Google Maps JavaScript API on web.
@@ -335,6 +344,8 @@ export default function VolunteerImpactMap({
         const infoWindow = new googleMaps.maps.InfoWindow();
 
         displayProjects.forEach(project => {
+          const markerVolunteerHits = (volunteerAccounts || [])
+            .filter(account => (account.projectIds || []).includes(project.id));
           const marker = new googleMaps.maps.Marker({
             position: {
               lat: project.location.latitude,
@@ -342,7 +353,11 @@ export default function VolunteerImpactMap({
             },
             map,
             title: project.title,
-            icon: createGoogleMapsMarkerIcon(googleMaps, getProjectMarkerColor(project)),
+            icon: createGoogleMapsMarkerIcon(
+              googleMaps,
+              getProjectMarkerColor(project),
+              markerVolunteerHits.length
+            ),
           });
 
           const listener = marker.addListener('click', () => {
@@ -537,7 +552,15 @@ export default function VolunteerImpactMap({
       cancelled = true;
       clearMarkers();
     };
-  }, [displayProjects, selectedMapStyle.mapTypeId, webGoogleMapsApiKey]);
+  }, [
+    displayProjects,
+    selectedMapStyle.mapTypeId,
+    webGoogleMapsApiKey,
+    volunteerAccounts,
+    partnerAccounts,
+    onVolunteerPress,
+    onPartnerPress,
+  ]);
 
   const hasAnyMapData =
     mappedProjects.length > 0 || volunteerOptions.length > 0 || partnerOptions.length > 0;
@@ -732,8 +755,7 @@ export default function VolunteerImpactMap({
                     <View style={styles.mapStyleMenuItemTextWrap}>
                       <Text style={styles.mapStyleMenuItemTitle}>{option.label}</Text>
                       <Text style={styles.mapStyleMenuItemDescription}>
-                        {option.projectCount} mapped
-                        {option.projectCount === 1 ? ' project' : ' projects'}
+                        {getMappedCountLabel(selectedMapStyleKey, option.projectCount)}
                       </Text>
                     </View>
                     {isActive ? <MaterialIcons name="check" size={20} color="#2563eb" /> : null}

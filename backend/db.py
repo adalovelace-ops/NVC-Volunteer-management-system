@@ -26,8 +26,22 @@ _POSTGRES_PROBE_CACHE: dict[str, Any] = {
 _POSTGRES_LAST_SUCCESSFUL_URL: str | None = None
 _POSTGRES_CANDIDATE_FAILURES: dict[str, dict[str, Any]] = {}
 _POSTGRES_CONNECTION_POOL: Any = None
-_POSTGRES_POOL_MIN_SIZE = 5
-_POSTGRES_POOL_MAX_SIZE = 20
+
+
+def _get_pool_min_size() -> int:
+    raw_value = os.getenv("DB_POOL_MIN_SIZE", "0").strip()
+    try:
+        return max(0, int(raw_value))
+    except ValueError:
+        return 0
+
+
+def _get_pool_max_size() -> int:
+    raw_value = os.getenv("DB_POOL_MAX_SIZE", "5").strip()
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return 5
 
 
 """Shared Postgres connection helpers for the backend API and seed scripts."""
@@ -393,11 +407,13 @@ def init_postgres_pool() -> None:
         return
 
     try:
+        pool_min_size = _get_pool_min_size()
+        pool_max_size = max(_get_pool_max_size(), pool_min_size or 1)
         # Create connection pool with optimized settings
         _POSTGRES_CONNECTION_POOL = ConnectionPool(
             database_url,
-            min_size=_POSTGRES_POOL_MIN_SIZE,
-            max_size=_POSTGRES_POOL_MAX_SIZE,
+            min_size=pool_min_size,
+            max_size=pool_max_size,
             timeout=connect_timeout * 2,  # Timeout waiting for available connection
             reconnect_timeout=30,  # Allow up to 30s to re-establish lost connections
             check=ConnectionPool.check_connection,  # Validate connections before returning them
@@ -407,7 +423,7 @@ def init_postgres_pool() -> None:
                 "connect_timeout": connect_timeout,
             }
         )
-        print(f"[OK] Postgres connection pool initialized (min={_POSTGRES_POOL_MIN_SIZE}, max={_POSTGRES_POOL_MAX_SIZE}) using {urlsplit(database_url).hostname}")
+        print(f"[OK] Postgres connection pool initialized (min={pool_min_size}, max={pool_max_size}) using {urlsplit(database_url).hostname}")
     except Exception as exc:
         print(f"[WARN] Failed to initialize Postgres connection pool: {exc}")
         _POSTGRES_CONNECTION_POOL = None
@@ -419,15 +435,24 @@ def init_postgres_pool() -> None:
 def get_pooled_postgres_connection():
     """Get a database connection from the pool if available, otherwise create a direct connection."""
     if _POSTGRES_CONNECTION_POOL is not None:
+        pool_context = None
         try:
-            # psycopg_pool's connection() context manager handles putconn and transactions
-            with _POSTGRES_CONNECTION_POOL.connection() as conn:
-                yield conn
-            return
+            pool_context = _POSTGRES_CONNECTION_POOL.connection()
+            conn = pool_context.__enter__()
         except Exception as exc:
             print(f"[WARN] Failed to get connection from pool: {exc}")
-            # Fall back to direct connection
-            
+            if pool_context is not None:
+                try:
+                    pool_context.__exit__(None, None, None)
+                except Exception:
+                    pass
+        else:
+            try:
+                yield conn
+            finally:
+                pool_context.__exit__(None, None, None)
+            return
+
     conn = get_postgres_connection()
     try:
         # Use connection as context manager for transaction handling
@@ -440,25 +465,7 @@ def get_pooled_postgres_connection():
 # Returns the default backend database connection.
 @contextlib.contextmanager
 def get_connection():
-    """Get a pooled connection if available, otherwise a direct connection."""
-    if _POSTGRES_CONNECTION_POOL is not None:
-        checkout_done = False
-        try:
-            with _POSTGRES_CONNECTION_POOL.connection() as conn:
-                checkout_done = True
-                yield conn
-                return
-        except Exception:
-            if checkout_done:
-                # Exception was thrown after yield (from caller body or pool cleanup) — re-raise
-                # so contextmanager doesn't see a second yield attempt.
-                raise
-            # Pool checkout failed before yield — fall through to a direct connection.
-
-    conn = get_postgres_connection()
-    try:
-        with conn:
-            yield conn
-    finally:
-        conn.close()
+    """Get the default backend database connection."""
+    with get_pooled_postgres_connection() as conn:
+        yield conn
 
