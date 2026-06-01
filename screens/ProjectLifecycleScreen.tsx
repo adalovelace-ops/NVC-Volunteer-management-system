@@ -104,47 +104,6 @@ type LifecycleStatusMode = (typeof lifecycleStatusModes)[number];
 type ProgramSuiteModule = string;
 type ProgramSuiteView = 'programs' | 'projects' | 'events';
 
-const CORE_PROGRAM_TRACKS: ProgramTrack[] = [
-  {
-    id: 'Nutrition',
-    title: 'Nutrition',
-    description: 'Food security and health programs for children and families.',
-    icon: 'restaurant',
-    color: '#dc2626',
-    sortOrder: 10,
-    isActive: true,
-  },
-  {
-    id: 'Education',
-    title: 'Education',
-    description: 'Learning, literacy, and skill development for students.',
-    icon: 'school',
-    color: '#2563eb',
-    sortOrder: 20,
-    isActive: true,
-  },
-  {
-    id: 'Livelihood',
-    title: 'Livelihood',
-    description: 'Economic empowerment and vocational training programs.',
-    icon: 'work',
-    color: '#7c3aed',
-    sortOrder: 30,
-    isActive: true,
-  },
-  {
-    id: 'Disaster',
-    title: 'Disaster',
-    description: 'Preparedness, relief, and recovery programs for affected communities.',
-    icon: 'warning',
-    color: '#f97316',
-    sortOrder: 40,
-    isActive: true,
-  },
-];
-
-const CORE_PROGRAM_TRACK_IDS = new Set(CORE_PROGRAM_TRACKS.map(track => track.id));
-
 function isProgramSuiteView(value: unknown): value is ProgramSuiteView {
   return value === 'programs' || value === 'projects' || value === 'events';
 }
@@ -193,37 +152,153 @@ function normalizeProgramTrackColor(color?: string): string {
 }
 
 function getProjectProgramId(project: Project): string {
+  // First check if project has a parentProjectId (for projects created under programs)
+  if (project.parentProjectId) {
+    return String(project.parentProjectId).trim();
+  }
+  // Fall back to program_id, then programModule, then category
   return String((project as any).program_id || project.programModule || project.category || '').trim();
 }
 
-function getProgramSuiteModuleForProject(project: Project, activeProgramTrackIds: Set<string>): string | null {
-  const programId = getProjectProgramId(project);
-  return activeProgramTrackIds.has(programId) ? programId : null;
+function inferProgramTrackFocus(track: ProgramTrack): AdvocacyFocus | null {
+  const text = `${track.id || ''} ${track.title || ''}`.toLowerCase();
+  if (text.includes('education')) return 'Education';
+  if (text.includes('livelihood')) return 'Livelihood';
+  if (text.includes('nutrition')) return 'Nutrition';
+  if (text.includes('disaster')) return 'Disaster';
+  return null;
 }
 
-function mergeProgramTracksWithCoreTracks(tracks: ProgramTrack[]): ProgramTrack[] {
-  const merged = new Map<string, ProgramTrack>();
+function getProgramSuiteModuleForProject(project: Project, activeProgramTracks: ProgramTrack[]): string | null {
+  const activeProgramTrackIds = new Set(activeProgramTracks.map(track => String(track.id).trim()));
+  // For child projects (those with parentProjectId), use that as the grouping
+  if (project.parentProjectId) {
+    const programId = String(project.parentProjectId).trim();
+    return activeProgramTrackIds.has(programId) ? programId : null;
+  }
+  // For legacy projects without parentProjectId, check if programModule matches an active program ID
+  const programModule = String(project.programModule || '').trim();
+  if (activeProgramTrackIds.has(programModule)) {
+    return programModule;
+  }
+  // Also check category as fallback
+  const category = String(project.category || '').trim();
+  if (activeProgramTrackIds.has(category)) {
+    return category;
+  }
 
-  CORE_PROGRAM_TRACKS.forEach(track => {
-    merged.set(track.id, track);
+  const projectFocus = (project.programModule || project.category || '') as AdvocacyFocus;
+  const matchingTrack = activeProgramTracks.find(track => inferProgramTrackFocus(track) === projectFocus);
+  if (matchingTrack) {
+    return String(matchingTrack.id).trim();
+  }
+
+  return null;
+}
+
+function isProgramSuiteProjectRecord(project: Project): boolean {
+  return Boolean(
+    !project.isEvent &&
+    (
+      project.parentProjectId ||
+      String(project.id || '').startsWith('project-proposal-')
+    )
+  );
+}
+
+function isTopLevelProgramRecord(project: Project, activeProgramTracks: ProgramTrack[]): boolean {
+  const projectId = String(project.id || '').trim().toLowerCase();
+  const projectTitle = String(project.title || '').trim().toLowerCase();
+  return activeProgramTracks.some(track => {
+    const trackId = String(track.id || '').trim().toLowerCase();
+    const trackTitle = String(track.title || '').trim().toLowerCase();
+    return Boolean(
+      (trackId && projectId === trackId) ||
+      (trackTitle && projectTitle === trackTitle)
+    );
   });
+}
 
-  tracks.forEach(track => {
-    const id = String(track.id || '').trim();
-    if (!id) {
-      return;
+function isApprovedProposalLikeProject(
+  project: Project,
+  module: string,
+  activeProgramTracks: ProgramTrack[],
+  approvedProposalModules: Set<string>
+): boolean {
+  if (project.isEvent || project.parentProjectId || isTopLevelProgramRecord(project, activeProgramTracks)) {
+    return false;
+  }
+
+  return approvedProposalModules.has(module);
+}
+
+function getProgramTrackIdForFocus(focus: string, activeProgramTracks: ProgramTrack[]): string | null {
+  const normalizedFocus = String(focus || '').trim();
+  if (!normalizedFocus) {
+    return null;
+  }
+
+  return (
+    activeProgramTracks.find(track =>
+      String(track.id || '').trim() === normalizedFocus ||
+      inferProgramTrackFocus(track) === normalizedFocus
+    )?.id || null
+  );
+}
+
+function getApplicationProgramModuleForProject(
+  project: Project,
+  application: PartnerProjectApplication | undefined,
+  activeProgramTracks: ProgramTrack[]
+): string | null {
+  if (!application || application.status !== 'Approved') {
+    return null;
+  }
+
+  const targetProjectId = String(application.proposalDetails?.targetProjectId || '').trim();
+  if (targetProjectId) {
+    const matchingTrack = activeProgramTracks.find(track => String(track.id || '').trim() === targetProjectId);
+    if (matchingTrack) {
+      return matchingTrack.id;
+    }
+  }
+
+  const requestedModule = String(
+    application.proposalDetails?.requestedProgramModule ||
+    getProgramModuleFromProposalProjectId(application.projectId) ||
+    ''
+  ).trim();
+  if (!requestedModule) {
+    return null;
+  }
+
+  return getProgramTrackIdForFocus(requestedModule, activeProgramTracks);
+}
+
+function findApprovedProposalApplicationForProject(
+  project: Project,
+  applications: PartnerProjectApplication[]
+): PartnerProjectApplication | undefined {
+  const projectId = String(project.id || '').trim();
+  const projectTitle = String(project.title || '').trim().toLowerCase();
+
+  return applications.find(application => {
+    if (application.status !== 'Approved') {
+      return false;
     }
 
-    const existing = merged.get(id);
-    merged.set(id, {
-      ...(existing || {}),
-      ...track,
-      id,
-      isActive: CORE_PROGRAM_TRACK_IDS.has(id) ? true : track.isActive,
-    });
-  });
+    if (String(application.projectId || '').trim() === projectId) {
+      return true;
+    }
 
-  return Array.from(merged.values());
+    const approvedProjectId = String((application.proposalDetails as any)?.approvedProjectId || '').trim();
+    if (approvedProjectId && approvedProjectId === projectId) {
+      return true;
+    }
+
+    const proposedTitle = String(application.proposalDetails?.proposedTitle || '').trim().toLowerCase();
+    return Boolean(projectTitle && proposedTitle && projectTitle === proposedTitle);
+  });
 }
 
 type ProjectDraft = {
@@ -749,6 +824,43 @@ function formatProjectDateRangeLabel(startDate?: string, endDate?: string): stri
   return `${formattedStartDate} - ${formattedEndDate}`;
 }
 
+function getDateOnlyBoundary(value?: string, endOfDay = false): Date | undefined {
+  const parsedDate = new Date(value || '');
+  if (Number.isNaN(parsedDate.getTime())) {
+    return undefined;
+  }
+  parsedDate.setHours(endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0);
+  return parsedDate;
+}
+
+function normalizeDateOnlyValue(value: Date): Date {
+  const normalized = new Date(value);
+  normalized.setHours(0, 0, 0, 0);
+  return normalized;
+}
+
+function isDateWithinBounds(value: Date, minDate?: Date, maxDate?: Date): boolean {
+  const date = normalizeDateOnlyValue(value);
+  if (minDate && date < minDate) {
+    return false;
+  }
+  if (maxDate && date > maxDate) {
+    return false;
+  }
+  return true;
+}
+
+function clampDateToBounds(value: Date, minDate?: Date, maxDate?: Date): Date {
+  const date = normalizeDateOnlyValue(value);
+  if (minDate && date < minDate) {
+    return new Date(minDate);
+  }
+  if (maxDate && date > maxDate) {
+    return new Date(maxDate);
+  }
+  return date;
+}
+
 function normalizeAddressToken(value: string): string {
   return value.replace(/\s+/g, ' ').trim().toLocaleLowerCase();
 }
@@ -763,13 +875,15 @@ function parsePhilippineAddressSelection(address: string): {
     .map(token => token.trim())
     .filter(Boolean);
 
-  if (tokens.length < 3) {
+  if (tokens.length < 2) {
     return { regionCode: '', cityCode: '', barangayCode: '' };
   }
 
   const regionToken = normalizeAddressToken(tokens[tokens.length - 1]);
   const cityToken = normalizeAddressToken(tokens[tokens.length - 2]);
-  const barangayToken = normalizeAddressToken(tokens[tokens.length - 3]);
+  const barangayToken = tokens.length >= 3
+    ? normalizeAddressToken(tokens[tokens.length - 3])
+    : '';
 
   const region = PHRegions.find(
     item => normalizeAddressToken(item.name) === regionToken
@@ -788,7 +902,7 @@ function parsePhilippineAddressSelection(address: string): {
     return { regionCode: region.code, cityCode: '', barangayCode: '' };
   }
 
-  const barangays = getBarangaysByCity(city.code);
+  const barangays = barangayToken ? getBarangaysByCity(city.code) : [];
   const barangay = barangays.find(
     item =>
       normalizeAddressToken(item.name) === barangayToken ||
@@ -799,6 +913,48 @@ function parsePhilippineAddressSelection(address: string): {
     regionCode: region.code,
     cityCode: city.code,
     barangayCode: barangay?.code || '',
+  };
+}
+
+function getProjectLocationSelection(project: Project | null | undefined): {
+  regionCode: string;
+  cityCode: string;
+} {
+  if (!project) {
+    return { regionCode: '', cityCode: '' };
+  }
+
+  const parsedSelection = parsePhilippineAddressSelection(project.location?.address || '');
+  if (parsedSelection.regionCode && parsedSelection.cityCode) {
+    return {
+      regionCode: parsedSelection.regionCode,
+      cityCode: parsedSelection.cityCode,
+    };
+  }
+
+  const regionName = normalizeAddressToken(
+    project.location?.region || project.locationRegion || ''
+  );
+  const region = PHRegions.find(item => normalizeAddressToken(item.name) === regionName);
+  if (!region) {
+    return {
+      regionCode: parsedSelection.regionCode,
+      cityCode: parsedSelection.cityCode,
+    };
+  }
+
+  const cityName = normalizeAddressToken(
+    project.location?.city || project.locationCity || ''
+  );
+  const city = getCitiesByRegion(region.code).find(
+    item =>
+      normalizeAddressToken(item.displayName) === cityName ||
+      normalizeAddressToken(item.name) === cityName
+  );
+
+  return {
+    regionCode: region.code,
+    cityCode: city?.code || parsedSelection.cityCode,
   };
 }
 
@@ -923,7 +1079,11 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
   useEffect(() => {
     setProgramSuiteView(getProgramSuiteViewFromRoute(route));
-  }, [route?.name, route?.params?.programSuiteView]);
+    if (route?.params?.programSuiteNavKey) {
+      setSelectedProject(null);
+      setSelectedProgramWebModule(null);
+    }
+  }, [route?.name, route?.params?.programSuiteNavKey, route?.params?.programSuiteView]);
 
   const switchProgramSuiteView = (nextView: ProgramSuiteView) => {
     setProgramSuiteView(nextView);
@@ -967,6 +1127,32 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     setProjectLocationBarangays(barangays);
     setProjectBarangayCode(parsedSelection.barangayCode);
   };
+
+  useEffect(() => {
+    if (!showProjectModal || !projectDraft.isEvent || !projectDraftParentProject) {
+      return;
+    }
+
+    const parentSelection = getProjectLocationSelection(projectDraftParentProject);
+    if (!parentSelection.regionCode || !parentSelection.cityCode) {
+      return;
+    }
+
+    const cities = getCitiesByRegion(parentSelection.regionCode);
+    const barangays = getBarangaysByCity(parentSelection.cityCode);
+    setProjectRegionCode(parentSelection.regionCode);
+    setProjectLocationCities(cities);
+    setProjectCityCode(parentSelection.cityCode);
+    setProjectLocationBarangays(barangays);
+    setProjectBarangayCode(current =>
+      barangays.some(barangay => barangay.code === current) ? current : ''
+    );
+  }, [
+    showProjectModal,
+    projectDraft.isEvent,
+    projectDraft.parentProjectId,
+    projectDraftParentProject,
+  ]);
 
   const shiftSchedulerMonth = (delta: number) => {
     setSelectedSchedulerMonth(currentMonth => {
@@ -1036,7 +1222,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
       const unsubscribe = subscribeToStorageChanges(
         // Keep subscriptions focused on keys that affect the visible UI first.
-        ['projects', 'events', 'partners', 'statusUpdates', 'partnerProjectApplications', 'partnerReports', 'volunteerProjectJoins', 'volunteerMatches', 'volunteerTimeLogs', 'programTracks'],
+        ['programs', 'projects', 'events', 'partners', 'statusUpdates', 'partnerProjectApplications', 'partnerReports', 'volunteerProjectJoins', 'volunteerMatches', 'volunteerTimeLogs', 'programTracks'],
         event => {
           // For storage updates, update light data immediately and defer heavy refreshes
           void refreshLight();
@@ -1352,9 +1538,16 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       }
     };
 
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(`Delete "${trackTitle}"? This cannot be undone. Projects and events under this program will also be deleted.`)) {
+        void doDelete();
+      }
+      return;
+    }
+
     Alert.alert(
       'Delete Program',
-      `Delete "${trackTitle}"? This cannot be undone.`,
+      `Delete "${trackTitle}"? This cannot be undone. Projects and events under this program will also be deleted.`,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: () => void doDelete() },
@@ -1409,15 +1602,16 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const openCreateProjectInProgramModal = (trackId: string, trackTitle: string) => {
     setEditingProjectId(null);
     setProjectEditorMode('project');
-    // Map trackId to an AdvocacyFocus if possible, else use the trackId itself
+    // Determine advocacy focus from the track ID if it's a known module, else default to Education
     const knownModules: AdvocacyFocus[] = ['Education', 'Livelihood', 'Nutrition', 'Disaster'];
-    const module: AdvocacyFocus = knownModules.includes(trackId as AdvocacyFocus)
+    const advocacyFocus: AdvocacyFocus = knownModules.includes(trackId as AdvocacyFocus)
       ? (trackId as AdvocacyFocus)
       : 'Education';
-    const draft = createEmptyProjectDraft('', module, false, '', '', undefined);
-    // Override program_id so the project shows inside the correct program section
+    // Create draft with parentProjectId set to the program ID for correct grouping on mobile
+    const draft = createEmptyProjectDraft('', advocacyFocus, false, '', '', trackId);
+    // Ensure both program_id and parentProjectId point to the program
     draft.program_id = trackId;
-    draft.programModule = trackId as AdvocacyFocus;
+    draft.parentProjectId = trackId;
     setProjectDraft(draft);
     resetProjectLocationSelection();
     setProjectSaveError(null);
@@ -1555,12 +1749,11 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       setSelectedProject(currentProject =>
         currentProject?.id === event.id ? null : currentProject
       );
-      setActionLoadingKey(null);
-      showTaskSaveNotice(`Event "${event.title}" was deleted successfully.`, 1200);
 
       try {
         await deleteProjectLikeRecord(event);
         void loadProjects();
+        showTaskSaveNotice(`Event "${event.title}" was deleted successfully.`, 1200);
       } catch (error) {
         setProjects(previousProjects);
         setSelectedProject(previousSelectedProject);
@@ -1568,9 +1761,26 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           getRequestErrorTitle(error),
           getRequestErrorMessage(error, 'Failed to delete event.')
         );
+      } finally {
+        setActionLoadingKey(null);
       }
     };
-    void doDelete();
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(`Delete "${event.title}"? This cannot be undone.`)) {
+        void doDelete();
+      }
+      return;
+    }
+
+    Alert.alert(
+      'Delete Event',
+      `Delete "${event.title}"? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => void doDelete() },
+      ]
+    );
   };
 
   // Updates a single project draft field without replacing the entire object.
@@ -1627,13 +1837,29 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     setProjectCityCode(cityCode);
     setProjectBarangayCode('');
     setProjectLocationBarangays(cityCode ? getBarangaysByCity(cityCode) : []);
-    handleProjectDraftChange('address', '');
+    
+    if (!projectRegionCode || !cityCode) {
+      handleProjectDraftChange('address', '');
+      return;
+    }
+
+    const selectedRegion = PHRegions.find(region => region.code === projectRegionCode);
+    const selectedCity = projectLocationCities.find(city => city.code === cityCode);
+
+    handleProjectDraftChange(
+      'address',
+      composePhilippineAddress(
+        selectedRegion?.name || '',
+        selectedCity?.displayName || '',
+        ''
+      )
+    );
   };
 
   const handleProjectBarangayChange = (barangayCode: string) => {
     setProjectBarangayCode(barangayCode);
 
-    if (!projectRegionCode || !projectCityCode || !barangayCode) {
+    if (!projectRegionCode || !projectCityCode) {
       handleProjectDraftChange('address', '');
       return;
     }
@@ -1643,6 +1869,18 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     const selectedBarangay = projectLocationBarangays.find(
       barangay => barangay.code === barangayCode
     );
+
+    if (!barangayCode) {
+      handleProjectDraftChange(
+        'address',
+        composePhilippineAddress(
+          selectedRegion?.name || '',
+          selectedCity?.displayName || '',
+          ''
+        )
+      );
+      return;
+    }
 
     handleProjectDraftChange(
       'address',
@@ -1923,17 +2161,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     const existingProject = editingProjectId
       ? projects.find(project => project.id === editingProjectId) || null
       : null;
-    if (
-      !projectDraft.title.trim() ||
-      !projectDraft.description.trim() ||
-      !projectDraft.startDate.trim() ||
-      !projectDraft.endDate.trim() ||
-      !projectDraft.address.trim()
-    ) {
-      failProjectSaveValidation('Fill in all required fields: title, description, start date, end date, and location.');
-      return;
-    }
-
     const resolvedEventParentProjectId =
       projectDraft.isEvent
         ? (
@@ -1941,6 +2168,39 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           || (!selectedProject?.isEvent ? selectedProject?.id : '')
         )
         : '';
+    const resolvedEventParentProject =
+      projectDraft.isEvent && resolvedEventParentProjectId
+        ? projects.find(project => !project.isEvent && project.id === resolvedEventParentProjectId) || null
+        : null;
+    const parentLocationSelection = getProjectLocationSelection(resolvedEventParentProject);
+    const effectiveProjectRegionCode =
+      projectDraft.isEvent
+        ? (parentLocationSelection.regionCode || projectRegionCode)
+        : projectRegionCode;
+    const effectiveProjectCityCode =
+      projectDraft.isEvent
+        ? (parentLocationSelection.cityCode || projectCityCode)
+        : projectCityCode;
+
+    if (
+      !projectDraft.title.trim() ||
+      !projectDraft.description.trim() ||
+      !projectDraft.startDate.trim() ||
+      !projectDraft.endDate.trim() ||
+      !effectiveProjectRegionCode ||
+      !effectiveProjectCityCode ||
+      (projectDraft.isEvent && !projectBarangayCode)
+    ) {
+      failProjectSaveValidation(
+        projectDraft.isEvent
+          ? 'Fill in all required fields: title, description, start date, end date, region, city, and barangay.'
+          : 'Fill in all required fields: title, description, start date, end date, region, and city.'
+      );
+      return;
+    }
+
+    // For projects (non-events), preserve parentProjectId if it was set (for grouping in programs)
+    const resolvedProjectParentId = !projectDraft.isEvent ? (projectDraft.parentProjectId?.trim() || undefined) : undefined;
 
     if (projectDraft.isEvent && !resolvedEventParentProjectId) {
       failProjectSaveValidation('Select a parent project before saving this event.');
@@ -1953,11 +2213,18 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     }
 
     if (projectDraft.isEvent) {
-      const parentProject =
-        projects.find(project => !project.isEvent && project.id === resolvedEventParentProjectId) || null;
-
-      if (!parentProject) {
+      if (!resolvedEventParentProject) {
         failProjectSaveValidation('Choose a valid parent project for this event.');
+        return;
+      }
+
+      const parentStartDate = getDateOnlyBoundary(resolvedEventParentProject.startDate);
+      const parentEndDate = getDateOnlyBoundary(resolvedEventParentProject.endDate, true);
+      if (
+        !isDateWithinBounds(startDateValue, parentStartDate, parentEndDate) ||
+        !isDateWithinBounds(endDateValue, parentStartDate, parentEndDate)
+      ) {
+        failProjectSaveValidation('Event dates must be within the parent project start and end dates.');
         return;
       }
     }
@@ -1967,20 +2234,31 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       Boolean(projectDraft.longitude.trim()) &&
       Number.isFinite(parsedLatitude) &&
       Number.isFinite(parsedLongitude);
+    const selectedLocationRegion = PHRegions.find(region => region.code === effectiveProjectRegionCode);
+    const effectiveLocationCities = effectiveProjectRegionCode === projectRegionCode
+      ? projectLocationCities
+      : getCitiesByRegion(effectiveProjectRegionCode);
+    const selectedLocationCity = effectiveLocationCities.find(city => city.code === effectiveProjectCityCode);
+    const effectiveLocationBarangays = effectiveProjectCityCode === projectCityCode
+      ? projectLocationBarangays
+      : getBarangaysByCity(effectiveProjectCityCode);
+    const selectedLocationBarangay = effectiveLocationBarangays.find(barangay => barangay.code === projectBarangayCode);
+    const structuredAddress = composePhilippineAddress(
+      selectedLocationRegion?.name || '',
+      selectedLocationCity?.displayName || '',
+      projectDraft.isEvent ? selectedLocationBarangay?.name || '' : ''
+    );
+    const resolvedAddress = structuredAddress || projectDraft.address.trim();
     const hasStructuredPhilippineAddress =
-      Boolean(projectRegionCode) && Boolean(projectCityCode) && Boolean(projectBarangayCode);
+      Boolean(effectiveProjectRegionCode) &&
+      Boolean(effectiveProjectCityCode) &&
+      (!projectDraft.isEvent || Boolean(projectBarangayCode));
 
     const resolvedCoordinates =
       (hasManualCoordinates
         ? { latitude: parsedLatitude, longitude: parsedLongitude }
         : null) ||
-      inferCoordinatesFromPlace(projectDraft.address, projects) ||
-      (hasStructuredPhilippineAddress
-        ? {
-          latitude: PHILIPPINES_REGION.latitude,
-          longitude: PHILIPPINES_REGION.longitude,
-        }
-        : null) ||
+      inferCoordinatesFromPlace(resolvedAddress, projects) ||
       (existingProject
         ? {
           latitude: existingProject.location.latitude,
@@ -2011,7 +2289,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       imageHidden: projectDraft.imageUrl.trim() ? false : Boolean(projectDraft.imageHidden),
       programModule: projectDraft.programModule,
       isEvent: projectDraft.isEvent,
-      parentProjectId: projectDraft.isEvent ? resolvedEventParentProjectId : undefined,
+      parentProjectId: projectDraft.isEvent ? resolvedEventParentProjectId : resolvedProjectParentId,
       statusMode: inheritedStatusMode,
       manualStatus: inheritedManualStatus,
       status: projectDraft.status,
@@ -2021,8 +2299,14 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       location: {
         latitude: resolvedCoordinates.latitude,
         longitude: resolvedCoordinates.longitude,
-        address: projectDraft.address.trim(),
+        address: resolvedAddress,
+        region: selectedLocationRegion?.name,
+        city: selectedLocationCity?.displayName,
+        barangay: projectDraft.isEvent ? selectedLocationBarangay?.name : undefined,
       },
+      locationRegion: selectedLocationRegion?.name,
+      locationCity: selectedLocationCity?.displayName,
+      locationBarangay: projectDraft.isEvent ? selectedLocationBarangay?.name : undefined,
       volunteersNeeded,
       volunteers: existingProject?.volunteers || [],
       joinedUserIds: existingProject?.joinedUserIds || [],
@@ -2053,10 +2337,51 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       status: resolvedLifecycleStatus,
     };
 
+    const shouldAutoCreateFieldOfficerTask = (project: Project): boolean => {
+      if (!project.isEvent) {
+        return false;
+      }
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const eventEndDate = new Date(project.endDate);
+      if (!Number.isNaN(eventEndDate.getTime())) {
+        return eventEndDate >= today;
+      }
+
+      const eventStartDate = new Date(project.startDate);
+      return !Number.isNaN(eventStartDate.getTime()) && eventStartDate >= today;
+    };
+
+    const projectToSave: Project =
+      shouldAutoCreateFieldOfficerTask(savedProject) &&
+      !(savedProject.internalTasks || []).some(task => task.isFieldOfficer)
+        ? {
+            ...savedProject,
+            internalTasks: [
+              ...(savedProject.internalTasks || []),
+              {
+                id: `${savedProject.id}-field-officer-${Date.now()}`,
+                title: 'Field Officer',
+                description: 'Manage attendance tracking and volunteer coordination for this event.',
+                category: 'Field Coordination',
+                priority: 'High',
+                status: 'Assigned',
+                isFieldOfficer: true,
+                skillsNeeded: ['Leadership', 'Communication'],
+                createdAt: now,
+                updatedAt: now,
+              } as ProjectInternalTask,
+            ],
+            updatedAt: now,
+          }
+        : savedProject;
+
     const isEditingExistingRecord = Boolean(editingProjectId);
 
     try {
-      await saveProjectLikeRecord(savedProject);
+      await saveProjectLikeRecord(projectToSave);
       await loadProjects();
       setActionLoadingKey(null);
       const successTitle = isEditingExistingRecord
@@ -2110,7 +2435,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       return;
     }
 
-    const selectedRecordType = selectedProject.isEvent ? 'Event' : 'Program';
+    const selectedRecordType = selectedProject.isEvent ? 'Event' : 'Project';
     const projectToDelete = selectedProject;
     const doDelete = async () => {
       try {
@@ -2131,6 +2456,13 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         );
       }
     };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(`Delete "${projectToDelete.title}"? This will remove its related join records, applications, and logs.`)) {
+        void doDelete();
+      }
+      return;
+    }
 
     Alert.alert(
       `Delete ${selectedRecordType}`,
@@ -2513,7 +2845,13 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   };
 
   const handleDeleteProjectFromCard = (project: Project) => {
+    if (project.isEvent) {
+      handleDeleteEventRecord(project);
+      return;
+    }
+
     const doDelete = async () => {
+      const previousProjects = projects;
       try {
         setProjects(currentProjects => currentProjects.filter(item => item.id !== project.id));
         await deleteProjectLikeRecord(project);
@@ -2527,12 +2865,21 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         await loadProjects();
         Alert.alert('Deleted', project.isEvent ? 'Event removed.' : 'Project removed.');
       } catch (error) {
+        setProjects(previousProjects);
+        await loadProjects();
         Alert.alert(
           getRequestErrorTitle(error),
           getRequestErrorMessage(error, 'Failed to delete project.')
         );
       }
     };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(`Delete "${project.title}"? This cannot be undone.`)) {
+        void doDelete();
+      }
+      return;
+    }
 
     Alert.alert(
       'Delete Project',
@@ -3125,31 +3472,37 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                       </Text>
 
                       {isAdmin && (
-                        <View style={styles.eventBoxActions}>
-                          <TouchableOpacity
+                        <View style={styles.eventBoxActions} pointerEvents="box-none">
+                          <Pressable
                             style={styles.eventBoxActionButton}
                             hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
                             onPressIn={event => {
                               (event as any)?.stopPropagation?.();
                               (event as any)?.nativeEvent?.stopPropagation?.();
                             }}
-                            onPress={() => openEditProjectModal(project)}
-                            activeOpacity={0.8}
+                            onPress={event => {
+                              (event as any)?.stopPropagation?.();
+                              (event as any)?.nativeEvent?.stopPropagation?.();
+                              openEditProjectModal(project);
+                            }}
                           >
                             <MaterialIcons name="edit" size={16} color="#6366f1" />
-                          </TouchableOpacity>
-                          <TouchableOpacity
+                          </Pressable>
+                          <Pressable
                             style={styles.eventBoxActionButton}
                             hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
                             onPressIn={event => {
                               (event as any)?.stopPropagation?.();
                               (event as any)?.nativeEvent?.stopPropagation?.();
                             }}
-                            onPress={() => handleDeleteProjectFromCard(project)}
-                            activeOpacity={0.8}
+                            onPress={event => {
+                              (event as any)?.stopPropagation?.();
+                              (event as any)?.nativeEvent?.stopPropagation?.();
+                              handleDeleteProjectFromCard(project);
+                            }}
                           >
                             <MaterialIcons name="delete" size={16} color="#ef4444" />
-                          </TouchableOpacity>
+                          </Pressable>
                         </View>
                       )}
                     </TouchableOpacity>
@@ -3280,31 +3633,37 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 </Text>
 
                 {isAdmin && (
-                  <View style={styles.eventBoxActions}>
-                    <TouchableOpacity
+                  <View style={styles.eventBoxActions} pointerEvents="box-none">
+                    <Pressable
                       style={styles.eventBoxActionButton}
                       hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
                       onPressIn={eventPress => {
                         (eventPress as any)?.stopPropagation?.();
                         (eventPress as any)?.nativeEvent?.stopPropagation?.();
                       }}
-                      onPress={() => openEditProjectModal(event)}
-                      activeOpacity={0.8}
+                      onPress={eventPress => {
+                        (eventPress as any)?.stopPropagation?.();
+                        (eventPress as any)?.nativeEvent?.stopPropagation?.();
+                        openEditProjectModal(event);
+                      }}
                     >
                       <MaterialIcons name="edit" size={16} color="#6366f1" />
-                    </TouchableOpacity>
-                    <TouchableOpacity
+                    </Pressable>
+                    <Pressable
                       style={styles.eventBoxActionButton}
                       hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
                       onPressIn={eventPress => {
                         (eventPress as any)?.stopPropagation?.();
                         (eventPress as any)?.nativeEvent?.stopPropagation?.();
                       }}
-                      onPress={() => handleDeleteProjectFromCard(event)}
-                      activeOpacity={0.8}
+                      onPress={eventPress => {
+                        (eventPress as any)?.stopPropagation?.();
+                        (eventPress as any)?.nativeEvent?.stopPropagation?.();
+                        handleDeleteProjectFromCard(event);
+                      }}
                     >
                       <MaterialIcons name="delete" size={16} color="#ef4444" />
-                    </TouchableOpacity>
+                    </Pressable>
                   </View>
                 )}
               </TouchableOpacity>
@@ -3317,6 +3676,25 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             <Text style={styles.programSuiteProjectsMeta}>
               Create an event here and it will be attached to this project.
             </Text>
+            {isAdmin && (
+              <TouchableOpacity
+                style={{
+                  marginTop: 16,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                  backgroundColor: '#0f766e',
+                  borderRadius: 10,
+                  paddingVertical: 12,
+                  paddingHorizontal: 24,
+                }}
+                onPress={() => openCreateEventModal(project)}
+                activeOpacity={0.82}
+              >
+                <MaterialIcons name="add-circle-outline" size={20} color="#fff" />
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Create First Event</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
       </View>
@@ -3475,6 +3853,12 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
   const renderProjectEditorModal = () => {
     const isWeb = getPlatformOS() === 'web';
+    const eventDateMin = projectDraft.isEvent && projectDraftParentProject
+      ? getDateOnlyBoundary(projectDraftParentProject.startDate)
+      : undefined;
+    const eventDateMax = projectDraft.isEvent && projectDraftParentProject
+      ? getDateOnlyBoundary(projectDraftParentProject.endDate, true)
+      : undefined;
 
     const formContent = (
       <View style={styles.modalContainer}>
@@ -3667,7 +4051,13 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               style={[styles.datePickerButton, styles.inputWithLabel]}
               onPress={() => {
                 setDatePickerMode('startDate');
-                setSelectedDate(projectDraft.startDate ? new Date(projectDraft.startDate) : new Date());
+                setSelectedDate(
+                  clampDateToBounds(
+                    projectDraft.startDate ? new Date(projectDraft.startDate) : new Date(),
+                    eventDateMin,
+                    eventDateMax
+                  )
+                );
                 setShowDatePicker(true);
               }}
             >
@@ -3690,7 +4080,13 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               style={[styles.datePickerButton, styles.inputWithLabel]}
               onPress={() => {
                 setDatePickerMode('endDate');
-                setSelectedDate(projectDraft.endDate ? new Date(projectDraft.endDate) : new Date());
+                setSelectedDate(
+                  clampDateToBounds(
+                    projectDraft.endDate ? new Date(projectDraft.endDate) : new Date(),
+                    eventDateMin,
+                    eventDateMax
+                  )
+                );
                 setShowDatePicker(true);
               }}
             >
@@ -3711,11 +4107,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           {projectDraft.isEvent && projectDraftParentProject ? (
             <View style={[styles.formRow, styles.formRowTop, styles.formRowReverse]}>
               <View style={[styles.statusOptionsCard, styles.helperPanel]}>
-                <Text style={styles.helperPanelTitle}>Event timeline can be updated independently</Text>
+                <Text style={styles.helperPanelTitle}>Event dates follow the parent project window</Text>
                 <Text style={styles.helperPanelText}>
                   Parent project window: {projectDraftParentProject.startDate.slice(0, 10)} to{' '}
-                  {projectDraftParentProject.endDate.slice(0, 10)}. You can adjust this event schedule here and the
-                  attendance timeline will follow the updated dates in realtime.
+                  {projectDraftParentProject.endDate.slice(0, 10)}. Select event dates only within this range.
                 </Text>
               </View>
               <Text style={[styles.labelRight, styles.labelTop]}>Date Rule</Text>
@@ -3753,27 +4148,35 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 </Picker>
               </View>
 
-              <Text style={styles.locationPickerLabel}>Barangay</Text>
-              <View style={styles.locationPickerContainer}>
-                <Picker
-                  selectedValue={projectBarangayCode}
-                  onValueChange={(itemValue: string) => handleProjectBarangayChange(itemValue)}
-                  enabled={projectCityCode !== ''}
-                  style={styles.locationPicker}
-                >
-                  <Picker.Item label="Select Barangay..." value="" />
-                  {projectLocationBarangays.map(barangay => (
-                    <Picker.Item
-                      key={barangay.code}
-                      label={barangay.displayName}
-                      value={barangay.code}
-                    />
-                  ))}
-                </Picker>
-              </View>
+              {projectDraft.isEvent ? (
+                <>
+                  <Text style={styles.locationPickerLabel}>Barangay</Text>
+                  <View style={styles.locationPickerContainer}>
+                    <Picker
+                      selectedValue={projectBarangayCode}
+                      onValueChange={(itemValue: string) => handleProjectBarangayChange(itemValue)}
+                      enabled={projectCityCode !== ''}
+                      style={styles.locationPicker}
+                    >
+                      <Picker.Item label="Select Barangay..." value="" />
+                      {projectLocationBarangays.map(barangay => (
+                        <Picker.Item
+                          key={barangay.code}
+                          label={barangay.displayName}
+                          value={barangay.code}
+                        />
+                      ))}
+                    </Picker>
+                  </View>
+                </>
+              ) : null}
 
               <Text style={styles.locationPickerHelperText}>
-                {projectDraft.address || 'Choose region, city/municipality, and barangay to set the place.'}
+                {projectDraft.address || (
+                  projectDraft.isEvent
+                    ? 'Choose region, city/municipality, and barangay to set the event place.'
+                    : 'Choose region and city/municipality to set the place.'
+                )}
               </Text>
             </View>
             <Text style={[styles.labelRight, styles.labelTop]}>Place</Text>
@@ -3858,29 +4261,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
           {!projectDraft.isEvent ? (
             <>
-              <View style={[styles.formRow, styles.formRowTop, styles.formRowReverse]}>
-                <TextInput
-                  style={[styles.textArea, styles.inputWithLabel]}
-                  placeholder="Describe the community need"
-                  placeholderTextColor="#999"
-                  multiline
-                  value={projectDraft.communityNeed}
-                  onChangeText={value => handleProjectDraftChange('communityNeed', value)}
-                />
-                <Text style={[styles.labelRight, styles.labelTop]}>Community Need</Text>
-              </View>
 
-              <View style={[styles.formRow, styles.formRowTop, styles.formRowReverse]}>
-                <TextInput
-                  style={[styles.textArea, styles.inputWithLabel]}
-                  placeholder="Describe the expected deliverables"
-                  placeholderTextColor="#999"
-                  multiline
-                  value={projectDraft.expectedDeliverables}
-                  onChangeText={value => handleProjectDraftChange('expectedDeliverables', value)}
-                />
-                <Text style={[styles.labelRight, styles.labelTop]}>Expected Deliverables</Text>
-              </View>
 
               <View style={[styles.formRow, styles.formRowTop, styles.formRowReverse]}>
                 <View style={[styles.statusOptionsCard, styles.inputWithLabel]}>
@@ -3940,6 +4321,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         <View style={styles.datePickerOverlay}>
           <CalendarDatePicker
             selectedDate={selectedDate}
+            minDate={eventDateMin}
+            maxDate={eventDateMax}
             onDateSelect={(date) => {
               setSelectedDate(date);
               const year = date.getFullYear();
@@ -4268,51 +4651,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 </View>
               </View>
 
-              {/* Intro grid */}
-              <View style={programWebStyles.section}>
-                <View style={programWebStyles.introGrid}>
-                  <View style={programWebStyles.introMain}>
-                    <Text style={programWebStyles.sectionEyebrow}>What this program does</Text>
-                    <Text style={programWebStyles.introTitle}>
-                      Turning a program pillar into coordinated projects, events, and field outcomes.
-                    </Text>
-                    <Text style={programWebStyles.bodyText}>
-                      {selectedProgramWebSection.context || selectedProgramWebSection.description || overview.about}
-                    </Text>
-                  </View>
-                  <View style={[programWebStyles.asideCard, { borderColor: accent + '44', backgroundColor: surface }]}>
-                    <Text style={[programWebStyles.asideLabel, { color: accent }]}>Focus areas</Text>
-                    {overview.highlights.slice(0, 4).map(h => (
-                      <View key={h.title} style={programWebStyles.asideRow}>
-                        <View style={[programWebStyles.asideDot, { backgroundColor: accent }]} />
-                        <Text style={programWebStyles.asideText}>{h.title}</Text>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              </View>
-
-              {/* Services */}
-              <View style={[programWebStyles.section, { backgroundColor: '#f8fafc' }]}>
-                <Text style={programWebStyles.sectionEyebrow}>Program services</Text>
-                <Text style={programWebStyles.sectionTitle}>What we deliver on the ground</Text>
-                <View style={programWebStyles.serviceGrid}>
-                  {overview.highlights.map((h, i) => (
-                    <View key={h.title} style={[programWebStyles.serviceCard, { borderTopColor: accent, backgroundColor: '#ffffff' }]}>
-                      <View style={[programWebStyles.serviceIcon, { backgroundColor: surface }]}>
-                        <MaterialIcons
-                          name={(i % 2 === 0 ? 'volunteer-activism' : 'auto-awesome') as keyof typeof MaterialIcons.glyphMap}
-                          size={20}
-                          color={accent}
-                        />
-                      </View>
-                      <Text style={programWebStyles.serviceTitle}>{h.title}</Text>
-                      <Text style={programWebStyles.serviceText}>{h.description}</Text>
-                    </View>
-                  ))}
-                </View>
-              </View>
-
               {/* Workflow */}
               <View style={programWebStyles.section}>
                 <Text style={programWebStyles.sectionEyebrow}>Delivery workflow</Text>
@@ -4462,7 +4800,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
   const activeProgramTracks = useMemo(
     () =>
-      mergeProgramTracksWithCoreTracks(programTracks)
+      programTracks
         .filter(track => track.isActive !== false)
         .sort(
           (left, right) =>
@@ -4470,11 +4808,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             String(left.id).localeCompare(String(right.id))
         ),
     [programTracks]
-  );
-
-  const activeProgramTrackIds = useMemo(
-    () => new Set(activeProgramTracks.map(track => String(track.id).trim())),
-    [activeProgramTracks]
   );
 
   useEffect(() => {
@@ -4491,7 +4824,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     () =>
       projects
         .filter(project => {
-          const module = getProgramSuiteModuleForProject(project, activeProgramTrackIds);
+          const module = getProgramSuiteModuleForProject(project, activeProgramTracks);
           if (!module) {
             return false;
           }
@@ -4510,7 +4843,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           );
         })
         .sort(compareProjectsForCalendarVisibility),
-    [projects, schedulerCalendarWindow.end, schedulerCalendarWindow.start]
+    [activeProgramTracks, projects, schedulerCalendarWindow.end, schedulerCalendarWindow.start]
   );
 
   const monthProjectCalendarProjects = useMemo(
@@ -4519,7 +4852,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         (left, right) =>
           new Date(left.startDate).getTime() - new Date(right.startDate).getTime() ||
           left.title.localeCompare(right.title)
-      ).filter(project => !project.isEvent),
+      ).filter(isProgramSuiteProjectRecord),
     [projects]
   );
 
@@ -4564,7 +4897,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const schedulerFeaturedProjects = useMemo(
     () =>
       [...projects]
-        .filter(project => !project.isEvent)
+        .filter(isProgramSuiteProjectRecord)
         .sort(
           (left, right) =>
             new Date(left.startDate).getTime() - new Date(right.startDate).getTime() ||
@@ -4609,16 +4942,37 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               application.status === 'Pending' &&
               getProgramModuleFromProposalProjectId(application.projectId) === module
           ) || null;
+        const approvedProposalModules = new Set(
+          allPartnerApplications
+            .filter(application => application.status === 'Approved')
+            .map(application =>
+              String(
+                application.proposalDetails?.requestedProgramModule ||
+                getProgramModuleFromProposalProjectId(application.projectId) ||
+                ''
+              ).trim()
+            )
+            .filter(Boolean)
+        );
         const sectionItems = projects
           .filter(project => {
-            const result = getProgramSuiteModuleForProject(project, activeProgramTrackIds);
+            const applicationModule = getApplicationProgramModuleForProject(
+              project,
+              partnerApplicationByProjectId.get(project.id) ||
+                findApprovedProposalApplicationForProject(project, allPartnerApplications),
+              activeProgramTracks
+            );
+            const result = applicationModule || getProgramSuiteModuleForProject(project, activeProgramTracks);
             if (!result && projects.length < 20) {
               console.log(`[DEBUG] Project filtered out: ${project.title} (id=${project.id}) module=${getProjectProgramId(project)} looking for=${module}`);
             }
             return result === module;
           })
           .sort((left, right) => new Date(left.startDate).getTime() - new Date(right.startDate).getTime());
-        const sectionProjects = sectionItems.filter(project => !project.isEvent);
+        const sectionProjects = sectionItems.filter(project =>
+          isProgramSuiteProjectRecord(project) ||
+          isApprovedProposalLikeProject(project, module, activeProgramTracks, approvedProposalModules)
+        );
         const sectionEvents = sectionItems.filter(project => project.isEvent);
 
         return {
@@ -4657,10 +5011,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const eventProjectSections = useMemo(
     () =>
       projects
-        .filter(project => !project.isEvent)
+        .filter(isProgramSuiteProjectRecord)
         .sort((left, right) => {
-          const leftProgram = getProgramSuiteModuleForProject(left, activeProgramTrackIds) || left.programModule || left.category || '';
-          const rightProgram = getProgramSuiteModuleForProject(right, activeProgramTrackIds) || right.programModule || right.category || '';
+          const leftProgram = getProgramSuiteModuleForProject(left, activeProgramTracks) || left.programModule || left.category || '';
+          const rightProgram = getProgramSuiteModuleForProject(right, activeProgramTracks) || right.programModule || right.category || '';
           return (
             String(leftProgram).localeCompare(String(rightProgram)) ||
             left.title.localeCompare(right.title)
@@ -4677,7 +5031,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             .sort((left, right) => new Date(left.startDate).getTime() - new Date(right.startDate).getTime()),
         }))
         .filter(section => section.events.length > 0),
-    [activeProgramTrackIds, activeProgramTracks, projects]
+    [activeProgramTracks, projects]
   );
 
   const programMutationInProgress =
@@ -6846,22 +7200,23 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                       </View>
                     </TouchableOpacity>
                     {isAdmin && track && (
-                      <View style={{ position: 'absolute', top: 6, right: 6, flexDirection: 'row', gap: 4 }}>
-                        <TouchableOpacity
+                      <View style={{ position: 'absolute', top: 6, right: 6, flexDirection: 'row', gap: 4, zIndex: 10 }} pointerEvents="box-none">
+                        <Pressable
                           style={{ backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 6, padding: 4 }}
                           onPress={() => openEditProgramModal(track)}
-                          activeOpacity={0.8}
                         >
                           <MaterialIcons name="edit" size={16} color="#6366f1" />
-                        </TouchableOpacity>
-                        <TouchableOpacity
+                        </Pressable>
+                        <Pressable
                           style={{ backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 6, padding: 4, opacity: actionLoadingKey === `deleteProgram-${track.id}` ? 0.5 : 1 }}
-                          onPress={() => handleDeleteProgram(track.id, track.title)}
+                          onPress={(event) => {
+                            event.stopPropagation?.();
+                            handleDeleteProgram(track.id, track.title);
+                          }}
                           disabled={actionLoadingKey === `deleteProgram-${track.id}`}
-                          activeOpacity={0.8}
                         >
                           <MaterialIcons name="delete" size={16} color="#ef4444" />
-                        </TouchableOpacity>
+                        </Pressable>
                       </View>
                     )}
                   </View>
@@ -6924,7 +7279,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           <View style={styles.programSuiteStack}>
             {programSections.map(renderProgramSection)}
             {statusFilter && programSections.every(section =>
-              section.projects.filter(p => !p.isEvent && getProjectDisplayStatus(p) === statusFilter).length === 0
+              section.projects.filter(p => isProgramSuiteProjectRecord(p) && getProjectDisplayStatus(p) === statusFilter).length === 0
             ) ? (
               <View style={{ alignItems: 'center', paddingVertical: 40 }}>
                 <MaterialIcons name="search-off" size={36} color="#94a3b8" />
@@ -7136,7 +7491,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                           {formatCalendarItemDateRange(project.startDate, project.endDate)}
                         </Text>
                         <Text style={styles.schedulerProjectCalendarCardMeta} numberOfLines={1}>
-                          {getProgramSuiteModuleForProject(project, activeProgramTrackIds) || project.category}
+                          {getProgramSuiteModuleForProject(project, activeProgramTracks) || project.category}
                         </Text>
                       </TouchableOpacity>
                     ))}
@@ -7155,6 +7510,60 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             </>
           ) : (
             <View style={styles.programSuiteStack}>
+              <View style={styles.programSuiteProjectsBlock}>
+                <View style={styles.programSuiteProjectsHeader}>
+                  <Text style={styles.programSuiteProjectsTitle}>Events by Project</Text>
+                  <Text style={styles.programSuiteProjectsMeta}>
+                    Events are grouped under the project that created them. Use each project row to add a new event.
+                  </Text>
+                </View>
+              </View>
+              {eventProjectSections.length ? (
+                <>
+                  {statusFilter ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12, paddingHorizontal: 4, paddingVertical: 8, backgroundColor: '#f0fdf4', borderRadius: 8, borderWidth: 1, borderColor: '#bbf7d0' }}>
+                      <MaterialIcons name="filter-list" size={16} color="#166534" />
+                      <Text style={{ flex: 1, fontSize: 13, fontWeight: '700', color: '#166534' }}>
+                        Showing:{' '}
+                        <Text style={{
+                          color: statusFilter === 'In Progress' ? '#1d4ed8'
+                            : statusFilter === 'Planning' ? '#b45309'
+                            : statusFilter === 'Completed' ? '#15803d'
+                            : '#be123c'
+                        }}>{statusFilter}</Text>
+                        {' '}events only
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => setStatusFilter(null)}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, backgroundColor: '#dcfce7' }}
+                        activeOpacity={0.8}
+                      >
+                        <MaterialIcons name="close" size={14} color="#166534" />
+                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#166534' }}>Clear</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                  {eventProjectSections.map(renderEventProjectSection)}
+                  {statusFilter && eventProjectSections.every(s =>
+                    s.events.filter(e => getProjectDisplayStatus(e) === statusFilter).length === 0
+                  ) ? (
+                    <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                      <MaterialIcons name="search-off" size={36} color="#94a3b8" />
+                      <Text style={{ marginTop: 12, fontSize: 15, fontWeight: '700', color: '#64748b' }}>No {statusFilter} events</Text>
+                      <Text style={{ marginTop: 4, fontSize: 13, color: '#94a3b8' }}>No events match this status filter.</Text>
+                    </View>
+                  ) : null}
+                </>
+              ) : (
+                <View style={styles.programSuiteEmptyState}>
+                  <MaterialIcons name="event-busy" size={32} color="#94a3b8" />
+                  <Text style={styles.programSuiteEmptyTitle}>No events yet</Text>
+                  <Text style={styles.programSuiteEmptyMeta}>
+                    Create an event from a project and it will appear here.
+                  </Text>
+                </View>
+              )}
+
               <View
                 style={[
                   styles.programSuiteSchedulerCard,
@@ -7302,59 +7711,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 </View>
               </View>
 
-              <View style={styles.programSuiteProjectsBlock}>
-                <View style={styles.programSuiteProjectsHeader}>
-                  <Text style={styles.programSuiteProjectsTitle}>Events by Project</Text>
-                  <Text style={styles.programSuiteProjectsMeta}>
-                    Events are grouped under the project that created them. Use each project row to add a new event.
-                  </Text>
-                </View>
-              </View>
-              {eventProjectSections.length ? (
-                <>
-                  {statusFilter ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12, paddingHorizontal: 4, paddingVertical: 8, backgroundColor: '#f0fdf4', borderRadius: 8, borderWidth: 1, borderColor: '#bbf7d0' }}>
-                      <MaterialIcons name="filter-list" size={16} color="#166534" />
-                      <Text style={{ flex: 1, fontSize: 13, fontWeight: '700', color: '#166534' }}>
-                        Showing:{' '}
-                        <Text style={{
-                          color: statusFilter === 'In Progress' ? '#1d4ed8'
-                            : statusFilter === 'Planning' ? '#b45309'
-                            : statusFilter === 'Completed' ? '#15803d'
-                            : '#be123c'
-                        }}>{statusFilter}</Text>
-                        {' '}events only
-                      </Text>
-                      <TouchableOpacity
-                        onPress={() => setStatusFilter(null)}
-                        style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, backgroundColor: '#dcfce7' }}
-                        activeOpacity={0.8}
-                      >
-                        <MaterialIcons name="close" size={14} color="#166534" />
-                        <Text style={{ fontSize: 12, fontWeight: '800', color: '#166534' }}>Clear</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                  {eventProjectSections.map(renderEventProjectSection)}
-                  {statusFilter && eventProjectSections.every(s =>
-                    s.events.filter(e => getProjectDisplayStatus(e) === statusFilter).length === 0
-                  ) ? (
-                    <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-                      <MaterialIcons name="search-off" size={36} color="#94a3b8" />
-                      <Text style={{ marginTop: 12, fontSize: 15, fontWeight: '700', color: '#64748b' }}>No {statusFilter} events</Text>
-                      <Text style={{ marginTop: 4, fontSize: 13, color: '#94a3b8' }}>No events match this status filter.</Text>
-                    </View>
-                  ) : null}
-                </>
-            ) : (
-              <View style={styles.programSuiteEmptyState}>
-                <MaterialIcons name="event-busy" size={32} color="#94a3b8" />
-                <Text style={styles.programSuiteEmptyTitle}>No events yet</Text>
-                <Text style={styles.programSuiteEmptyMeta}>
-                  Create an event from a project and it will appear here.
-                </Text>
-              </View>
-            )}
             </View>
           )}
         </>

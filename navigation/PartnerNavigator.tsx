@@ -4,7 +4,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ScreenBrandHeader from '../components/ScreenBrandHeader';
 import { useAuth } from '../contexts/AuthContext';
-import { getMessagesForUser, subscribeToMessages, getAllUsers, subscribeToStorageChanges } from '../models/storage';
+import { getMessagesForUser, subscribeToMessages, getAllUsers, subscribeToStorageChanges, markMessageAsRead } from '../models/storage';
 
 export type PartnerTabParamList = {
   Dashboard: { openProposalModule?: string } | undefined;
@@ -94,6 +94,13 @@ export default function PartnerNavigator() {
     };
   }, [user?.id]);
 
+  const handleNotificationsSeen = React.useCallback(async () => {
+    if (!user?.id || unreadMessages.length === 0) return;
+    await Promise.all(
+      unreadMessages.map((msg) => markMessageAsRead(msg.id).catch(() => undefined))
+    );
+  }, [unreadMessages, user?.id]);
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -105,6 +112,7 @@ export default function PartnerNavigator() {
             userId={user?.id}
             notificationCount={unreadMessages.length}
             unreadMessages={unreadMessages}
+            onNotificationOpen={handleNotificationsSeen}
           />
         ),
         tabBarIcon: ({ color, size }) => <MaterialIcons name={getIconName(route.name as keyof PartnerTabParamList)} size={size} color={color} />,

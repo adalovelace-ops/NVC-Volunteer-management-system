@@ -36,6 +36,7 @@ type ScreenBrandHeaderProps = {
   pendingPartnerApplications?: PartnerProjectApplication[];
   pendingVolunteerRequests?: Array<VolunteerProjectMatch & { volunteerName?: string; projectTitle?: string }>;
   onNotificationDismiss?: () => void;
+  onNotificationOpen?: () => void;
   onNotificationClick?: (item: NotificationItemType) => void;
   navigation?: any;
   userId?: string;
@@ -60,6 +61,7 @@ export default function ScreenBrandHeader({
   pendingPartnerApplications = [],
   pendingVolunteerRequests = [],
   onNotificationDismiss,
+  onNotificationOpen,
   onNotificationClick,
   navigation,
   userId,
@@ -74,6 +76,11 @@ export default function ScreenBrandHeader({
   const handleDismissNotification = () => {
     setShowNotificationModal(false);
     onNotificationDismiss?.();
+  };
+
+  const handleOpenNotificationModal = () => {
+    setShowNotificationModal(true);
+    onNotificationOpen?.();
   };
 
   const formatTimestamp = (value: string) => {
@@ -238,7 +245,7 @@ export default function ScreenBrandHeader({
           </View>
           <TouchableOpacity
             style={styles.notificationBellWrap}
-            onPress={() => setShowNotificationModal(true)}
+            onPress={handleOpenNotificationModal}
             activeOpacity={0.7}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >

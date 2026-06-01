@@ -41,6 +41,12 @@ function getMonthGrid(date: Date): Date[] {
 
 const WEEKDAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
+function normalizeDateOnly(date: Date): Date {
+  const normalized = new Date(date);
+  normalized.setHours(0, 0, 0, 0);
+  return normalized;
+}
+
 export default function CalendarDatePicker({
   selectedDate,
   onDateSelect,
@@ -49,6 +55,14 @@ export default function CalendarDatePicker({
   maxDate,
 }: CalendarDatePickerProps) {
   const [currentMonth, setCurrentMonth] = useState(selectedDate || new Date());
+  const normalizedMinDate = useMemo(
+    () => (minDate ? normalizeDateOnly(minDate) : undefined),
+    [minDate]
+  );
+  const normalizedMaxDate = useMemo(
+    () => (maxDate ? normalizeDateOnly(maxDate) : undefined),
+    [maxDate]
+  );
 
   const monthGrid = useMemo(() => getMonthGrid(currentMonth), [currentMonth]);
   const monthLabel = useMemo(
@@ -65,19 +79,21 @@ export default function CalendarDatePicker({
   };
 
   const handleDatePress = (date: Date) => {
-    // Check if date is within min/max bounds
-    if (minDate && date < minDate) return;
-    if (maxDate && date > maxDate) return;
+    const normalizedDate = normalizeDateOnly(date);
+    if (normalizedMinDate && normalizedDate < normalizedMinDate) return;
+    if (normalizedMaxDate && normalizedDate > normalizedMaxDate) return;
 
     onDateSelect(date);
     onClose();
   };
 
   const isDateDisabled = (date: Date) => {
-    if (minDate && date < minDate) return true;
-    if (maxDate && date > maxDate) return true;
+    const normalizedDate = normalizeDateOnly(date);
+    if (normalizedMinDate && normalizedDate < normalizedMinDate) return true;
+    if (normalizedMaxDate && normalizedDate > normalizedMaxDate) return true;
     return false;
   };
+  const isSelectedDateDisabled = selectedDate ? isDateDisabled(selectedDate) : false;
 
   return (
     <View style={styles.container}>
@@ -139,7 +155,11 @@ export default function CalendarDatePicker({
           <Text style={styles.cancelButtonText}>Cancel</Text>
         </TouchableOpacity>
         {selectedDate && (
-          <TouchableOpacity onPress={() => onDateSelect(selectedDate)} style={styles.confirmButton}>
+          <TouchableOpacity
+            onPress={() => handleDatePress(selectedDate)}
+            style={[styles.confirmButton, isSelectedDateDisabled && styles.confirmButtonDisabled]}
+            disabled={isSelectedDateDisabled}
+          >
             <Text style={styles.confirmButtonText}>
               Select {format(selectedDate, 'MMM d, yyyy')}
             </Text>
@@ -251,6 +271,9 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: '#4CAF50',
     alignItems: 'center',
+  },
+  confirmButtonDisabled: {
+    opacity: 0.45,
   },
   confirmButtonText: {
     color: '#fff',

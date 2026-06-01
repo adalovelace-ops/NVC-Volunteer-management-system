@@ -138,7 +138,10 @@ function buildAvailableAccountOptions(
       };
     })
     .filter(account => includeEmptyAccounts || account.projectCount > 0)
-    .sort((left, right) => left.label.localeCompare(right.label));
+    .sort((left, right) => {
+      const countRank = right.projectCount - left.projectCount;
+      return countRank !== 0 ? countRank : left.label.localeCompare(right.label);
+    });
 }
 
 function getMapEmptyStateMessage(
@@ -210,7 +213,7 @@ export default function VolunteerImpactMap({
   const hasVolunteerScope = Array.isArray(volunteerAccounts);
   const hasPartnerScope = Array.isArray(partnerAccounts);
   const volunteerOptions = useMemo(
-    () => buildAvailableAccountOptions(volunteerAccounts || [], mappedEvents),
+    () => buildAvailableAccountOptions(volunteerAccounts || [], mappedEvents, true),
     [volunteerAccounts, mappedEvents]
   );
   const partnerOptions = useMemo(

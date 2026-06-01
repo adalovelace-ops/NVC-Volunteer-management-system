@@ -96,6 +96,7 @@ class TTLCache:
 _projects_snapshot_cache = TTLCache(ttl_seconds=300)  # Increased from 2 minutes to 5 minutes
 _projects_snapshot_lock = threading.Lock()
 _storage_collection_cache = TTLCache(ttl_seconds=120)  # Increased from 1 minute to 2 minutes
+NON_CACHEABLE_COLLECTION_KEYS = {"programTracks", "programs"}
 _DEFAULT_SNAPSHOT_FIELDS = {
     "projects",
     "programTracks",
@@ -368,6 +369,80 @@ def _normalize_partner_proposal_details(
         "expectedDeliverables": str(payload.get("expectedDeliverables") or "").strip(),
         "attachments": payload.get("attachments") or [],
     }
+
+
+def _normalize_proposal_parent_project_id(value: Any) -> str:
+    parent_project_id = str(value or "").strip()
+    if not parent_project_id or parent_project_id == "new":
+        return ""
+    if parent_project_id.startswith("project-proposal-"):
+        return ""
+    if parent_project_id.startswith("program:") and "::" in parent_project_id:
+        return parent_project_id.split("::", 1)[0].strip()
+    return parent_project_id
+
+
+def _proposal_parent_project_id_from_application(application: dict[str, Any]) -> str:
+    proposal_details = application.get("proposalDetails")
+    if not isinstance(proposal_details, dict):
+        proposal_details = {}
+
+    return _normalize_proposal_parent_project_id(
+        proposal_details.get("targetProjectId")
+        or proposal_details.get("targetProgramId")
+        or proposal_details.get("programId")
+        or application.get("targetProjectId")
+        or application.get("projectId")
+    )
+
+
+def _attach_proposal_parent_project_ids(
+    projects: list[dict[str, Any]],
+    partner_applications: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    parent_by_project_id: dict[str, str] = {}
+    approved_parent_by_module: dict[str, str] = {}
+    for application in partner_applications:
+        if str(application.get("status") or "").strip() != "Approved":
+            continue
+
+        project_id = str(application.get("projectId") or "").strip()
+        parent_project_id = _proposal_parent_project_id_from_application(application)
+        proposal_details = application.get("proposalDetails")
+        requested_module = ""
+        if isinstance(proposal_details, dict):
+            requested_module = str(proposal_details.get("requestedProgramModule") or "").strip()
+        if parent_project_id and requested_module:
+            approved_parent_by_module[requested_module] = parent_project_id
+
+        if not project_id.startswith("project-proposal-"):
+            continue
+
+        if parent_project_id:
+            parent_by_project_id[project_id] = parent_project_id
+
+    if not parent_by_project_id and not approved_parent_by_module:
+        return projects
+
+    updated_projects: list[dict[str, Any]] = []
+    for project in projects:
+        project_id = str(project.get("id") or "").strip()
+        project_module = str(project.get("programModule") or project.get("category") or "").strip()
+        parent_project_id = parent_by_project_id.get(project_id)
+        if not parent_project_id and project_id.startswith("project-proposal-"):
+            parent_project_id = approved_parent_by_module.get(project_module)
+        if (
+            parent_project_id
+            and not str(project.get("parentProjectId") or "").strip()
+            and not bool(project.get("isEvent"))
+        ):
+            updated_projects.append({
+                **project,
+                "parentProjectId": parent_project_id,
+            })
+        else:
+            updated_projects.append(project)
+    return updated_projects
 
 
 def _normalize_project_category(value: Any) -> str:
@@ -761,6 +836,187 @@ def _clear_special_storage_collection(connection: Any, key: str) -> None:
     raise HTTPException(status_code=400, detail=f"Unsupported storage key '{key}'.")
 
 
+PROJECT_REFERENCE_STORAGE_KEYS = [
+    "statusUpdates",
+    "partnerProjectApplications",
+    "partnerReports",
+    "publishedImpactReports",
+    "volunteerProjectJoins",
+    "volunteerMatches",
+    "volunteerTimeLogs",
+]
+
+
+def _project_id_from_item(item: dict[str, Any]) -> str:
+    return str(item.get("projectId") or item.get("project_id") or "").strip()
+
+
+def _filter_project_references(items: list[dict[str, Any]], related_project_ids: set[str]) -> list[dict[str, Any]]:
+    related_project_keys = {project_id.lower() for project_id in related_project_ids}
+    return [
+        item
+        for item in items
+        if _project_id_from_item(item).lower() not in related_project_keys
+    ]
+
+
+def _cascade_delete_project_references(connection: Any, related_project_ids: set[str]) -> list[str]:
+    related_ids = {str(project_id or "").strip() for project_id in related_project_ids if str(project_id or "").strip()}
+    if not related_ids:
+        return []
+
+    changed_keys: list[str] = []
+
+    events = get_postgres_hot_storage_collection(connection, "events")
+    event_ids_to_delete = {
+        str(event.get("id") or "").strip()
+        for event in events
+        if str(event.get("id") or "").strip() in related_ids
+        or str(event.get("parentProjectId") or "").strip() in related_ids
+    }
+    if event_ids_to_delete:
+        related_ids.update(event_ids_to_delete)
+        filtered_events = [
+            event
+            for event in events
+            if str(event.get("id") or "").strip() not in event_ids_to_delete
+        ]
+        if len(filtered_events) != len(events):
+            replace_postgres_hot_storage_collection(connection, "events", filtered_events)
+            changed_keys.append("events")
+
+    for key in PROJECT_REFERENCE_STORAGE_KEYS:
+        items = get_postgres_hot_storage_collection(connection, key)
+        filtered_items = _filter_project_references(items, related_ids)
+        if len(filtered_items) != len(items):
+            replace_postgres_hot_storage_collection(connection, key, filtered_items)
+            changed_keys.append(key)
+
+    group_messages = _get_special_storage_collection(connection, "projectGroupMessages")
+    filtered_group_messages = _filter_project_references(group_messages, related_ids)
+    if len(filtered_group_messages) != len(group_messages):
+        _replace_special_storage_collection(connection, "projectGroupMessages", filtered_group_messages)
+        changed_keys.append("projectGroupMessages")
+
+    volunteers = get_postgres_hot_storage_collection(connection, "volunteers")
+    filtered_volunteers: list[dict[str, Any]] = []
+    volunteers_changed = False
+    related_id_keys = {project_id.lower() for project_id in related_ids}
+    for volunteer in volunteers:
+        past_projects = [
+            project_id
+            for project_id in (volunteer.get("pastProjects") or [])
+            if str(project_id or "").strip().lower() not in related_id_keys
+        ]
+        if len(past_projects) != len(volunteer.get("pastProjects") or []):
+            volunteers_changed = True
+            filtered_volunteers.append({**volunteer, "pastProjects": past_projects})
+        else:
+            filtered_volunteers.append(volunteer)
+    if volunteers_changed:
+        replace_postgres_hot_storage_collection(connection, "volunteers", filtered_volunteers)
+        changed_keys.append("volunteers")
+
+    calendars = get_postgres_hot_storage_collection(connection, "adminPlanningCalendars")
+    filtered_calendars: list[dict[str, Any]] = []
+    calendars_changed = False
+    for calendar in calendars:
+        planning_items = [
+            item
+            for item in (calendar.get("planningItems") or [])
+            if str(item.get("linkedProjectId") or "").strip().lower() not in related_id_keys
+        ]
+        if len(planning_items) != len(calendar.get("planningItems") or []):
+            calendars_changed = True
+            filtered_calendars.append({**calendar, "planningItems": planning_items})
+        else:
+            filtered_calendars.append(calendar)
+    if calendars_changed:
+        replace_postgres_hot_storage_collection(connection, "adminPlanningCalendars", filtered_calendars)
+        changed_keys.append("adminPlanningCalendars")
+
+    return changed_keys
+
+
+def _remove_volunteer_assignments_from_project(
+    project: dict[str, Any],
+    volunteer_ids: set[str],
+    volunteer_user_ids: set[str],
+) -> tuple[dict[str, Any], bool]:
+    remove_volunteer_ids = {str(value or "").strip() for value in volunteer_ids if str(value or "").strip()}
+    remove_user_ids = {str(value or "").strip() for value in volunteer_user_ids if str(value or "").strip()}
+
+    volunteers = list(project.get("volunteers") or [])
+    joined_user_ids = list(project.get("joinedUserIds") or [])
+    next_volunteers = [
+        volunteer_id
+        for volunteer_id in volunteers
+        if str(volunteer_id or "").strip() not in remove_volunteer_ids
+    ]
+    next_joined_user_ids = [
+        user_id
+        for user_id in joined_user_ids
+        if str(user_id or "").strip() not in remove_user_ids
+    ]
+
+    internal_tasks = project.get("internalTasks") or []
+    next_internal_tasks: list[Any] = []
+    tasks_changed = False
+    for task in internal_tasks:
+        if not isinstance(task, dict):
+            next_internal_tasks.append(task)
+            continue
+
+        task_changed = False
+        next_task = dict(task)
+
+        assigned_volunteer_id = str(next_task.get("assignedVolunteerId") or "").strip()
+        if assigned_volunteer_id and assigned_volunteer_id in remove_volunteer_ids:
+            next_task.pop("assignedVolunteerId", None)
+            next_task.pop("assignedVolunteerName", None)
+            task_changed = True
+
+        assigned_volunteer_ids = list(next_task.get("assignedVolunteerIds") or [])
+        next_assigned_volunteer_ids = [
+            assigned_id
+            for assigned_id in assigned_volunteer_ids
+            if str(assigned_id or "").strip() not in remove_volunteer_ids
+        ]
+        if len(next_assigned_volunteer_ids) != len(assigned_volunteer_ids):
+            next_task["assignedVolunteerIds"] = next_assigned_volunteer_ids
+            assigned_names = list(next_task.get("assignedVolunteerNames") or [])
+            next_task["assignedVolunteerNames"] = [
+                assigned_names[index]
+                for index, assigned_id in enumerate(assigned_volunteer_ids)
+                if str(assigned_id or "").strip() not in remove_volunteer_ids and index < len(assigned_names)
+            ]
+            task_changed = True
+
+        if task_changed and not next_task.get("assignedVolunteerId") and not next_task.get("assignedVolunteerIds"):
+            next_task["status"] = "Unassigned"
+
+        tasks_changed = tasks_changed or task_changed
+        next_internal_tasks.append(next_task)
+
+    changed = (
+        len(next_volunteers) != len(volunteers)
+        or len(next_joined_user_ids) != len(joined_user_ids)
+        or tasks_changed
+    )
+    if not changed:
+        return project, False
+
+    updated_project = {
+        **project,
+        "volunteers": next_volunteers,
+        "joinedUserIds": next_joined_user_ids,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    if tasks_changed:
+        updated_project["internalTasks"] = next_internal_tasks
+    return updated_project, True
+
+
 # Returns the user ids that should have access to a project's group chat.
 def _get_project_chat_participant_user_ids(connection: Any, project_id: str) -> set[str]:
     project, _ = _postgres_get_project_like_item_by_id(connection, project_id)
@@ -938,6 +1194,13 @@ def _invalidate_collection_cache(keys: list[str] | set[str] | tuple[str, ...] | 
 
 
 def _get_cached_collection(connection: Any, key: str) -> Any:
+    if key in NON_CACHEABLE_COLLECTION_KEYS:
+        if is_hot_storage_key(key):
+            return get_postgres_hot_storage_collection(connection, key)
+        if key in SPECIAL_STORAGE_KEYS:
+            return _get_special_storage_collection(connection, key)
+        return None
+
     cache_key = _collection_cache_key(key)
     cached = _storage_collection_cache.get(cache_key)
     if cached is not None:
@@ -1396,6 +1659,7 @@ def _build_projects_snapshot(
 
     includes = requested_fields if requested_fields is not None else _DEFAULT_SNAPSHOT_FIELDS
     include_projects = "projects" in includes
+    include_programs = "programs" in includes
     include_status_updates = "statusUpdates" in includes
     include_program_tracks = "programTracks" in includes
     include_volunteer_profile = "volunteerProfile" in includes
@@ -1431,27 +1695,35 @@ def _build_projects_snapshot(
             print(f"[ERROR] Failed to fetch statusUpdates: {type(e).__name__}: {e}", flush=True)
             raw_status_updates = []
 
-    if include_program_tracks:
+    # Fetch programs table if needed for projects, program rows, or programTrack compatibility.
+    if include_projects or include_programs or include_program_tracks:
         try:
-            raw_program_tracks = _get_cached_collection(connection, "programTracks")
-        except Exception as e:
-            print(f"[ERROR] Failed to fetch programTracks: {type(e).__name__}: {e}", flush=True)
-            raw_program_tracks = []
-            
-        try:
-            raw_programs_table = _get_cached_collection(connection, "programs")
+            raw_programs_table = _get_cached_collection(connection, "programs") or []
         except Exception as e:
             print(f"[ERROR] Failed to fetch programs: {type(e).__name__}: {e}", flush=True)
             raw_programs_table = []
-        
-        # Merge programs table into program tracks to support the new program creation workflow
-        # while maintaining compatibility with legacy tracks.
-        track_ids = {str(t.get("id") or "").strip() for t in raw_program_tracks}
+
+    if include_program_tracks:
+        # Convert programs table records to ProgramTrack format
+        # Filter for top-level programs only (no parentProjectId, not events)
         for p in raw_programs_table:
             p_id = str(p.get("id") or "").strip()
-            if p_id and p_id not in track_ids:
-                raw_program_tracks.append(p)
-                track_ids.add(p_id)
+            # Only include top-level programs (not sub-projects or events)
+            if p_id and not p.get("parentProjectId") and not p.get("isEvent"):
+                # Convert Project format to ProgramTrack format
+                program_track = {
+                    "id": p_id,
+                    "title": p.get("title", ""),
+                    "description": p.get("description", ""),
+                    "icon": p.get("icon", "folder"),
+                    "color": p.get("color", "#666666"),
+                    "imageUrl": p.get("imageUrl", ""),
+                    "sortOrder": 0,
+                    "isActive": True,
+                    "createdAt": p.get("createdAt"),
+                    "updatedAt": p.get("updatedAt"),
+                }
+                raw_program_tracks.append(program_track)
 
     _trace(f"[TRACE] _build_projects_snapshot: read core collections after {_time.perf_counter() - t0:.3f}s")
     t1 = _time.perf_counter()
@@ -1465,14 +1737,27 @@ def _build_projects_snapshot(
 
     projects: list[dict[str, Any]] = []
     if include_projects:
-        programs = [project for project in raw_projects if not bool(project.get("isEvent"))]
-        projects = [*programs, *raw_events]
+        # Include programs from the projects table
+        programs_from_projects_table = [project for project in raw_projects if not bool(project.get("isEvent"))]
+        # Include programs from the programs table (top-level programs, not events, not sub-projects)
+        programs_from_programs_table = [p for p in raw_programs_table if not bool(p.get("isEvent")) and not p.get("parentProjectId")]
+        projects = [*programs_from_projects_table, *programs_from_programs_table, *raw_events]
+        partner_applications_for_parent_repair = get_postgres_hot_storage_collection(
+            connection,
+            "partnerProjectApplications",
+        )
+        projects = _attach_proposal_parent_project_ids(projects, partner_applications_for_parent_repair)
 
     _trace(f"[TRACE] _build_projects_snapshot: processed projects after {_time.perf_counter() - t1:.3f}s")
 
     # Build snapshot with core data
     snapshot: dict[str, Any] = {
         "projects": projects,
+        "programs": [
+            program
+            for program in raw_programs_table
+            if not bool(program.get("isEvent")) and not program.get("parentProjectId")
+        ],
         "programTracks": sorted(
             raw_program_tracks,
             key=lambda item: (_to_int(item.get("sortOrder")), str(item.get("title") or str(item.get("id") or ""))),
@@ -1611,6 +1896,11 @@ def _reconcile_event_volunteer_arrays(connection: Any) -> None:
         print(f"[WARN] Event volunteer array reconciliation skipped: {type(error).__name__}: {error}")
 
 
+def _ensure_core_programs_exist() -> None:
+    """Core programs initialization disabled - programs are now created manually by admins."""
+    pass
+
+
 @app.on_event("startup")
 # Prepares storage tables when the FastAPI app starts.
 def startup() -> None:
@@ -1650,6 +1940,12 @@ def startup() -> None:
                 _reconcile_event_volunteer_arrays(connection)
         except Exception as error:
             print(f"[WARN] Event volunteer reconciliation skipped: {error}")
+
+        # Ensure core programs exist
+        try:
+            _ensure_core_programs_exist()
+        except Exception as error:
+            print(f"[WARN] Core programs initialization skipped: {error}")
 
     threading.Thread(target=_initialize_postgres_background, daemon=True).start()
 
@@ -1973,17 +2269,17 @@ def lookup_user(identifier: str) -> dict[str, Any]:
 # Demo accounts for offline/development mode
 DEMO_ACCOUNTS = [
     {
-        "id": "admin-1",
+        "id": "user-admin-1780189738",
         "email": "admin@nvc.org",
         "password": "admin123",
         "role": "admin",
-        "name": "NVC Admin Account",
+        "name": "Admin Account",
         "phone": "09170000001",
         "created_at": "2026-01-01T00:00:00Z",
         "approvalStatus": "approved"
     },
     {
-        "id": "volunteer-1",
+        "id": "user-volunteer-1780189738",
         "email": "volunteer@example.com",
         "password": "volunteer123",
         "role": "volunteer",
@@ -1993,31 +2289,31 @@ DEMO_ACCOUNTS = [
         "approvalStatus": "approved"
     },
     {
-        "id": "partner-user-1",
+        "id": "user-partner-1780189738",
         "email": "partner@livelihoods.org",
         "password": "partner123",
         "role": "partner",
-        "name": "Partner Org Account",
+        "name": "Kabankalan LGU",
         "phone": "09198765432",
         "created_at": "2026-01-01T00:00:00Z",
         "approvalStatus": "approved"
     },
     {
-        "id": "partner-user-2",
+        "id": "user-partnerships-1780189738",
         "email": "partnerships@pbsp.org.ph",
         "password": "partner123",
         "role": "partner",
-        "name": "PBSP Account",
+        "name": "PBSP",
         "phone": "09188188678",
         "created_at": "2026-01-01T00:00:00Z",
         "approvalStatus": "approved"
     },
     {
-        "id": "partner-user-3",
+        "id": "user-partnerships-1780189738",
         "email": "partnerships@jollibeefoundation.org",
         "password": "partner123",
         "role": "partner",
-        "name": "Jollibee Foundation Account",
+        "name": "Jollibee Foundation",
         "phone": "09186341111",
         "created_at": "2026-01-01T00:00:00Z",
         "approvalStatus": "approved"
@@ -2371,12 +2667,79 @@ def _delete_user_account_records(connection: Any, user_id: str) -> list[str]:
         if str(partner.get("id") or "") not in removed_partner_ids
     ]
 
-    # Account management deletes must be reliable for both pending and approved accounts.
-    # Keep this scoped to the account row and linked profile rows shown on this screen.
+    removed_volunteer_user_ids = {user_id}
+    removed_volunteer_emails = {normalized_deleted_email} if normalized_deleted_email else set()
+    for volunteer in volunteers:
+        if str(volunteer.get("id") or "") not in removed_volunteer_ids:
+            continue
+        volunteer_user_id = str(volunteer.get("userId") or "").strip()
+        volunteer_email = str(volunteer.get("email") or "").strip().lower()
+        if volunteer_user_id:
+            removed_volunteer_user_ids.add(volunteer_user_id)
+        if volunteer_email:
+            removed_volunteer_emails.add(volunteer_email)
+
+    changed_keys = ["users", "volunteers", "partners"]
+
     replace_postgres_hot_storage_collection(connection, "users", filtered_users)
     replace_postgres_hot_storage_collection(connection, "volunteers", filtered_volunteers)
     replace_postgres_hot_storage_collection(connection, "partners", filtered_partners)
-    return ["users", "volunteers", "partners"]
+
+    if removed_volunteer_ids or removed_volunteer_user_ids:
+        for project_key in ["projects", "events"]:
+            project_items = get_postgres_hot_storage_collection(connection, project_key)
+            next_project_items: list[dict[str, Any]] = []
+            projects_changed = False
+            for project_item in project_items:
+                if not isinstance(project_item, dict):
+                    next_project_items.append(project_item)
+                    continue
+                updated_project, project_changed = _remove_volunteer_assignments_from_project(
+                    project_item,
+                    removed_volunteer_ids,
+                    removed_volunteer_user_ids,
+                )
+                next_project_items.append(updated_project)
+                projects_changed = projects_changed or project_changed
+            if projects_changed:
+                replace_postgres_hot_storage_collection(connection, project_key, next_project_items)
+                changed_keys.append(project_key)
+
+        volunteer_join_records = get_postgres_hot_storage_collection(connection, "volunteerProjectJoins")
+        filtered_join_records = [
+            record
+            for record in volunteer_join_records
+            if not (
+                str(record.get("volunteerId") or "").strip() in removed_volunteer_ids
+                or str(record.get("volunteerUserId") or "").strip() in removed_volunteer_user_ids
+                or str(record.get("volunteerEmail") or "").strip().lower() in removed_volunteer_emails
+            )
+        ]
+        if len(filtered_join_records) != len(volunteer_join_records):
+            replace_postgres_hot_storage_collection(connection, "volunteerProjectJoins", filtered_join_records)
+            changed_keys.append("volunteerProjectJoins")
+
+        volunteer_matches = get_postgres_hot_storage_collection(connection, "volunteerMatches")
+        filtered_matches = [
+            match
+            for match in volunteer_matches
+            if str(match.get("volunteerId") or "").strip() not in removed_volunteer_ids
+        ]
+        if len(filtered_matches) != len(volunteer_matches):
+            replace_postgres_hot_storage_collection(connection, "volunteerMatches", filtered_matches)
+            changed_keys.append("volunteerMatches")
+
+        volunteer_time_logs = get_postgres_hot_storage_collection(connection, "volunteerTimeLogs")
+        filtered_time_logs = [
+            log
+            for log in volunteer_time_logs
+            if str(log.get("volunteerId") or "").strip() not in removed_volunteer_ids
+        ]
+        if len(filtered_time_logs) != len(volunteer_time_logs):
+            replace_postgres_hot_storage_collection(connection, "volunteerTimeLogs", filtered_time_logs)
+            changed_keys.append("volunteerTimeLogs")
+
+    return list(dict.fromkeys(changed_keys))
 
 
 @app.delete("/auth/users/{user_id}")
@@ -2702,9 +3065,11 @@ async def request_partner_project_join(payload: PartnerProjectJoinRequestPayload
     requested_program_module = str(payload.programModule or "").strip()
     requested_project_id = str(payload.projectId or "").strip()
     proposal_project_id = (
-        f"program:{requested_program_module}::{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+        requested_project_id
+        if requested_project_id and requested_project_id != "new"
+        else f"program:{requested_program_module}::{int(datetime.now(timezone.utc).timestamp() * 1000)}"
         if requested_program_module
-        else payload.projectId
+        else requested_project_id
     )
 
     with get_connection() as connection:
@@ -2870,7 +3235,7 @@ async def review_partner_project_application(
             partner_email = str(application.get("partnerEmail") or "").strip().lower()
             partner_name = str(application.get("partnerName") or "Partner").strip() or "Partner"
 
-            partner_records = _postgres_get_hot_items_by_field(connection, "partners", "ownerUserId", partner_user_id)
+            partner_records = _postgres_get_hot_items_by_field(connection, "partners", "owner_user_id", partner_user_id)
             if not partner_records and partner_email:
                 all_partners = get_postgres_hot_storage_collection(connection, "partners")
                 partner_records = [
@@ -2881,6 +3246,12 @@ async def review_partner_project_application(
 
             partner_id = str(partner_records[0].get("id") or "") if partner_records else ""
             created_project_id = f"project-proposal-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+            parent_project_id = _normalize_proposal_parent_project_id(
+                proposal_details.get("targetProjectId")
+                or proposal_details.get("targetProgramId")
+                or proposal_details.get("programId")
+                or next_project_id
+            )
             generated_start_date = _normalize_partner_proposal_date(
                 proposal_details.get("proposedStartDate"),
                 now_iso,
@@ -2915,6 +3286,7 @@ async def review_partner_project_application(
                     and str(attachment.get("url") or "").strip()
                     for attachment in (proposal_details.get("attachments") or [])
                 ),
+                "parentProjectId": parent_project_id or None,
                 "programModule": requested_program_module,
                 "statusMode": "System",
                 "manualStatus": None,
@@ -3118,6 +3490,91 @@ async def join_project(project_id: str, payload: ProjectJoinPayload) -> dict[str
 
     await connection_manager.broadcast_storage_event([project_storage_key, "volunteerProjectJoins", "volunteers"])
     return {"project": updated_project, "volunteerProfile": volunteer_profile}
+
+
+@app.delete("/projects/{project_id}/volunteers/{volunteer_id}")
+# API endpoint that removes a volunteer from a project/event.
+async def remove_volunteer_from_project(project_id: str, volunteer_id: str) -> dict[str, Any]:
+    _require_postgres()
+    with get_connection() as connection:
+        project, project_storage_key = _postgres_get_project_like_item_by_id(connection, project_id)
+        if project is None or project_storage_key is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
+        if not bool(project.get("isEvent")):
+            raise HTTPException(status_code=400, detail="Can only remove volunteers from events.")
+
+        volunteer = _postgres_get_hot_item_by_id(connection, "volunteers", volunteer_id)
+
+        volunteer_ids_to_remove = {volunteer_id}
+        volunteer_user_ids_to_remove: set[str] = set()
+        if volunteer is not None:
+            volunteer_user_id = str(volunteer.get("userId") or "").strip()
+            if volunteer_user_id:
+                volunteer_user_ids_to_remove.add(volunteer_user_id)
+
+        all_join_records = get_postgres_hot_storage_collection(connection, "volunteerProjectJoins")
+        matching_join_records = [
+            record
+            for record in all_join_records
+            if str(record.get("projectId") or "") == project_id
+            and str(record.get("volunteerId") or "").strip() == volunteer_id
+        ]
+        for record in matching_join_records:
+            record_user_id = str(record.get("volunteerUserId") or "").strip()
+            if record_user_id:
+                volunteer_user_ids_to_remove.add(record_user_id)
+
+        updated_project, _ = _remove_volunteer_assignments_from_project(
+            project,
+            volunteer_ids_to_remove,
+            volunteer_user_ids_to_remove,
+        )
+        _postgres_upsert_hot_item(connection, project_storage_key, updated_project)
+
+        updated_join_records = [
+            record
+            for record in all_join_records
+            if not (
+                str(record.get("projectId") or "") == project_id
+                and (
+                    str(record.get("volunteerId") or "").strip() in volunteer_ids_to_remove
+                    or str(record.get("volunteerUserId") or "").strip() in volunteer_user_ids_to_remove
+                )
+            )
+        ]
+        if len(updated_join_records) != len(all_join_records):
+            replace_postgres_hot_storage_collection(connection, "volunteerProjectJoins", updated_join_records)
+
+        all_matches = get_postgres_hot_storage_collection(connection, "volunteerMatches")
+        updated_matches = [
+            match
+            for match in all_matches
+            if not (
+                str(match.get("projectId") or "") == project_id
+                and str(match.get("volunteerId") or "").strip() in volunteer_ids_to_remove
+            )
+        ]
+        if len(updated_matches) != len(all_matches):
+            replace_postgres_hot_storage_collection(connection, "volunteerMatches", updated_matches)
+
+        updated_volunteer = (
+            _postgres_sync_volunteer_engagement_status(connection, volunteer_id)
+            if volunteer is not None
+            else None
+        )
+
+        connection.commit()
+
+    changed_keys = [
+        project_storage_key,
+        "volunteerProjectJoins",
+        "volunteerMatches",
+        "volunteers"
+    ]
+    _invalidate_collection_cache(changed_keys)
+    _projects_snapshot_cache.clear()
+    await connection_manager.broadcast_storage_event(changed_keys)
+    return {"success": True, "project": updated_project, "volunteerProfile": updated_volunteer}
 
 
 @app.get("/messages")
@@ -3474,34 +3931,153 @@ def get_storage_item(key: str) -> dict[str, Any]:
         return {"key": key, "value": {}}
 
 
-@app.delete("/program-tracks/{track_id}")
-# API endpoint that deletes one program track.
-async def delete_program_track(track_id: str) -> dict[str, str]:
+@app.delete("/program-tracks/{track_id:path}")
+# API endpoint that deletes one program track and records linked to it.
+async def delete_program_track(track_id: str) -> dict[str, Any]:
     _require_postgres()
+    normalized_track_id = str(track_id or "").strip()
+    if not normalized_track_id:
+        raise HTTPException(status_code=400, detail="Program track id is required.")
+    normalized_track_key = normalized_track_id.lower()
+
+    def belongs_to_program(item: dict[str, Any]) -> bool:
+        values = [
+            item.get("id"),
+            item.get("parentProjectId"),
+            item.get("parent_project_id"),
+            item.get("program_id"),
+            item.get("programModule"),
+            item.get("category"),
+        ]
+        return any(str(value or "").strip().lower() == normalized_track_key for value in values)
+
+    def has_related_project_id(item: dict[str, Any], related_ids: set[str]) -> bool:
+        related_id_keys = {related_id.lower() for related_id in related_ids}
+        project_id = str(item.get("projectId") or item.get("project_id") or "").strip()
+        project_id_key = project_id.lower()
+        return (
+            project_id in related_ids
+            or project_id_key in related_id_keys
+            or project_id_key.startswith(f"program:{normalized_track_key}")
+        )
     
     with get_connection() as connection:
         program_tracks = get_postgres_hot_storage_collection(connection, "programTracks")
         programs = get_postgres_hot_storage_collection(connection, "programs")
+        projects = get_postgres_hot_storage_collection(connection, "projects")
+        events = get_postgres_hot_storage_collection(connection, "events")
+
         filtered_tracks = [
             track for track in program_tracks
-            if str(track.get("id") or "") != track_id
+            if str(track.get("id") or "").strip().lower() != normalized_track_key
         ]
+        # For programs table: only match by exact ID (not by category/programModule)
+        # This prevents deleting all programs when one is deleted
         filtered_programs = [
             program for program in programs
-            if str(program.get("id") or "") != track_id
+            if str(program.get("id") or "").strip().lower() != normalized_track_key
+        ]
+        deleted_project_ids = {
+            str(project.get("id") or "").strip()
+            for project in projects
+            if belongs_to_program(project)
+        }
+        deleted_project_id_keys = {
+            project_id.lower()
+            for project_id in deleted_project_ids
+            if project_id
+        }
+        filtered_projects = [
+            project for project in projects
+            if str(project.get("id") or "").strip() not in deleted_project_ids
+        ]
+        deleted_event_ids = {
+            str(event.get("id") or "").strip()
+            for event in events
+            if (
+                belongs_to_program(event)
+                or str(event.get("parentProjectId") or "").strip().lower() in deleted_project_id_keys
+            )
+        }
+        related_project_ids = {
+            item_id for item_id in [*deleted_project_ids, *deleted_event_ids] if item_id
+        }
+        related_project_ids.add(f"program:{normalized_track_id}")
+        filtered_events = [
+            event for event in events
+            if str(event.get("id") or "").strip() not in deleted_event_ids
         ]
         
-        if len(filtered_tracks) == len(program_tracks) and len(filtered_programs) == len(programs):
-            raise HTTPException(status_code=404, detail="Program track not found.")
-        
+        changed_keys = [
+            "programTracks",
+            "programs",
+            "projects",
+            "events",
+            "statusUpdates",
+            "partnerProjectApplications",
+            "partnerReports",
+            "publishedImpactReports",
+            "volunteerProjectJoins",
+            "volunteerMatches",
+            "volunteerTimeLogs",
+        ]
+
+        if (
+            len(filtered_tracks) == len(program_tracks)
+            and len(filtered_programs) == len(programs)
+            and len(filtered_projects) == len(projects)
+            and len(filtered_events) == len(events)
+        ):
+            _invalidate_collection_cache(changed_keys)
+            _projects_snapshot_cache.clear()
+            _storage_collection_cache.clear()
+            return {
+                "status": "ok",
+                "deletedTrackId": normalized_track_id,
+                "deletedProjectCount": 0,
+                "deletedEventCount": 0,
+                "alreadyDeleted": True,
+            }
+
+        changed_keys = ["programTracks", "programs", "projects", "events"]
         replace_postgres_hot_storage_collection(connection, "programTracks", filtered_tracks)
         replace_postgres_hot_storage_collection(connection, "programs", filtered_programs)
+        replace_postgres_hot_storage_collection(connection, "projects", filtered_projects)
+        replace_postgres_hot_storage_collection(connection, "events", filtered_events)
+
+        if related_project_ids:
+            for key in [
+                "statusUpdates",
+                "partnerProjectApplications",
+                "partnerReports",
+                "publishedImpactReports",
+                "volunteerProjectJoins",
+                "volunteerMatches",
+                "volunteerTimeLogs",
+            ]:
+                items = get_postgres_hot_storage_collection(connection, key)
+                filtered_items = [
+                    item for item in items
+                    if not has_related_project_id(item, related_project_ids)
+                ]
+                if len(filtered_items) != len(items):
+                    replace_postgres_hot_storage_collection(connection, key, filtered_items)
+                    changed_keys.append(key)
+            for changed_key in _cascade_delete_project_references(connection, related_project_ids):
+                if changed_key not in changed_keys:
+                    changed_keys.append(changed_key)
+
         connection.commit()
     
-    _invalidate_collection_cache(["programTracks", "programs"])
+    _invalidate_collection_cache(changed_keys)
     _projects_snapshot_cache.clear()
-    await connection_manager.broadcast_storage_event(["programTracks", "programs"])
-    return {"status": "ok", "deletedTrackId": track_id}
+    await connection_manager.broadcast_storage_event(changed_keys)
+    return {
+        "status": "ok",
+        "deletedTrackId": normalized_track_id,
+        "deletedProjectCount": len(deleted_project_ids),
+        "deletedEventCount": len(deleted_event_ids),
+    }
 
 
 @app.post("/storage/batch")
@@ -3607,23 +4183,50 @@ async def put_storage_item(key: str, payload: StoragePayload) -> dict[str, str]:
         if not isinstance(payload.value, list):
             raise HTTPException(status_code=400, detail=f"Storage key '{key}' expects a list payload.")
 
+        changed_keys = [key]
         with get_connection() as connection:
             try:
+                removed_project_ids: set[str] = set()
+                if key in {"projects", "programs", "events"}:
+                    current_items = get_postgres_hot_storage_collection(connection, key)
+                    current_ids = {
+                        str(item.get("id") or "").strip()
+                        for item in current_items
+                        if str(item.get("id") or "").strip()
+                    }
+                    next_ids = {
+                        str(item.get("id") or "").strip()
+                        for item in payload.value
+                        if isinstance(item, dict) and str(item.get("id") or "").strip()
+                    }
+                    removed_project_ids = current_ids - next_ids
+
                 replace_postgres_hot_storage_collection(connection, key, payload.value)
+                if removed_project_ids:
+                    changed_keys.extend(
+                        changed_key
+                        for changed_key in _cascade_delete_project_references(
+                            connection,
+                            removed_project_ids,
+                        )
+                        if changed_key not in changed_keys
+                    )
                 connection.commit()
             except Exception as e:
                 # Log full traceback for debugging storage write failures
-                print(f"[ERROR] put_storage_item failed for key={key}: {type(e).__name__}: {e}")
-                print(traceback.format_exc())
+                print(f"[ERROR] put_storage_item failed for key={key}: {type(e).__name__}: {e}", flush=True)
+                print(traceback.format_exc(), flush=True)
+                if payload.value and len(payload.value) > 0:
+                    print(f"[ERROR] First item in payload: {payload.value[0]}", flush=True)
                 try:
                     connection.rollback()
                 except Exception:
                     pass
-                raise HTTPException(status_code=500, detail=f"Storage write failed for '{key}'")
+                raise HTTPException(status_code=500, detail=f"Storage write failed for '{key}': {str(e)}")
         
-        _invalidate_collection_cache([key])
+        _invalidate_collection_cache(changed_keys)
         _projects_snapshot_cache.clear()
-        await connection_manager.broadcast_storage_event([key])
+        await connection_manager.broadcast_storage_event(changed_keys)
         return {"status": "ok"}
     if key in SPECIAL_STORAGE_KEYS:
         with get_connection() as connection:
@@ -3819,6 +4422,16 @@ async def clear_storage() -> dict[str, str]:
     _projects_snapshot_cache.clear()
     await connection_manager.broadcast_storage_event(list(HOT_STORAGE_TABLES.keys()) + list(SPECIAL_STORAGE_KEYS))
     return {"status": "ok"}
+
+
+@app.post("/admin/clear-cache")
+async def clear_all_caches() -> dict[str, Any]:
+    """Clear all server-side caches. Useful after manual database changes."""
+    _invalidate_collection_cache()
+    _projects_snapshot_cache.clear()
+    _storage_collection_cache.clear()
+    await connection_manager.broadcast_storage_event(list(HOT_STORAGE_TABLES.keys()) + list(SPECIAL_STORAGE_KEYS))
+    return {"status": "ok", "message": "All caches cleared successfully"}
 
 
 @app.post("/bootstrap")

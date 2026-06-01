@@ -164,6 +164,8 @@ export interface Project {
   partnerId: string;
   imageUrl?: string;
   imageHidden?: boolean;
+  icon?: string;
+  color?: string;
   programModule?: AdvocacyFocus;
   program_id?: string;
   isEvent?: boolean;
@@ -178,7 +180,14 @@ export interface Project {
     latitude: number;
     longitude: number;
     address: string;
+    region?: string;
+    city?: string;
+    barangay?: string;
   };
+  // New simplified location structure
+  locationRegion?: string;
+  locationCity?: string;
+  locationBarangay?: string; // Only for events
   volunteersNeeded: number;
   volunteers: string[]; // Volunteer IDs
   joinedUserIds?: string[];

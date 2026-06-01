@@ -17,7 +17,6 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   getProject,
   getVolunteerProjectMatches,
-  requestVolunteerProjectJoin,
   getAllVolunteerTimeLogs,
   startVolunteerTimeLog,
   endVolunteerTimeLog,
@@ -26,6 +25,7 @@ import {
 import { Project, Volunteer, VolunteerProjectMatch, VolunteerTimeLog } from '../models/types';
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
 import { getRequestErrorMessage } from '../utils/requestErrors';
+import { getPrimaryProjectImageSource } from '../utils/projectMap';
 
 const PROGRAM_PHOTO_BY_TITLE: Record<string, ImageSourcePropType> = {
   'Farm to Fork Program': require('../assets/programs/farm-to-fork.jpg'),
@@ -95,27 +95,6 @@ export default function VolunteerProjectDetailsScreen({
       );
     }, [loadData])
   );
-
-  const handleJoinProject = async () => {
-    if (!user?.id || !project) return;
-
-    try {
-      setLoadingAction('join');
-      const match = await requestVolunteerProjectJoin(project.id, user.id);
-      setVolunteerMatches((prev) => [
-        match,
-        ...prev.filter((m) => m.projectId !== project.id),
-      ]);
-      Alert.alert('Success', 'Join request sent!');
-    } catch (error) {
-      Alert.alert(
-        'Error',
-        getRequestErrorMessage(error, 'Unable to send join request.')
-      );
-    } finally {
-      setLoadingAction(null);
-    }
-  };
 
   const handleStartTimeLog = async () => {
     if (!user?.id || !project) return;
@@ -187,6 +166,16 @@ export default function VolunteerProjectDetailsScreen({
   const isJoined = !!currentMatch;
   const isPending = currentMatch?.status === 'Requested';
 
+  // Get the primary image source from the project, using getPrimaryProjectImageSource for consistency
+  // Wrap in try-catch to prevent rendering failures if image source resolution fails
+  let projectImageSource: ImageSourcePropType | undefined;
+  try {
+    projectImageSource = getPrimaryProjectImageSource(project);
+  } catch (error) {
+    console.error('Error getting project image source:', error);
+    projectImageSource = undefined;
+  }
+
   return (
     <View style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -203,12 +192,12 @@ export default function VolunteerProjectDetailsScreen({
         </View>
 
         {/* Project Image */}
-        <Image
-          source={
-            PROGRAM_PHOTO_BY_TITLE[project.title] || { uri: project.imageUrl }
-          }
-          style={styles.projectImage}
-        />
+        {projectImageSource && (
+          <Image
+            source={projectImageSource}
+            style={styles.projectImage}
+          />
+        )}
 
         {/* Project Info */}
         <View style={styles.content}>
@@ -346,27 +335,6 @@ export default function VolunteerProjectDetailsScreen({
               )}
             </View>
           )}
-
-          {/* Action Button */}
-          <TouchableOpacity
-            style={[
-              styles.actionButton,
-              (isJoined || loadingAction === 'join') &&
-                styles.actionButtonDisabled,
-            ]}
-            onPress={handleJoinProject}
-            disabled={isJoined || loadingAction === 'join'}
-          >
-            <Text style={styles.actionButtonText}>
-              {loadingAction === 'join'
-                ? 'Sending Request...'
-                : isPending
-                  ? 'Request Pending'
-                  : isJoined
-                    ? 'Joined'
-                    : 'Request to Join'}
-            </Text>
-          </TouchableOpacity>
         </View>
       </ScrollView>
     </View>
@@ -576,5 +544,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#666',
     marginBottom: 12,
+  },
+  infoBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 12,
+    marginBottom: 24,
+  },
+  infoText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#1e40af',
   },
 });

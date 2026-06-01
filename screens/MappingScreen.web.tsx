@@ -21,6 +21,7 @@ import {
   subscribeToStorageChanges,
 } from '../models/storage';
 import { navigateToAvailableRoute } from '../utils/navigation';
+import { withImpactMapFallbackProjects } from '../utils/impactMapFallbacks';
 import {
   PHILIPPINES_BOUNDS,
   PHILIPPINES_WEB_CENTER,
@@ -28,6 +29,7 @@ import {
   getProjectMarkerColor,
   getPrimaryProjectImageSource,
 } from '../utils/projectMap';
+import { getPartnerForMappedProject, getProjectIdsForPartnerUser } from '../utils/mapProjectLinks';
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
 import { createGoogleMapsMarkerIcon, loadGoogleMaps } from '../utils/webGoogleMaps';
@@ -239,7 +241,27 @@ export default function MappingScreen({ navigation }: any) {
     return projects.filter(project => allowedProjectIds.has(project.id));
   }, [projects, selectedMapStyleKey, selectedVolunteerAccount]);
 
-  const mappedProjects = React.useMemo(() => getMappedProjects(displayProjects), [displayProjects]);
+  const mappedProjects = React.useMemo(() => {
+    const result = getMappedProjects(displayProjects);
+    console.log('[MAP DEBUG] Total displayProjects:', displayProjects.length);
+    console.log('[MAP DEBUG] displayProjects:', displayProjects.map(p => ({
+      id: p.id,
+      title: p.title,
+      parentProjectId: p.parentProjectId,
+      isEvent: p.isEvent,
+      lat: p.location?.latitude,
+      lng: p.location?.longitude
+    })));
+    console.log('[MAP DEBUG] Filtered mappedProjects:', result.length);
+    console.log('[MAP DEBUG] mappedProjects:', result.map(p => ({
+      id: p.id,
+      title: p.title,
+      parentProjectId: p.parentProjectId,
+      lat: p.location.latitude,
+      lng: p.location.longitude
+    })));
+    return result;
+  }, [displayProjects]);
   const markerVolunteerEntriesByProjectId = React.useMemo(
     () =>
       new Map(
@@ -322,14 +344,17 @@ export default function MappingScreen({ navigation }: any) {
         }
 
         if (mappedProjects.length === 0) {
+          console.log('[MAP DEBUG] No mapped projects - showing default view');
           map.setCenter(PHILIPPINES_WEB_CENTER);
           map.setZoom(6);
           return;
         }
 
+        console.log('[MAP DEBUG] Creating markers for', mappedProjects.length, 'projects');
         const bounds = new googleMaps.maps.LatLngBounds();
 
         mappedProjects.forEach(project => {
+          console.log('[MAP DEBUG] Creating marker for:', project.title, 'at', project.location.latitude, project.location.longitude);
           const marker = new googleMaps.maps.Marker({
             position: {
               lat: project.location.latitude,
@@ -354,9 +379,7 @@ export default function MappingScreen({ navigation }: any) {
               markerVolunteerEntriesByProjectId.get(project.id) ||
               getProjectVolunteerMapEntries(project, volunteers, volunteerJoinRecords);
 
-            const partner = project.partnerId
-              ? partners.find(entry => entry.id === project.partnerId) || null
-              : null;
+            const partner = getPartnerForMappedProject(project, partners);
 
             const container = document.createElement('div');
             container.style.minWidth = '220px';
@@ -521,14 +544,17 @@ export default function MappingScreen({ navigation }: any) {
 
         if (mappedProjects.length === 1) {
           const onlyProject = mappedProjects[0];
+          console.log('[MAP DEBUG] Single project - zooming to:', onlyProject.title, 'at zoom', MAP_SINGLE_MARKER_ZOOM);
           map.setCenter({
             lat: onlyProject.location.latitude,
             lng: onlyProject.location.longitude,
           });
           map.setZoom(MAP_SINGLE_MARKER_ZOOM);
+          console.log('[MAP DEBUG] Zoom set to:', MAP_SINGLE_MARKER_ZOOM);
           return;
         }
 
+        console.log('[MAP DEBUG] Multiple projects - fitting bounds');
         map.fitBounds(bounds, MAP_FIT_PADDING_PX);
         setTimeout(() => {
           const zoom = map.getZoom?.();
@@ -568,14 +594,21 @@ export default function MappingScreen({ navigation }: any) {
         'volunteerJoinRecords',
         'volunteerProfile',
       ]);
-      const approvedPartnerProjectIds = new Set(
-        snapshot.partnerApplications
-          .filter(
-            application =>
-              application.status === 'Approved' &&
-              String(application.projectId || '').startsWith('project-proposal-')
-          )
-          .map(application => application.projectId)
+      const allPartners = await getAllPartners();
+      const mapSourceProjects = withImpactMapFallbackProjects(
+        snapshot.projects,
+        snapshot.partnerApplications,
+        snapshot.volunteerJoinRecords
+      );
+      const partnerProjectIds = new Set(
+        user?.role === 'partner'
+          ? getProjectIdsForPartnerUser(
+              user,
+              allPartners,
+              mapSourceProjects,
+              snapshot.partnerApplications
+            )
+          : []
       );
       const joinedVolunteerProjectIds = new Set(
         snapshot.volunteerJoinRecords.map(record => record.projectId)
@@ -583,11 +616,11 @@ export default function MappingScreen({ navigation }: any) {
 
       const visibleProjects =
         user?.role === 'partner'
-          ? snapshot.projects.filter(
-              project => approvedPartnerProjectIds.has(project.id)
+          ? mapSourceProjects.filter(
+              project => partnerProjectIds.has(project.id)
             )
           : user?.role === 'volunteer'
-          ? snapshot.projects.filter(
+          ? mapSourceProjects.filter(
               project =>
                 joinedVolunteerProjectIds.has(project.id) ||
                 (snapshot.volunteerProfile && (project.volunteers || []).includes(snapshot.volunteerProfile.id)) ||
@@ -596,13 +629,22 @@ export default function MappingScreen({ navigation }: any) {
                   (task.assignedVolunteerIds || []).includes(snapshot.volunteerProfile?.id || '')
                 ))
             )
-          : snapshot.projects;
+          : mapSourceProjects;
 
+      console.log('[MAP DEBUG] loadProjects - snapshot.projects:', snapshot.projects.length);
+      console.log('[MAP DEBUG] loadProjects - mapSourceProjects:', mapSourceProjects.length);
+      console.log('[MAP DEBUG] loadProjects - visibleProjects:', visibleProjects.length);
+      console.log('[MAP DEBUG] loadProjects - visibleProjects details:', visibleProjects.map(p => ({
+        id: p.id,
+        title: p.title,
+        parentProjectId: p.parentProjectId,
+        isEvent: p.isEvent
+      })));
       setProjects(visibleProjects);
       setVolunteerJoinRecords(snapshot.volunteerJoinRecords || []);
-      const [allVolunteers, allPartners] = await Promise.all([getAllVolunteers(), getAllPartners()]);
-      setVolunteers(allVolunteers);
       setPartners(allPartners);
+      const allVolunteers = await getAllVolunteers();
+      setVolunteers(allVolunteers);
       setLoading(false);
     } catch (error) {
       console.error('Error loading projects for map:', error);

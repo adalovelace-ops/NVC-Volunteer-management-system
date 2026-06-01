@@ -5,6 +5,9 @@ import { ScrollView, StyleSheet, TouchableOpacity, View, Text } from 'react-nati
 
 // Safe Platform accessor for web environments
 function getPlatformOS(): string {
+  if (typeof window !== 'undefined') {
+    return 'web';
+  }
   try {
     const { Platform } = require('react-native');
     return Platform?.OS || 'web';
@@ -26,6 +29,7 @@ import {
   getAllProjects,
   getAllUsers,
   getAllPartnerProjectApplications,
+  markMessageAsRead,
 } from '../models/storage';
 import { User, PartnerProjectApplication } from '../models/types';
 
@@ -34,8 +38,11 @@ export type AdminTabParamList = {
   Dashboard: undefined;
   Analytics: undefined;
   Partners: { partnerId?: string } | undefined;
-  PartnerApprovals: undefined;
-  Projects: { projectId?: string; programSuiteView?: 'programs' | 'projects' | 'events' } | undefined;
+  Projects: {
+    projectId?: string;
+    programSuiteView?: 'programs' | 'projects' | 'events';
+    programSuiteNavKey?: number;
+  } | undefined;
   Volunteers: { volunteerId?: string } | undefined;
   Map: undefined;
   Messages: { projectId?: string } | undefined;
@@ -65,7 +72,6 @@ const PartnerManagementScreen = lazyScreen(() => require('../screens/PartnerMana
 const AdminReportsScreen = lazyScreen(() => require('../screens/AdminReportsScreen'));
 const ProfileScreen = lazyScreen(() => require('../screens/ProfileScreen'));
 const SystemSettingsScreen = lazyScreen(() => require('../screens/SystemSettingsScreen'));
-const PartnerApprovalsScreen = lazyScreen(() => require('../screens/PartnerApprovalsScreen'));
 
 const SIDEBAR_WIDTH = 200;
 const SIDEBAR_WIDTH_COLLAPSED = 60;
@@ -77,7 +83,6 @@ const getIconName = (routeName: keyof AdminTabParamList) => {
     case 'Dashboard': return 'dashboard';
     case 'Analytics': return 'analytics';
     case 'Partners': return 'business';
-    case 'PartnerApprovals': return 'verified-user';
     case 'Projects': return 'business-center';
     case 'Volunteers': return 'groups';
     case 'Map': return 'map';
@@ -98,12 +103,22 @@ type SidebarProps = BottomTabBarProps & {
 function SidebarTabBar({ state, descriptors, navigation, collapsed, onToggle }: SidebarProps) {
   const [programMenuOpen, setProgramMenuOpen] = useState(false);
   const [programBtnTop, setProgramBtnTop] = useState(0);
+  const navigateToProgramSuiteView = React.useCallback(
+    (view: 'programs' | 'projects' | 'events') => {
+      navigation.navigate('Projects', {
+        programSuiteView: view,
+        programSuiteNavKey: Date.now(),
+      });
+      setProgramMenuOpen(false);
+    },
+    [navigation]
+  );
 
   const systemsRoutes = state.routes.filter(
-    route => !['Partners', 'PartnerApprovals', 'Volunteers', 'Users', 'Settings', 'Profile'].includes(route.name)
+    route => !['Partners', 'Volunteers', 'Users', 'Settings', 'Profile'].includes(route.name)
   );
   const settingsRoutes = state.routes.filter(
-    route => ['Partners', 'PartnerApprovals', 'Volunteers', 'Users', 'Settings', 'Profile'].includes(route.name)
+    route => ['Partners', 'Volunteers', 'Users', 'Settings', 'Profile'].includes(route.name)
   );
 
   // Close menu when sidebar expands
@@ -178,8 +193,7 @@ function SidebarTabBar({ state, descriptors, navigation, collapsed, onToggle }: 
       btn.onmouseenter = () => { btn.style.background = '#f0fdf4'; };
       btn.onmouseleave = () => { btn.style.background = 'transparent'; };
       btn.onclick = () => {
-        navigation.navigate('Projects', { programSuiteView: item.view });
-        setProgramMenuOpen(false);
+        navigateToProgramSuiteView(item.view);
       };
       existing!.appendChild(btn);
     });
@@ -195,7 +209,7 @@ function SidebarTabBar({ state, descriptors, navigation, collapsed, onToggle }: 
       document.removeEventListener('mousedown', handleOutside);
       existing?.remove();
     };
-  }, [collapsed, programMenuOpen, programBtnTop, navigation]);
+  }, [collapsed, programMenuOpen, programBtnTop, navigation, navigateToProgramSuiteView]);
 
   // Cleanup on unmount
   React.useEffect(() => {
@@ -277,15 +291,15 @@ function SidebarTabBar({ state, descriptors, navigation, collapsed, onToggle }: 
         {/* Inline submenu when sidebar is expanded */}
         {isProgramRoute && !collapsed && programMenuOpen && (
           <View style={styles.sidebarSubmenu}>
-            <TouchableOpacity style={styles.sidebarSubmenuItem} onPress={() => { navigation.navigate('Projects', { programSuiteView: 'programs' }); setProgramMenuOpen(false); }}>
+            <TouchableOpacity style={styles.sidebarSubmenuItem} onPress={() => navigateToProgramSuiteView('programs')}>
               <MaterialIcons name="work" size={16} color="#15803d" />
               <Text style={styles.sidebarSubmenuText}>Programs</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.sidebarSubmenuItem} onPress={() => { navigation.navigate('Projects', { programSuiteView: 'projects' }); setProgramMenuOpen(false); }}>
+            <TouchableOpacity style={styles.sidebarSubmenuItem} onPress={() => navigateToProgramSuiteView('projects')}>
               <MaterialIcons name="folder" size={16} color="#15803d" />
               <Text style={styles.sidebarSubmenuText}>Projects</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.sidebarSubmenuItem} onPress={() => { navigation.navigate('Projects', { programSuiteView: 'events' }); setProgramMenuOpen(false); }}>
+            <TouchableOpacity style={styles.sidebarSubmenuItem} onPress={() => navigateToProgramSuiteView('events')}>
               <MaterialIcons name="event" size={16} color="#15803d" />
               <Text style={styles.sidebarSubmenuText}>Events</Text>
             </TouchableOpacity>
@@ -448,6 +462,13 @@ export default function AdminNavigator() {
     };
   }, [user?.id]);
 
+  const handleNotificationsSeen = React.useCallback(async () => {
+    if (!user?.id || unreadMessages.length === 0) return;
+    await Promise.all(
+      unreadMessages.map((msg) => markMessageAsRead(msg.id).catch(() => undefined))
+    );
+  }, [unreadMessages, user?.id]);
+
   const navigator = (
     <Tab.Navigator
       tabBar={isWeb ? props => <SidebarCapture {...props} onPropsChange={(p, s) => { setTabBarProps(p); setTabBarSignature(s); }} /> : undefined}
@@ -470,6 +491,7 @@ export default function AdminNavigator() {
             unreadReports={unreadReports}
             pendingPartnerApplications={pendingPartnerApplications}
             pendingVolunteerRequests={pendingVolunteerRequests}
+            onNotificationOpen={handleNotificationsSeen}
           />
         ),
         tabBarIcon: ({ color, size }) => <MaterialIcons name={getIconName(route.name as keyof AdminTabParamList)} size={size} color={color} />,
@@ -488,7 +510,6 @@ export default function AdminNavigator() {
         }}
       />
       <Tab.Screen name="Partners" component={PartnerManagementScreen} options={{ title: 'Partner Management' }} />
-      <Tab.Screen name="PartnerApprovals" component={PartnerApprovalsScreen} options={{ title: 'Partner Approvals' }} />
       <Tab.Screen name="Volunteers" component={VolunteerManagementScreen} options={{ title: 'Volunteer Management' }} />
       <Tab.Screen name="Map" component={MappingScreen} options={{ title: 'Map' }} />
       <Tab.Screen name="Messages" component={CommunicationHubScreen} options={{ title: 'Messages', tabBarBadge: messageUnreadCount > 0 ? messageUnreadCount : undefined }} />
@@ -505,7 +526,19 @@ export default function AdminNavigator() {
   return (
     <View style={styles.webLayout}>
       <View style={[styles.sidebarWrapper, collapsed ? styles.sidebarWrapperCollapsed : styles.sidebarWrapperExpanded]}>
-        {tabBarProps && <SidebarTabBar {...tabBarProps} collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />}
+        {tabBarProps ? (
+          <SidebarTabBar {...tabBarProps} collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
+        ) : (
+          <View style={styles.fallbackSidebar}>
+            <TouchableOpacity onPress={() => setCollapsed(!collapsed)} style={styles.toggleButton}>
+              <MaterialIcons
+                name={collapsed ? 'chevron-right' : 'chevron-left'}
+                size={24}
+                color="#15803d"
+              />
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
       <View style={[styles.webContent, { paddingHorizontal: collapsed ? CONTENT_GUTTER_COLLAPSED : CONTENT_GUTTER }]}>
         {navigator}
@@ -516,10 +549,10 @@ export default function AdminNavigator() {
 
 const styles = StyleSheet.create({
   webLayout: { flex: 1, flexDirection: 'row', backgroundColor: '#f5f5f5' },
-  sidebarWrapper: { height: '100%', backgroundColor: '#f0fdf4', borderRightWidth: 1, borderRightColor: '#bbf7d0' },
-  sidebarWrapperExpanded: { width: SIDEBAR_WIDTH },
-  sidebarWrapperCollapsed: { width: SIDEBAR_WIDTH_COLLAPSED },
-  webContent: { flex: 1, paddingVertical: 20, backgroundColor: '#f5f5f5' },
+  sidebarWrapper: { height: '100%', backgroundColor: '#f0fdf4', borderRightWidth: 2, borderRightColor: '#15803d', overflow: 'hidden' },
+  sidebarWrapperExpanded: { width: SIDEBAR_WIDTH, minWidth: SIDEBAR_WIDTH },
+  sidebarWrapperCollapsed: { width: SIDEBAR_WIDTH_COLLAPSED, minWidth: SIDEBAR_WIDTH_COLLAPSED },
+  webContent: { flex: 1, paddingVertical: 20, backgroundColor: '#f5f5f5', overflow: 'auto' as any },
   sidebarContainer: { position: 'relative', flex: 1, width: SIDEBAR_WIDTH, backgroundColor: '#f0fdf4', paddingTop: 28, paddingHorizontal: 12, borderRightWidth: 1, borderRightColor: '#bbf7d0' },
   sidebarBrand: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 18, paddingHorizontal: 6 },
   sidebarBrandIcon: { width: 72, height: 48, borderRadius: 14, backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center' },
@@ -529,7 +562,8 @@ const styles = StyleSheet.create({
   sidebarContainerCollapsed: { width: SIDEBAR_WIDTH_COLLAPSED, paddingHorizontal: 8 },
   sidebarScrollArea: { flex: 1 },
   sidebarScrollContent: { paddingBottom: 20 },
-  toggleButton: { alignSelf: 'flex-end', padding: 6, marginBottom: 12 },
+  fallbackSidebar: { flex: 1, alignItems: 'center', justifyContent: 'flex-start', paddingTop: 20 },
+  toggleButton: { alignSelf: 'center', padding: 10, marginBottom: 12, borderRadius: 8, backgroundColor: 'rgba(21, 128, 61, 0.1)' },
   sidebarHeading: { fontSize: 12, fontWeight: '700', color: '#15803d', letterSpacing: 0.5, marginBottom: 12, textTransform: 'uppercase' },
   sidebarDivider: { height: 1, backgroundColor: '#bbf7d0', marginVertical: 14 },
   sidebarDividerCollapsed: { marginVertical: 10 },

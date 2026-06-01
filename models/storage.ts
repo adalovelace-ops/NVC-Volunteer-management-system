@@ -341,6 +341,7 @@ function connectSharedStorageSocket() {
 
 type ProjectsScreenSnapshot = {
   projects: Project[];
+  programs?: Project[];
   programTracks?: ProgramTrack[];
   volunteerProfile: Volunteer | null;
   volunteerMatches?: VolunteerProjectMatch[];
@@ -1754,6 +1755,7 @@ export async function getPartnerDashboardSnapshot(): Promise<{
     STORAGE_KEYS.USERS,
     STORAGE_KEYS.PROJECTS,
     STORAGE_KEYS.PROGRAMS,
+    STORAGE_KEYS.PROGRAM_TRACKS,
     STORAGE_KEYS.EVENTS,
     STORAGE_KEYS.PARTNERS,
     STORAGE_KEYS.VOLUNTEERS,
@@ -1788,21 +1790,92 @@ export async function getPartnerDashboardSnapshot(): Promise<{
 
   const programs = (coreItems[STORAGE_KEYS.PROGRAMS] as Project[] | null) || [];
   const projects = (coreItems[STORAGE_KEYS.PROJECTS] as Project[] | null) || [];
+  const programTracks = (coreItems[STORAGE_KEYS.PROGRAM_TRACKS] as ProgramTrack[] | null) || [];
+  const partnerApplications =
+    (coreItems[STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS] as PartnerProjectApplication[] | null) ||
+    [];
+  const proposalProjectIds = new Set(
+    partnerApplications.map(application => String(application.projectId || '').trim()).filter(Boolean)
+  );
+  const proposalTitles = new Set(
+    partnerApplications
+      .map(application => String(application.proposalDetails?.proposedTitle || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const inferProgramCategory = (program: Pick<ProgramTrack, 'id' | 'title'>): AdvocacyFocus => {
+    const text = `${program.id || ''} ${program.title || ''}`.toLowerCase();
+    if (text.includes('nutrition')) return 'Nutrition';
+    if (text.includes('education')) return 'Education';
+    if (text.includes('livelihood')) return 'Livelihood';
+    if (text.includes('disaster')) return 'Disaster';
+    return 'Disaster';
+  };
+  const programTrackRecords: Project[] = programTracks
+    .filter(track => track.isActive !== false)
+    .map(track => {
+      const category = inferProgramCategory(track);
+      const now = new Date().toISOString();
+      return {
+        id: String(track.id || track.title).trim(),
+        title: String(track.title || track.id).trim(),
+        description: track.description || '',
+        partnerId: '',
+        imageUrl: track.imageUrl,
+        imageHidden: false,
+        programModule: category,
+        status: 'Planning',
+        category,
+        startDate: track.createdAt || now,
+        endDate: track.updatedAt || track.createdAt || now,
+        location: {
+          latitude: 0,
+          longitude: 0,
+          address: 'Program location',
+        },
+        volunteersNeeded: 0,
+        volunteers: [],
+        joinedUserIds: [],
+        createdAt: track.createdAt || now,
+        updatedAt: track.updatedAt || now,
+        statusUpdates: [],
+        internalTasks: [],
+        isEvent: false,
+        icon: track.icon,
+        color: track.color,
+      } as Project;
+    });
+  const topLevelProjectPrograms = projects.filter(project => {
+    const id = String(project.id || '').trim();
+    const title = String(project.title || '').trim();
+    const normalizedTitle = title.toLowerCase();
+    if (project.isEvent || project.parentProjectId) {
+      return false;
+    }
+    if (id.startsWith('project-proposal-') || proposalProjectIds.has(id) || proposalTitles.has(normalizedTitle)) {
+      return false;
+    }
+    return normalizedTitle.includes('program');
+  });
+  const dashboardProgramById = new Map<string, Project>();
+  [...programTrackRecords, ...topLevelProjectPrograms, ...programs]
+    .filter(program => String(program.id || '').trim())
+    .forEach(program => {
+      dashboardProgramById.set(String(program.id || '').trim(), program);
+    });
+  const dashboardPrograms = Array.from(dashboardProgramById.values());
 
   return {
     users: (coreItems[STORAGE_KEYS.USERS] as User[] | null) || [],
     projects: mergeProjectAndEventRecords(
-      [...programs, ...projects],
+      [...dashboardPrograms, ...projects],
       coreItems[STORAGE_KEYS.EVENTS] as Project[] | null
     ),
-    programs: (coreItems[STORAGE_KEYS.PROGRAMS] as Project[] | null) || [],
+    programs: dashboardPrograms,
     events: (coreItems[STORAGE_KEYS.EVENTS] as Project[] | null) || [],
     partners,
     volunteers: (coreItems[STORAGE_KEYS.VOLUNTEERS] as Volunteer[] | null) || [],
     statusUpdates: (coreItems[STORAGE_KEYS.STATUS_UPDATES] as StatusUpdate[] | null) || [],
-    partnerApplications:
-      (coreItems[STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS] as PartnerProjectApplication[] | null) ||
-      [],
+    partnerApplications,
     partnerReports: (coreItems[STORAGE_KEYS.PARTNER_REPORTS] as PartnerReport[] | null) || [],
     publishedImpactReports:
       (coreItems[STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS] as PublishedImpactReport[] | null) || [],
@@ -1913,6 +1986,7 @@ export async function getProjectsScreenSnapshot(
       project?.isEvent ? normalizeEventRecord(project) : normalizeProjectRecord(project)
     ),
     programTracks: payload.programTracks || [],
+    programs: (payload.programs || []).map(program => normalizeProjectRecord(program)),
     volunteerProfile: payload.volunteerProfile || null,
     volunteerMatches: payload.volunteerMatches || [],
     timeLogs: payload.timeLogs || [],
@@ -1960,37 +2034,244 @@ export async function saveAppSettings(settings: Partial<AppSettings>): Promise<v
 }
 
 export async function getAllProgramTracks(): Promise<ProgramTrack[]> {
-  return (await getStorageItemFast<ProgramTrack[]>(STORAGE_KEYS.PROGRAM_TRACKS)) || [];
+  // Programs are now stored ONLY in the programs table
+  const allPrograms = (await getStorageItemFast<Project[]>(STORAGE_KEYS.PROGRAMS)) || [];
+  
+  // Convert top-level programs to ProgramTrack format
+  const programTracks: ProgramTrack[] = allPrograms
+    .filter(program => !program.parentProjectId && !program.isEvent)
+    .map(program => ({
+      id: program.id,
+      title: program.title,
+      description: program.description,
+      icon: program.icon,
+      color: program.color,
+      imageUrl: program.imageUrl,
+      sortOrder: 0,
+      isActive: true,
+      createdAt: program.createdAt,
+      updatedAt: program.updatedAt,
+    }));
+  
+  return programTracks;
 }
 
 export async function saveProgram(program: ProgramTrack): Promise<void> {
-  const programs = (await getStorageItem<ProgramTrack[]>(STORAGE_KEYS.PROGRAM_TRACKS)) || [];
+  // Programs are stored as Project records in the 'programs' collection
+  const allPrograms = (await getStorageItem<Project[]>(STORAGE_KEYS.PROGRAMS)) || [];
   const now = new Date().toISOString();
-  const normalizedProgram: ProgramTrack = {
-    ...program,
-    id: String(program.id || program.title).trim(),
+  const programId = String(program.id || program.title).trim();
+  const programFocusText = `${programId} ${program.title || ''}`.toLowerCase();
+  const inferredCategory =
+    programFocusText.includes('nutrition')
+      ? 'Nutrition'
+      : programFocusText.includes('education')
+        ? 'Education'
+        : programFocusText.includes('livelihood')
+          ? 'Livelihood'
+          : programFocusText.includes('disaster')
+            ? 'Disaster'
+            : 'Disaster';
+  
+  // Convert ProgramTrack to Project record
+  const projectRecord: Project = {
+    id: programId,
     title: program.title.trim(),
+    description: program.description || '',
+    partnerId: '',
+    status: 'Planning',
+    category: ((program as any).category || inferredCategory) as Project['category'],
+    programModule: ((program as any).programModule || (program as any).category || inferredCategory) as AdvocacyFocus,
+    startDate: program.createdAt || now,
+    endDate: program.updatedAt || now,
+    location: {
+      latitude: 0,
+      longitude: 0,
+      address: 'Program location',
+    },
+    volunteersNeeded: 0,
+    volunteers: [],
+    joinedUserIds: [],
+    imageUrl: program.imageUrl || '',
+    imageHidden: false,
+    parentProjectId: undefined, // Top-level program
+    isEvent: false,
     createdAt: program.createdAt || now,
     updatedAt: now,
+    statusUpdates: [],
+    icon: (program as any).icon || 'folder',
+    color: (program as any).color || '#6366f1',
   };
-  const existingIndex = programs.findIndex(entry => entry.id === normalizedProgram.id);
+
+  const existingIndex = allPrograms.findIndex(entry => entry.id === programId);
   if (existingIndex >= 0) {
-    programs[existingIndex] = {
-      ...programs[existingIndex],
-      ...normalizedProgram,
-    };
+    // Preserve original createdAt for updates
+    projectRecord.createdAt = allPrograms[existingIndex].createdAt;
+    allPrograms[existingIndex] = projectRecord;
   } else {
-    programs.push(normalizedProgram);
+    allPrograms.push(projectRecord);
   }
-  await setStorageItem(STORAGE_KEYS.PROGRAM_TRACKS, programs);
+  
+  await setStorageItem(STORAGE_KEYS.PROGRAMS, allPrograms);
+  // Clear both shared and snapshot caches so mobile app sees changes immediately
+  invalidateSharedStorageCache([STORAGE_KEYS.PROGRAM_TRACKS]);
+  projectsSnapshotCache.clear();
 }
 
 export async function deleteProgram(programId: string): Promise<void> {
-  const programs = (await getStorageItem<ProgramTrack[]>(STORAGE_KEYS.PROGRAM_TRACKS)) || [];
-  await setStorageItem(
-    STORAGE_KEYS.PROGRAM_TRACKS,
-    programs.filter(program => program.id !== programId)
+  const normalizedProgramId = String(programId || '').trim();
+  const normalizedProgramKey = normalizedProgramId.toLowerCase();
+  const belongsToProgram = (item: Project | undefined | null): boolean => {
+    if (!item) {
+      return false;
+    }
+    return [
+      item.id,
+      item.parentProjectId,
+      (item as any).parent_project_id,
+      (item as any).program_id,
+      item.programModule,
+      item.category,
+    ].some(value => String(value || '').trim().toLowerCase() === normalizedProgramKey);
+  };
+
+  try {
+    await fetchApiResponse(`/program-tracks/${encodeURIComponent(normalizedProgramId)}`, {
+      method: 'DELETE',
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || '');
+    if (!message.toLowerCase().includes('program track not found')) {
+      throw error;
+    }
+  }
+  
+  // Fetch all projects and events to find children of this program
+  const [allPrograms, allProjects, allEvents] = await Promise.all([
+    getStorageItem<Project[]>(STORAGE_KEYS.PROGRAMS),
+    getStorageItem<Project[]>(STORAGE_KEYS.PROJECTS),
+    getStorageItem<Project[]>(STORAGE_KEYS.EVENTS),
+  ]);
+
+  // Identify child project IDs (projects that have this program as parent)
+  const childProjectIds = new Set(
+    (allProjects || [])
+      .filter(belongsToProgram)
+      .map(p => p.id)
   );
+  const childProjectIdKeys = new Set([...childProjectIds].map(id => String(id || '').trim().toLowerCase()));
+
+  // Identify child event IDs (events that have a child project as parent, or this program as parent)
+  const childEventIds = new Set(
+    (allEvents || [])
+      .filter(e => belongsToProgram(e) || childProjectIdKeys.has(String(e.parentProjectId || '').trim().toLowerCase()))
+      .map(e => e.id)
+  );
+
+  // Collect all IDs to remove (program + child projects + child events)
+  const allRemovalIds = new Set([normalizedProgramId, ...childProjectIds, ...childEventIds]);
+
+  // Load all dependent records
+  const [
+    statusUpdates,
+    partnerApplications,
+    partnerReports,
+    publishedImpactReports,
+    volunteerJoinRecords,
+    volunteerMatches,
+    volunteerTimeLogs,
+    projectGroupMessages,
+    volunteers,
+    adminPlanningCalendars,
+  ] = await Promise.all([
+    getStorageItem<StatusUpdate[]>(STORAGE_KEYS.STATUS_UPDATES),
+    getStorageItem<PartnerProjectApplication[]>(STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS),
+    getStorageItem<PartnerReport[]>(STORAGE_KEYS.PARTNER_REPORTS),
+    getStorageItem<PublishedImpactReport[]>(STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS),
+    getStorageItem<VolunteerProjectJoinRecord[]>(STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS),
+    getStorageItem<VolunteerProjectMatch[]>(STORAGE_KEYS.VOLUNTEER_MATCHES),
+    getStorageItem<VolunteerTimeLog[]>(STORAGE_KEYS.VOLUNTEER_TIME_LOGS),
+    getStorageItem<ProjectGroupMessage[]>(STORAGE_KEYS.PROJECT_GROUP_MESSAGES),
+    getStorageItem<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS),
+    getStorageItem<AdminPlanningCalendar[]>(STORAGE_KEYS.ADMIN_PLANNING_CALENDARS),
+  ]);
+
+  // Delete program and all child projects/events, plus clean up all dependent records
+  await Promise.all([
+    setStorageItem(
+      STORAGE_KEYS.PROGRAMS,
+      (allPrograms || []).filter(p => String(p.id || '').trim().toLowerCase() !== normalizedProgramKey)
+    ),
+    setStorageItem(
+      STORAGE_KEYS.PROJECTS,
+      (allProjects || []).filter(p => !allRemovalIds.has(p.id))
+    ),
+    setStorageItem(
+      STORAGE_KEYS.EVENTS,
+      (allEvents || []).filter(e => !allRemovalIds.has(e.id))
+    ),
+    setStorageItem(
+      STORAGE_KEYS.STATUS_UPDATES,
+      (statusUpdates || []).filter(u => !allRemovalIds.has(u.projectId))
+    ),
+    setStorageItem(
+      STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
+      (partnerApplications || []).filter(a => !allRemovalIds.has(a.projectId))
+    ),
+    setStorageItem(
+      STORAGE_KEYS.PARTNER_REPORTS,
+      (partnerReports || []).filter(r => !allRemovalIds.has(r.projectId))
+    ),
+    setStorageItem(
+      STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
+      (publishedImpactReports || []).filter(r => !allRemovalIds.has(r.projectId))
+    ),
+    setStorageItem(
+      STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+      (volunteerJoinRecords || []).filter(j => !allRemovalIds.has(j.projectId))
+    ),
+    setStorageItem(
+      STORAGE_KEYS.VOLUNTEER_MATCHES,
+      (volunteerMatches || []).filter(m => !allRemovalIds.has(m.projectId))
+    ),
+    setStorageItem(
+      STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+      (volunteerTimeLogs || []).filter(l => !allRemovalIds.has(l.projectId))
+    ),
+    setStorageItem(
+      STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+      (projectGroupMessages || []).filter(msg => !allRemovalIds.has(msg.projectId))
+    ),
+    setStorageItem(
+      STORAGE_KEYS.VOLUNTEERS,
+      removeProjectIdsFromVolunteerHistory(volunteers, allRemovalIds)
+    ),
+    setStorageItem(
+      STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
+      removeProjectIdsFromPlanningCalendars(adminPlanningCalendars, allRemovalIds)
+    ),
+  ]);
+  
+  // Invalidate all dependent caches
+  const changedKeys = [
+    STORAGE_KEYS.PROGRAM_TRACKS,
+    STORAGE_KEYS.PROGRAMS,
+    STORAGE_KEYS.PROJECTS,
+    STORAGE_KEYS.EVENTS,
+    STORAGE_KEYS.STATUS_UPDATES,
+    STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
+    STORAGE_KEYS.PARTNER_REPORTS,
+    STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
+    STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    STORAGE_KEYS.VOLUNTEER_MATCHES,
+    STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+    STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+    STORAGE_KEYS.VOLUNTEERS,
+    STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
+  ];
+  invalidateSharedStorageCache(changedKeys);
+  projectsSnapshotCache.clear();
+  notifyStorageChanged(changedKeys);
 }
 
 // User Storage
@@ -2355,9 +2636,58 @@ function normalizeProjectRecord(project: Project): Project {
 }
 
 function normalizeEventRecord(event: Project): Project {
-  return {
-    ...normalizeProjectRecord(event),
+  const normalized = normalizeProjectRecord(event);
+  const eventWithFlag = {
+    ...normalized,
     isEvent: true,
+  };
+
+  return ensureFieldOfficerTaskForEvent(eventWithFlag);
+}
+
+function isCurrentOrFutureEvent(project: Project): boolean {
+  if (!project?.isEvent) {
+    return false;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const eventEndDate = new Date(project.endDate);
+  if (!Number.isNaN(eventEndDate.getTime())) {
+    return eventEndDate >= today;
+  }
+
+  const eventStartDate = new Date(project.startDate);
+  return !Number.isNaN(eventStartDate.getTime()) && eventStartDate >= today;
+}
+
+function ensureFieldOfficerTaskForEvent(event: Project): Project {
+  if (!isCurrentOrFutureEvent(event)) {
+    return event;
+  }
+  if ((event.internalTasks || []).some(task => task.isFieldOfficer)) {
+    return event;
+  }
+
+  const now = new Date().toISOString();
+  return {
+    ...event,
+    internalTasks: [
+      ...(event.internalTasks || []),
+      {
+        id: `${event.id}-field-officer-${Date.now()}`,
+        title: 'Field Officer',
+        description: 'Manage attendance tracking and volunteer coordination for this event.',
+        category: 'Field Coordination',
+        priority: 'High',
+        status: 'Assigned',
+        isFieldOfficer: true,
+        skillsNeeded: ['Leadership', 'Communication'],
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
   };
 }
 
@@ -2373,7 +2703,7 @@ function mergeProjectAndEventRecords(
     normalizeProjectRecord({
       ...project,
       isEvent: false,
-      parentProjectId: undefined,
+      // Don't strip parentProjectId - projects can have parents (programs)
     })
   );
   const normalizedEvents = (events || []).map(event =>
@@ -2393,6 +2723,29 @@ function mergeProjectAndEventRecords(
   return Array.from(mergedById.values());
 }
 
+function removeProjectIdsFromVolunteerHistory(
+  volunteers: Volunteer[] | null | undefined,
+  removedProjectIds: Set<string>
+): Volunteer[] {
+  return (volunteers || []).map(volunteer => ({
+    ...volunteer,
+    pastProjects: (volunteer.pastProjects || []).filter(projectId => !removedProjectIds.has(projectId)),
+  }));
+}
+
+function removeProjectIdsFromPlanningCalendars(
+  calendars: AdminPlanningCalendar[] | null | undefined,
+  removedProjectIds: Set<string>
+): AdminPlanningCalendar[] {
+  return (calendars || []).map(calendar => ({
+    ...calendar,
+    planningItems: (calendar.planningItems || []).filter(
+      item => !item.linkedProjectId || !removedProjectIds.has(item.linkedProjectId)
+    ),
+    updatedAt: new Date().toISOString(),
+  }));
+}
+
 export async function getAllEvents(): Promise<Project[]> {
   return ((await getStorageItemFast<Project[]>(STORAGE_KEYS.EVENTS)) || []).map(
     normalizeEventRecord
@@ -2405,7 +2758,7 @@ export async function createUserAccount(input: {
   email?: string;
   password: string;
   phone?: string;
-  role: Exclude<UserRole, 'admin'>;
+  role: UserRole;
   userType: UserType;
   pillarsOfInterest: NVCSector[];
   partnerRegistration?: {
@@ -2493,7 +2846,7 @@ export async function createUserAccount(input: {
     role: input.role,
     userType: input.userType,
     pillarsOfInterest: input.pillarsOfInterest,
-    approvalStatus: 'pending', // New accounts require admin approval
+    approvalStatus: input.role === 'admin' ? 'approved' : 'pending',
     createdAt,
   };
 
@@ -2763,6 +3116,19 @@ export async function deleteUser(userId: string): Promise<void> {
   await requestApiJson(`/auth/users/${encodeURIComponent(userId)}`, {
     method: 'DELETE',
   });
+
+  const changedKeys = [
+    STORAGE_KEYS.USERS,
+    STORAGE_KEYS.VOLUNTEERS,
+    STORAGE_KEYS.PARTNERS,
+    STORAGE_KEYS.PROJECTS,
+    STORAGE_KEYS.EVENTS,
+    STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    STORAGE_KEYS.VOLUNTEER_MATCHES,
+    STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+  ];
+  invalidateSharedStorageCache(changedKeys);
+  notifyStorageChanged(changedKeys);
 
   const currentUser = await getCurrentUser();
   if (currentUser?.id === userId) {
@@ -3249,7 +3615,6 @@ export async function saveProject(project: Project): Promise<void> {
   const normalizedProject = normalizeProjectRecord({
     ...project,
     isEvent: false,
-    parentProjectId: undefined,
     skillsNeeded: normalizeProjectSkillsNeeded(project, project.internalTasks || []),
   });
   if (existingIndex >= 0) {
@@ -3258,6 +3623,8 @@ export async function saveProject(project: Project): Promise<void> {
     projects.push(normalizedProject);
   }
   await setStorageItem(STORAGE_KEYS.PROJECTS, projects);
+  // Clear snapshot cache so mobile app sees changes immediately
+  projectsSnapshotCache.clear();
   notifyStorageChanged([STORAGE_KEYS.PROJECTS]);
 }
 
@@ -3276,6 +3643,8 @@ export async function saveEvent(event: Project): Promise<void> {
     events.push(normalizedEvent);
   }
   await setStorageItem(STORAGE_KEYS.EVENTS, events);
+  // Clear snapshot cache so mobile app sees changes immediately
+  projectsSnapshotCache.clear();
   notifyStorageChanged([STORAGE_KEYS.EVENTS]);
 }
 
@@ -3290,8 +3659,11 @@ export async function deleteProject(projectId: string): Promise<void> {
     partnerReports,
     publishedImpactReports,
     volunteerJoinRecords,
+    volunteerMatches,
     volunteerTimeLogs,
     projectGroupMessages,
+    volunteers,
+    adminPlanningCalendars,
   ] =
     await Promise.all([
       getStorageItem<Project[]>(STORAGE_KEYS.PROJECTS),
@@ -3302,8 +3674,11 @@ export async function deleteProject(projectId: string): Promise<void> {
       getStorageItem<PartnerReport[]>(STORAGE_KEYS.PARTNER_REPORTS),
       getStorageItem<PublishedImpactReport[]>(STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS),
       getStorageItem<VolunteerProjectJoinRecord[]>(STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS),
+      getStorageItem<VolunteerProjectMatch[]>(STORAGE_KEYS.VOLUNTEER_MATCHES),
       getStorageItem<VolunteerTimeLog[]>(STORAGE_KEYS.VOLUNTEER_TIME_LOGS),
       getStorageItem<ProjectGroupMessage[]>(STORAGE_KEYS.PROJECT_GROUP_MESSAGES),
+      getStorageItem<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS),
+      getStorageItem<AdminPlanningCalendar[]>(STORAGE_KEYS.ADMIN_PLANNING_CALENDARS),
     ]);
 
   const relatedProjectIds = new Set([
@@ -3347,6 +3722,10 @@ export async function deleteProject(projectId: string): Promise<void> {
       (volunteerJoinRecords || []).filter(record => !relatedProjectIds.has(record.projectId))
     ),
     setStorageItem(
+      STORAGE_KEYS.VOLUNTEER_MATCHES,
+      (volunteerMatches || []).filter(match => !relatedProjectIds.has(match.projectId))
+    ),
+    setStorageItem(
       STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
       (volunteerTimeLogs || []).filter(log => !relatedProjectIds.has(log.projectId))
     ),
@@ -3354,85 +3733,156 @@ export async function deleteProject(projectId: string): Promise<void> {
       STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
       (projectGroupMessages || []).filter(message => !relatedProjectIds.has(message.projectId))
     ),
+    setStorageItem(
+      STORAGE_KEYS.VOLUNTEERS,
+      removeProjectIdsFromVolunteerHistory(volunteers, relatedProjectIds)
+    ),
+    setStorageItem(
+      STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
+      removeProjectIdsFromPlanningCalendars(adminPlanningCalendars, relatedProjectIds)
+    ),
   ]);
   invalidateSharedStorageCache([
+    STORAGE_KEYS.PROJECTS,
+    STORAGE_KEYS.PROGRAMS,
     STORAGE_KEYS.EVENTS,
     STORAGE_KEYS.STATUS_UPDATES,
     STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
     STORAGE_KEYS.PARTNER_REPORTS,
     STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
     STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    STORAGE_KEYS.VOLUNTEER_MATCHES,
     STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
     STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+    STORAGE_KEYS.VOLUNTEERS,
+    STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
   ]);
   notifyStorageChanged([
+    STORAGE_KEYS.PROJECTS,
+    STORAGE_KEYS.PROGRAMS,
     STORAGE_KEYS.EVENTS,
     STORAGE_KEYS.STATUS_UPDATES,
     STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
     STORAGE_KEYS.PARTNER_REPORTS,
     STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
     STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    STORAGE_KEYS.VOLUNTEER_MATCHES,
     STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
     STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+    STORAGE_KEYS.VOLUNTEERS,
+    STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
   ]);
 }
 
 // Deletes one event and cleans up records that reference it.
 export async function deleteEvent(eventId: string): Promise<void> {
   const [
+    projects,
     events,
     statusUpdates,
     partnerApplications,
     partnerReports,
     publishedImpactReports,
     volunteerJoinRecords,
+    volunteerMatches,
     volunteerTimeLogs,
     projectGroupMessages,
+    volunteers,
+    adminPlanningCalendars,
   ] =
     await Promise.all([
+      getStorageItem<Project[]>(STORAGE_KEYS.PROJECTS),
       getStorageItem<Project[]>(STORAGE_KEYS.EVENTS),
       getStorageItem<StatusUpdate[]>(STORAGE_KEYS.STATUS_UPDATES),
       getStorageItem<PartnerProjectApplication[]>(STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS),
       getStorageItem<PartnerReport[]>(STORAGE_KEYS.PARTNER_REPORTS),
       getStorageItem<PublishedImpactReport[]>(STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS),
       getStorageItem<VolunteerProjectJoinRecord[]>(STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS),
+      getStorageItem<VolunteerProjectMatch[]>(STORAGE_KEYS.VOLUNTEER_MATCHES),
       getStorageItem<VolunteerTimeLog[]>(STORAGE_KEYS.VOLUNTEER_TIME_LOGS),
       getStorageItem<ProjectGroupMessage[]>(STORAGE_KEYS.PROJECT_GROUP_MESSAGES),
+      getStorageItem<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS),
+      getStorageItem<AdminPlanningCalendar[]>(STORAGE_KEYS.ADMIN_PLANNING_CALENDARS),
     ]);
+  const relatedEventIds = new Set([eventId]);
 
   await Promise.all([
     setStorageItem(
+      STORAGE_KEYS.PROJECTS,
+      (projects || []).filter(project => project.id !== eventId)
+    ),
+    setStorageItem(
       STORAGE_KEYS.EVENTS,
-      (events || []).filter(event => event.id !== eventId)
+      (events || []).filter(event => !relatedEventIds.has(event.id))
     ),
     setStorageItem(
       STORAGE_KEYS.STATUS_UPDATES,
-      (statusUpdates || []).filter(update => update.projectId !== eventId)
+      (statusUpdates || []).filter(update => !relatedEventIds.has(update.projectId))
     ),
     setStorageItem(
       STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
-      (partnerApplications || []).filter(application => application.projectId !== eventId)
+      (partnerApplications || []).filter(application => !relatedEventIds.has(application.projectId))
     ),
     setStorageItem(
       STORAGE_KEYS.PARTNER_REPORTS,
-      (partnerReports || []).filter(report => report.projectId !== eventId)
+      (partnerReports || []).filter(report => !relatedEventIds.has(report.projectId))
     ),
     setStorageItem(
       STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
-      (publishedImpactReports || []).filter(report => report.projectId !== eventId)
+      (publishedImpactReports || []).filter(report => !relatedEventIds.has(report.projectId))
     ),
     setStorageItem(
       STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
-      (volunteerJoinRecords || []).filter(record => record.projectId !== eventId)
+      (volunteerJoinRecords || []).filter(record => !relatedEventIds.has(record.projectId))
+    ),
+    setStorageItem(
+      STORAGE_KEYS.VOLUNTEER_MATCHES,
+      (volunteerMatches || []).filter(match => !relatedEventIds.has(match.projectId))
     ),
     setStorageItem(
       STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
-      (volunteerTimeLogs || []).filter(log => log.projectId !== eventId)
+      (volunteerTimeLogs || []).filter(log => !relatedEventIds.has(log.projectId))
     ),
     setStorageItem(
       STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
-      (projectGroupMessages || []).filter(message => message.projectId !== eventId)
+      (projectGroupMessages || []).filter(message => !relatedEventIds.has(message.projectId))
     ),
+    setStorageItem(
+      STORAGE_KEYS.VOLUNTEERS,
+      removeProjectIdsFromVolunteerHistory(volunteers, relatedEventIds)
+    ),
+    setStorageItem(
+      STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
+      removeProjectIdsFromPlanningCalendars(adminPlanningCalendars, relatedEventIds)
+    ),
+  ]);
+  invalidateSharedStorageCache([
+    STORAGE_KEYS.PROJECTS,
+    STORAGE_KEYS.EVENTS,
+    STORAGE_KEYS.STATUS_UPDATES,
+    STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
+    STORAGE_KEYS.PARTNER_REPORTS,
+    STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
+    STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    STORAGE_KEYS.VOLUNTEER_MATCHES,
+    STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+    STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+    STORAGE_KEYS.VOLUNTEERS,
+    STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
+  ]);
+  notifyStorageChanged([
+    STORAGE_KEYS.PROJECTS,
+    STORAGE_KEYS.EVENTS,
+    STORAGE_KEYS.STATUS_UPDATES,
+    STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
+    STORAGE_KEYS.PARTNER_REPORTS,
+    STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
+    STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    STORAGE_KEYS.VOLUNTEER_MATCHES,
+    STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+    STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+    STORAGE_KEYS.VOLUNTEERS,
+    STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
   ]);
 }
 
@@ -3541,20 +3991,41 @@ export async function getAllVolunteers(): Promise<Volunteer[]> {
 
 // Looks up the volunteer profile linked to a specific user account.
 export async function getVolunteerByUserId(userId: string): Promise<Volunteer | null> {
-  const payload = await requestApiJson<{ volunteer?: Volunteer | null }>(
-    `/volunteers/by-user/${encodeURIComponent(userId)}`
-  );
-  if (payload.volunteer) {
-    return normalizeVolunteerRecord(payload.volunteer);
+  console.log('[getVolunteerByUserId] Looking up volunteer for userId:', userId);
+  
+  try {
+    const payload = await requestApiJson<{ volunteer?: Volunteer | null }>(
+      `/volunteers/by-user/${encodeURIComponent(userId)}`
+    );
+    
+    console.log('[getVolunteerByUserId] API response:', payload);
+    
+    if (payload.volunteer) {
+      console.log('[getVolunteerByUserId] Found volunteer:', payload.volunteer.id, payload.volunteer.name);
+      return normalizeVolunteerRecord(payload.volunteer);
+    }
+    
+    console.log('[getVolunteerByUserId] No volunteer in API response, trying fallback...');
+  } catch (error) {
+    console.error('[getVolunteerByUserId] API call failed:', error);
   }
 
   const linkedUser = await getUser(userId);
   if (!linkedUser) {
+    console.log('[getVolunteerByUserId] No linked user found');
     return null;
   }
 
+  console.log('[getVolunteerByUserId] Found linked user, searching volunteers...');
   const linkedVolunteers = await getLinkedVolunteersForUserAccount(linkedUser);
-  return linkedVolunteers[0] ? normalizeVolunteerRecord(linkedVolunteers[0]) : null;
+  
+  if (linkedVolunteers[0]) {
+    console.log('[getVolunteerByUserId] Found volunteer via fallback:', linkedVolunteers[0].id);
+    return normalizeVolunteerRecord(linkedVolunteers[0]);
+  }
+  
+  console.log('[getVolunteerByUserId] No volunteer found via any method');
+  return null;
 }
 
 // Computes recognition metrics such as joined programs and top-volunteer status.
@@ -4187,8 +4658,30 @@ export async function reviewVolunteerProjectMatch(
     throw new Error('Volunteer request review did not complete.');
   }
 
-  // Keep local shared storage in sync with the backend review result.
-  await saveVolunteerProjectMatch(payload.match);
+  const changedKeys = [
+    STORAGE_KEYS.VOLUNTEER_MATCHES,
+    STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    STORAGE_KEYS.VOLUNTEERS,
+    STORAGE_KEYS.PROJECTS,
+    STORAGE_KEYS.EVENTS,
+  ];
+  const cachedMatches = getFreshSharedStorageCacheValue<VolunteerProjectMatch[]>(
+    STORAGE_KEYS.VOLUNTEER_MATCHES
+  );
+  if (cachedMatches.hit && Array.isArray(cachedMatches.value)) {
+    const existingIndex = cachedMatches.value.findIndex(match => match.id === payload.match?.id);
+    const nextMatches = [...cachedMatches.value];
+    if (existingIndex >= 0) {
+      nextMatches[existingIndex] = payload.match;
+    } else {
+      nextMatches.push(payload.match);
+    }
+    setSharedStorageCacheValue(STORAGE_KEYS.VOLUNTEER_MATCHES, nextMatches);
+    invalidateSharedStorageCache(changedKeys.filter(key => key !== STORAGE_KEYS.VOLUNTEER_MATCHES));
+  } else {
+    invalidateSharedStorageCache(changedKeys);
+  }
+  notifyStorageChanged(changedKeys);
 
   try {
     const volunteer = await getVolunteer(payload.match.volunteerId);
@@ -4312,6 +4805,43 @@ export async function getAllVolunteerProjectJoinRecords(): Promise<VolunteerProj
       participationStatus: record.participationStatus || 'Active',
     }))
     .sort((a, b) => new Date(b.joinedAt).getTime() - new Date(a.joinedAt).getTime());
+}
+
+// Removes a volunteer from a project/event.
+export async function deleteVolunteerProjectJoinRecord(
+  projectId: string,
+  volunteerId: string
+): Promise<void> {
+  console.log('deleteVolunteerProjectJoinRecord called with:', { projectId, volunteerId });
+
+  const url = `/projects/${encodeURIComponent(projectId)}/volunteers/${encodeURIComponent(volunteerId)}`;
+  console.log('DELETE URL:', url);
+
+  const payload = await requestApiJson<{ success?: boolean }>(
+    url,
+    {
+      method: 'DELETE',
+    }
+  );
+
+  console.log('API response:', payload);
+
+  if (!payload.success) {
+    throw new Error('Failed to remove volunteer from event.');
+  }
+
+  // Clear caches
+  const changedKeys = [
+    STORAGE_KEYS.VOLUNTEER_MATCHES,
+    STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    STORAGE_KEYS.VOLUNTEERS,
+    STORAGE_KEYS.PROJECTS,
+    STORAGE_KEYS.EVENTS,
+  ];
+  invalidateSharedStorageCache(changedKeys);
+  notifyStorageChanged(changedKeys);
+
+  console.log('Volunteer removed successfully, caches cleared');
 }
 
 export async function reconcileApprovedVolunteerEventMemberships(): Promise<void> {
@@ -4538,9 +5068,13 @@ export async function submitPartnerProgramProposal(
   }
 ): Promise<PartnerProjectApplication> {
   const requestedProgramModule = String(options?.programModule || '').trim();
-  const proposalProjectId = requestedProgramModule
-    ? buildProgramProposalProjectId(requestedProgramModule)
-    : projectId;
+  const normalizedProjectId = String(projectId || '').trim();
+  const proposalProjectId =
+    normalizedProjectId && normalizedProjectId !== 'new'
+      ? normalizedProjectId
+      : requestedProgramModule
+        ? buildProgramProposalProjectId(requestedProgramModule)
+        : normalizedProjectId;
 
   const payload = await requestApiJson<{ application?: PartnerProjectApplication | null }>(
     '/partner-project-applications/request',
@@ -4566,16 +5100,15 @@ export async function submitPartnerProgramProposal(
 
   await updatePartnerProjectApplicationCache(payload.application);
 
-  // Notify admin (and confirm to partner) about the new proposal. Best-effort; don't fail submission on notify errors.
-  try {
-    await notifyAdminAboutPartnerProjectJoin(payload.application.projectId, {
-      id: partnerUser.id,
-      name: partnerUser.name,
-      email: partnerUser.email || '',
-    }, payload.application);
-  } catch (e) {
-    console.warn('Failed to notify admin about partner proposal:', e);
-  }
+  // Notify admin (and confirm to partner) about the new proposal.
+  // Send messages asynchronously so proposal submission returns promptly.
+  void notifyAdminAboutPartnerProjectJoin(payload.application.projectId, {
+    id: partnerUser.id,
+    name: partnerUser.name,
+    email: partnerUser.email || '',
+  }, payload.application).catch(error => {
+    console.warn('Failed to notify admin about partner proposal:', error);
+  });
 
   return payload.application;
 }
@@ -4620,12 +5153,6 @@ export async function reviewPartnerProjectApplication(
   await updatePartnerProjectApplicationCache(payload.application);
   if (payload.project) {
     await updateApprovedProposalProjectCache(payload.project);
-  }
-
-  try {
-    await notifyPartnerAboutProjectJoinReview(payload.application, reviewedBy);
-  } catch (error) {
-    console.error('Error notifying partner about application review:', error);
   }
 
   return payload.application;

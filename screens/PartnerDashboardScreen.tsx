@@ -94,13 +94,9 @@ import {
 
 import {
 
-  getBarangaysByCity,
-
   getCitiesByRegion,
 
   PHRegions,
-
-  type PHBarangay,
 
   type PHCityMunicipality,
 
@@ -236,10 +232,6 @@ function getDisplayProjectStatus(project: Project): 'Planned' | 'Active' | 'Comp
 
 const REPORT_TYPE_OPTIONS: PartnerReportType[] = ['General', 'Medical', 'Logistics'];
 
-const FEATURED_PROGRAM_MODULES: AdvocacyFocus[] = ['Nutrition', 'Education', 'Livelihood', 'Disaster'];
-
-
-
 function getProjectStatusColor(status: ReturnType<typeof getDisplayProjectStatus>) {
 
   switch (status) {
@@ -322,6 +314,29 @@ function getProgramModuleDescription(module: AdvocacyFocus): string {
 
   }
 
+}
+
+function getProgramModule(program: Project): AdvocacyFocus | null {
+  const value = String(program.category || program.programModule || '').trim();
+  return value === 'Nutrition' || value === 'Education' || value === 'Livelihood' || value === 'Disaster'
+    ? value
+    : inferProgramModuleFromText(`${program.id || ''} ${program.title || ''}`);
+}
+
+function inferProgramModuleFromText(value: string): AdvocacyFocus | null {
+  const text = value.toLowerCase();
+  if (text.includes('nutrition')) return 'Nutrition';
+  if (text.includes('education')) return 'Education';
+  if (text.includes('livelihood')) return 'Livelihood';
+  if (text.includes('disaster')) return 'Disaster';
+  return null;
+}
+
+function getProgramModuleIcon(module: AdvocacyFocus): keyof typeof MaterialIcons.glyphMap {
+  if (module === 'Nutrition') return 'restaurant';
+  if (module === 'Education') return 'school';
+  if (module === 'Livelihood') return 'work';
+  return 'warning';
 }
 
 
@@ -439,6 +454,8 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
   const [partners, setPartners] = useState<Partner[]>([]);
 
   const [projects, setProjects] = useState<Project[]>([]);
+  
+  const [programs, setPrograms] = useState<Project[]>([]);
 
   const [partnerApplications, setPartnerApplications] = useState<PartnerProjectApplication[]>([]);
 
@@ -446,11 +463,13 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
   const [reportForm, setReportForm] = useState<ReportFormState>(createEmptyReportForm());
 
-  const [proposalForm, setProposalForm] = useState<ProposalFormState>(createEmptyProposalForm(FEATURED_PROGRAM_MODULES[0]));
+  const [proposalForm, setProposalForm] = useState<ProposalFormState>(createEmptyProposalForm('Disaster'));
 
   const [showProposalModal, setShowProposalModal] = useState(false);
 
   const [activeProposalModule, setActiveProposalModule] = useState<AdvocacyFocus | null>(null);
+
+  const [activeProposalProgramId, setActiveProposalProgramId] = useState<string | null>(null);
 
   const [planningCalendars, setPlanningCalendars] = useState<AdminPlanningCalendar[]>([]);
 
@@ -470,11 +489,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
   const [selectedCityCode, setSelectedCityCode] = useState('');
 
-  const [selectedBarangay, setSelectedBarangay] = useState('');
-
   const [filteredCities, setFilteredCities] = useState<PHCityMunicipality[]>([]);
-
-  const [filteredBarangays, setFilteredBarangays] = useState<PHBarangay[]>([]);
 
   const [showProposalDatePicker, setShowProposalDatePicker] = useState(false);
 
@@ -539,6 +554,8 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
       setPartners(ownedPartners);
 
       setProjects(snapshot.projects);
+      
+      setPrograms(snapshot.programs || []);
 
       setPartnerApplications(
 
@@ -616,7 +633,56 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
   );
 
+  const availableProgramCards = useMemo(() => {
+    const byId = new Map<
+      string,
+      {
+        id: string;
+        title: string;
+        module: AdvocacyFocus;
+        description: string;
+        accent: string;
+      }
+    >();
 
+    const programSources = [
+      ...programs,
+      ...projects.filter(project => {
+        const title = String(project.title || '').toLowerCase();
+        const id = String(project.id || '').toLowerCase();
+        return (
+          !project.isEvent &&
+          !project.parentProjectId &&
+          !id.startsWith('project-proposal-') &&
+          title.includes('program') &&
+          !title.includes('proposal')
+        );
+      }),
+    ];
+
+    programSources.forEach(program => {
+      const id = String(program.id || '').trim();
+      const module = getProgramModule(program);
+      if (!id || !module || program.isEvent || program.parentProjectId || byId.has(id)) {
+        return;
+      }
+
+      byId.set(id, {
+        id,
+        title: program.title || module,
+        module,
+        description: program.description || getProgramModuleDescription(module),
+        accent: program.color || getProgramModuleColor(module),
+      });
+    });
+
+    return Array.from(byId.values()).sort((left, right) => left.title.localeCompare(right.title));
+  }, [programs, projects]);
+
+  const availableProgramModules = useMemo<AdvocacyFocus[]>(
+    () => Array.from(new Set(availableProgramCards.map(card => card.module))),
+    [availableProgramCards]
+  );
 
   const approvedPartner = useMemo(
 
@@ -772,11 +838,13 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
 
 
-  const openProposalForm = (module: AdvocacyFocus) => {
+  const openProposalForm = (module: AdvocacyFocus, programId?: string) => {
 
-    console.log('[PROPOSAL FORM] Opening form for module:', module);
+    console.log('[PROPOSAL FORM] Opening form for module:', module, 'program:', programId);
 
     setActiveProposalModule(module);
+
+    setActiveProposalProgramId(programId || null);
 
     setProposalForm(createEmptyProposalForm(module));
 
@@ -788,11 +856,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
     setSelectedCityCode('');
 
-    setSelectedBarangay('');
-
     setFilteredCities([]);
-
-    setFilteredBarangays([]);
 
     setShowProposalDatePicker(false);
 
@@ -814,7 +878,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
     const requestedModule = route?.params?.openProposalModule;
 
-    if (!requestedModule || !FEATURED_PROGRAM_MODULES.includes(requestedModule)) {
+    if (!requestedModule || !availableProgramModules.includes(requestedModule)) {
 
       return;
 
@@ -836,6 +900,8 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
     setActiveProposalModule(null);
 
+    setActiveProposalProgramId(null);
+
     setSelectedProposalSkillOption('');
 
     setCustomProposalSkill('');
@@ -844,11 +910,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
     setSelectedCityCode('');
 
-    setSelectedBarangay('');
-
     setFilteredCities([]);
-
-    setFilteredBarangays([]);
 
     setShowProposalDatePicker(false);
 
@@ -892,15 +954,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
       '';
 
-    const barangayName =
-
-      filteredBarangays.find(barangay => barangay.code === selectedBarangay)?.displayName ||
-
-      filteredBarangays.find(barangay => barangay.code === selectedBarangay)?.name ||
-
-      '';
-
-    const nextLocation = [barangayName, cityName, regionName].filter(Boolean).join(', ');
+    const nextLocation = [cityName, regionName].filter(Boolean).join(', ');
 
 
 
@@ -930,11 +984,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
   }, [
 
-    filteredBarangays,
-
     filteredCities,
-
-    selectedBarangay,
 
     selectedCityCode,
 
@@ -952,11 +1002,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
     setSelectedCityCode('');
 
-    setSelectedBarangay('');
-
     setFilteredCities(regionCode ? getCitiesByRegion(regionCode) : []);
-
-    setFilteredBarangays([]);
 
     updateProposalForm({ proposedLocation: '' });
 
@@ -967,10 +1013,6 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
   const handleSelectProposalCity = (cityCode: string) => {
 
     setSelectedCityCode(cityCode);
-
-    setSelectedBarangay('');
-
-    setFilteredBarangays(cityCode ? getBarangaysByCity(cityCode) : []);
 
     updateProposalForm({ proposedLocation: '' });
 
@@ -1184,7 +1226,14 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
     const selectedModule = proposalForm.requestedProgramModule;
 
-    const proposalProjectId = buildProgramProposalProjectId(selectedModule);
+    const targetProgramId =
+      activeProposalProgramId ||
+      availableProgramCards.find(card => card.module === selectedModule)?.id ||
+      buildProgramProposalProjectId(selectedModule);
+
+    const targetProgram = availableProgramCards.find(card => card.id === targetProgramId) || null;
+
+    const proposalProjectId = targetProgramId;
 
     const volunteersNeeded = Number(proposalForm.proposedVolunteersNeeded);
 
@@ -1210,11 +1259,11 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
       expectedDeliverables: proposalForm.expectedDeliverables.trim(),
 
-      targetProjectId: undefined,
+      targetProjectId: targetProgramId,
 
-      targetProjectTitle: undefined,
+      targetProjectTitle: targetProgram?.title,
 
-      targetProjectDescription: undefined,
+      targetProjectDescription: targetProgram?.description,
 
       targetProjectAddress: undefined,
 
@@ -1823,7 +1872,14 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
         </Text>
 
-        {FEATURED_PROGRAM_MODULES.map(module => {
+        {availableProgramCards.length === 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.emptyText}>No programs available yet. Programs will appear here once created by admin.</Text>
+          </View>
+        ) : null}
+
+        {availableProgramCards.map(programCard => {
+          const module = programCard.module;
 
           const application = programApplicationByModule.get(module);
 
@@ -1845,19 +1901,19 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
             <View
 
-              key={module}
+              key={programCard.id}
 
-              style={[styles.card, styles.programCard, { borderColor: getProgramModuleColor(module) }]}
+              style={[styles.card, styles.programCard, { borderColor: programCard.accent }]}
 
             >
 
               <View style={styles.programCardHeader}>
 
-                <View style={[styles.programIcon, { backgroundColor: getProgramModuleColor(module) }]}> 
+                <View style={[styles.programIcon, { backgroundColor: programCard.accent }]}> 
 
                   <MaterialIcons
 
-                    name={module === 'Nutrition' ? 'restaurant' : module === 'Education' ? 'school' : module === 'Livelihood' ? 'work' : 'warning'}
+                    name={getProgramModuleIcon(module)}
 
                     size={20}
 
@@ -1869,13 +1925,13 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
                 <View style={{ flex: 1 }}>
 
-                  <Text style={styles.cardTitle}>{module}</Text>
+                  <Text style={styles.cardTitle}>{programCard.title}</Text>
 
-                  <Text style={styles.cardMeta}>{getProgramModuleDescription(module)}</Text>
+                  <Text style={styles.cardMeta}>{programCard.description}</Text>
 
                 </View>
 
-                <View style={[styles.statusBadge, { backgroundColor: isRejected ? '#dc2626' : isApproved ? '#166534' : isPending ? '#d97706' : getProgramModuleColor(module) }]}>
+                <View style={[styles.statusBadge, { backgroundColor: isRejected ? '#dc2626' : isApproved ? '#166534' : isPending ? '#d97706' : programCard.accent }]}>
 
                   <Text style={styles.statusBadgeText}>{isApproved ? 'Approved' : isPending ? 'Pending' : isRejected ? 'Rejected' : 'Open'}</Text>
 
@@ -1899,7 +1955,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
                 style={[styles.primaryButton, actionProjectId === proposalProjectId && styles.timeButtonDisabled]}
 
-                onPress={() => openProposalForm(module)}
+                onPress={() => openProposalForm(module, programCard.id)}
 
                 disabled={actionProjectId === proposalProjectId}
 
@@ -2001,7 +2057,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
                   <View style={styles.selectorGrid}>
 
-                    {FEATURED_PROGRAM_MODULES.map(module => {
+                    {availableProgramModules.map(module => {
 
                       const selected = proposalForm.requestedProgramModule === module;
 
@@ -2024,6 +2080,10 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
                           onPress={() => {
 
                             setActiveProposalModule(module);
+
+                            setActiveProposalProgramId(
+                              availableProgramCards.find(card => card.module === module)?.id || null
+                            );
 
                             updateProposalForm({ requestedProgramModule: module });
 
@@ -2349,49 +2409,9 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
                   </View>
 
-                  <View style={styles.pickerWrap}>
-
-                    <Text style={styles.pickerLabel}>Barangay</Text>
-
-                    <View style={styles.pickerBorder}>
-
-                      <Picker
-
-                        selectedValue={selectedBarangay}
-
-                        onValueChange={value => setSelectedBarangay(String(value || ''))}
-
-                        enabled={selectedCityCode !== ''}
-
-                        style={styles.picker}
-
-                      >
-
-                        <Picker.Item label="Select Barangay..." value="" color="#94a3b8" />
-
-                        {filteredBarangays.map(barangay => (
-
-                          <Picker.Item
-
-                            key={barangay.code}
-
-                            label={barangay.displayName || barangay.name}
-
-                            value={barangay.code}
-
-                          />
-
-                        ))}
-
-                      </Picker>
-
-                    </View>
-
-                  </View>
-
                   <Text style={styles.locationPreviewText}>
 
-                    {proposalForm.proposedLocation || 'Choose region, city/municipality, and barangay to set the place.'}
+                    {proposalForm.proposedLocation || 'Choose region and city/municipality to set the place.'}
 
                   </Text>
 
@@ -3850,6 +3870,16 @@ const styles = StyleSheet.create({
   dateInput: {
 
     flex: 1,
+
+  },
+
+  emptyText: {
+
+    color: '#64748b',
+
+    fontSize: 13,
+
+    lineHeight: 20,
 
   },
 

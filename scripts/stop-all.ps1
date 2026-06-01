@@ -57,8 +57,39 @@ while ($waited -lt 8) {
   $waited++
 }
 
+# ── 5. Clear Python cache to ensure fresh code loads ───────────────────────
+Write-Host "  Clearing Python cache..."
+$pycacheDir = Join-Path $projectRoot 'backend\__pycache__'
+if (Test-Path $pycacheDir) {
+  Remove-Item -Path $pycacheDir -Recurse -Force -ErrorAction SilentlyContinue
+  Write-Host "  Python cache cleared"
+}
+
+# ── 6. Clear mobile app cache (Expo) ───────────────────────────────────────
+Write-Host "  Clearing mobile app cache..."
+$expoDir = Join-Path $projectRoot '.expo'
+if (Test-Path $expoDir) {
+  Remove-Item -Path $expoDir -Recurse -Force -ErrorAction SilentlyContinue
+  Write-Host "  Mobile app cache cleared"
+}
+
+# Clear Metro bundler cache
+$metroCache = Join-Path $env:TEMP 'metro-*'
+Get-ChildItem -Path $env:TEMP -Filter 'metro-*' -ErrorAction SilentlyContinue | ForEach-Object {
+  Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+}
+Write-Host "  Metro bundler cache cleared"
+
+# Clear React Native cache
+$rnCache = Join-Path $env:TEMP 'react-*'
+Get-ChildItem -Path $env:TEMP -Filter 'react-*' -ErrorAction SilentlyContinue | ForEach-Object {
+  Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+}
+Write-Host "  React Native cache cleared"
+
 Write-Host ""
 Write-Host "  All services stopped. Ports 8000 and 8081 are free."
+Write-Host "  All caches cleared (Python, Expo, Metro, React Native)"
 Write-Host ""
 Write-Host "==========================================="
 Write-Host ""

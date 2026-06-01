@@ -32,8 +32,6 @@ const PROGRAM_IMAGE_BY_CATEGORY: Record<Project['category'], ImageSourcePropType
   Disaster: require('../assets/programs/mingo-relief.jpg'),
 };
 
-const DEFAULT_PROGRAMS: Project['category'][] = ['Livelihood', 'Education', 'Nutrition'];
-
 type ProgramGroup = {
   id: string;
   title: string;
@@ -62,8 +60,23 @@ const DEFAULT_PROGRAM_VISUAL: ProgramVisual = {
   icon: 'eco',
 };
 
-function getProjectProgramId(project: Project): string {
-  return project.programModule || project.category;
+function inferProgramTrackFocus(track: ProgramTrack): Project['category'] | null {
+  const text = `${track.id || ''} ${track.title || ''}`.toLowerCase();
+  if (text.includes('education')) return 'Education';
+  if (text.includes('livelihood')) return 'Livelihood';
+  if (text.includes('nutrition')) return 'Nutrition';
+  if (text.includes('disaster')) return 'Disaster';
+  return null;
+}
+
+function getProjectProgramId(project: Project, programTracks: ProgramTrack[] = []): string {
+  if (project.parentProjectId) {
+    return project.parentProjectId;
+  }
+
+  const projectFocus = project.programModule || project.category;
+  const matchingTrack = programTracks.find(track => inferProgramTrackFocus(track) === projectFocus);
+  return matchingTrack?.id || projectFocus;
 }
 
 function getProjectImageSource(project: Project): ImageSourcePropType {
@@ -88,7 +101,15 @@ function sortByDate(left: Project, right: Project): number {
 }
 
 function getProgramVisual(programId?: string): ProgramVisual {
-  return PROGRAM_VISUALS[programId as Project['category']] || DEFAULT_PROGRAM_VISUAL;
+  const directVisual = PROGRAM_VISUALS[programId as Project['category']];
+  if (directVisual) return directVisual;
+
+  const normalized = String(programId || '').toLowerCase();
+  if (normalized.includes('education')) return PROGRAM_VISUALS.Education;
+  if (normalized.includes('livelihood')) return PROGRAM_VISUALS.Livelihood;
+  if (normalized.includes('nutrition')) return PROGRAM_VISUALS.Nutrition;
+  if (normalized.includes('disaster')) return PROGRAM_VISUALS.Disaster;
+  return DEFAULT_PROGRAM_VISUAL;
 }
 
 function getEventStatusLabel(match?: VolunteerProjectMatch, joinedByUser?: boolean): string {
@@ -102,7 +123,7 @@ function getEventStatusLabel(match?: VolunteerProjectMatch, joinedByUser?: boole
 export default function VolunteerProjectsScreen({ navigation }: { navigation: any }) {
   const { user } = useAuth();
   const [records, setRecords] = useState<Project[]>([]);
-  const [programTracks, setProgramTracks] = useState<ProgramTrack[]>([]);
+  const [programs, setPrograms] = useState<ProgramTrack[]>([]);
   const [volunteerMatches, setVolunteerMatches] = useState<VolunteerProjectMatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null);
@@ -123,17 +144,19 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
         console.log('[VolunteerProjectsScreen] Starting data load for user:', user.id);
         const snapshot = await getProjectsScreenSnapshot(user, ['projects', 'programTracks', 'volunteerProfile', 'volunteerMatches']);
         const snapshotRecords = snapshot.projects || [];
+        const snapshotPrograms = snapshot.programTracks || [];
         const eventCount = snapshotRecords.filter(project => project.isEvent).length;
         console.log('[VolunteerProjectsScreen] Snapshot received:', {
           recordCount: snapshotRecords.length,
           eventCount,
-          trackCount: snapshot.programTracks?.length,
+          programCount: snapshotPrograms.length,
+          projectCount: snapshotRecords.filter(p => !p.isEvent && p.id.startsWith('project-proposal-')).length,
           matchCount: snapshot.volunteerMatches?.length,
           profile: snapshot.volunteerProfile?.id || 'none',
         });
 
         setRecords(snapshotRecords);
-        setProgramTracks(snapshot.programTracks || []);
+        setPrograms(snapshotPrograms);
         if (Array.isArray(snapshot.volunteerMatches)) {
           setVolunteerMatches(snapshot.volunteerMatches);
         } else if (snapshot.volunteerProfile?.id) {
@@ -154,7 +177,7 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
 
       console.error('[VolunteerProjectsScreen] loadData error:', error);
       setRecords([]);
-      setProgramTracks([]);
+      setPrograms([]);
       setVolunteerMatches([]);
     } finally {
       if (shouldShowBlockingLoader) {
@@ -165,97 +188,106 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
 
   useFocusEffect(useCallback(() => {
     void loadData();
-    return subscribeToStorageChanges(['projects', 'events', 'programTracks', 'volunteerMatches', 'volunteerProjectJoins'], loadData);
+    return subscribeToStorageChanges(['projects', 'events', 'programs', 'volunteerMatches', 'volunteerProjectJoins'], loadData);
   }, [loadData]));
 
-  const programs = useMemo<ProgramGroup[]>(() => {
+  const projectsOnly = useMemo(() => {
+    // Only count actual projects, not top-level program records.
+    const programIds = new Set(programs.map(program => String(program.id).trim()));
+    return records.filter(project => {
+      if (project.isEvent) return false;
+      if (project.parentProjectId) return true;
+      if (programIds.has(String(project.id).trim())) return false;
+      return Boolean(getProjectProgramId(project, programs));
+    });
+  }, [programs, records]);
+
+  const programGroups = useMemo<ProgramGroup[]>(() => {
     const programMap = new Map<string, ProgramGroup>();
 
-    DEFAULT_PROGRAMS.forEach(programId => {
-      programMap.set(programId, {
-        id: programId,
-        title: programId,
+    // Use programs directly from the programs table
+    programs.forEach(program => {
+      programMap.set(program.id, {
+        id: program.id,
+        title: program.title,
+        description: program.description,
+        context: '', // Programs from database don't have context field
         projectCount: 0,
         eventCount: 0,
       });
     });
 
-    programTracks
-      .filter(track => track.isActive !== false)
-      .forEach(track => {
-        programMap.set(track.id, {
-          id: track.id,
-          title: track.title || track.id,
-          description: track.description,
-          context: track.context,
-          projectCount: 0,
-          eventCount: 0,
-        });
-      });
-
-    const projectsOnly = records.filter(project => !project.isEvent);
     const eventsOnly = records.filter(project => project.isEvent);
 
+
+
     projectsOnly.forEach(project => {
-      const programId = getProjectProgramId(project);
-      const current = programMap.get(programId) || {
-        id: programId,
-        title: programId,
-        projectCount: 0,
-        eventCount: 0,
-      };
-      current.projectCount += 1;
-      programMap.set(programId, current);
+      const programId = getProjectProgramId(project, programs);
+      if (!programId) {
+        return;
+      }
+      const current = programMap.get(programId);
+      
+      // Only count projects that belong to existing programs
+      if (current) {
+        current.projectCount += 1;
+        programMap.set(programId, current);
+      }
     });
 
     eventsOnly.forEach(event => {
+      // Find the parent project first
       const parentProject = event.parentProjectId
         ? projectsOnly.find(project => project.id === event.parentProjectId)
         : null;
-      const programId = parentProject ? getProjectProgramId(parentProject) : getProjectProgramId(event);
-      const current = programMap.get(programId) || {
-        id: programId,
-        title: programId,
-        projectCount: 0,
-        eventCount: 0,
-      };
-      current.eventCount += 1;
-      programMap.set(programId, current);
+      
+      // If event has a parent project, use that project's parent program
+      // Otherwise, use the event's parentProjectId directly (in case it points to a program)
+      const programId = parentProject ? getProjectProgramId(parentProject, programs) : event.parentProjectId;
+      if (!programId) {
+        return;
+      }
+      const current = programMap.get(programId);
+      
+      // Only count events that belong to existing programs
+      if (current) {
+        current.eventCount += 1;
+        programMap.set(programId, current);
+      }
     });
 
     return Array.from(programMap.values())
-      .filter(program => program.projectCount > 0 || program.eventCount > 0)
       .sort((left, right) => left.title.localeCompare(right.title));
-  }, [programTracks, records]);
+  }, [programs, projectsOnly, records]);
 
   const selectedProgram = useMemo(
-    () => programs.find(program => program.id === selectedProgramId) || null,
-    [programs, selectedProgramId]
+    () => programGroups.find(program => program.id === selectedProgramId) || null,
+    [programGroups, selectedProgramId]
   );
 
   const selectedProgramDetails = useMemo(
-    () => programs.find(program => program.id === selectedProgramDetailsId) || null,
-    [programs, selectedProgramDetailsId]
+    () => programGroups.find(program => program.id === selectedProgramDetailsId) || null,
+    [programGroups, selectedProgramDetailsId]
   );
 
   const projectsForSelectedProgram = useMemo(
     () =>
       selectedProgramId
-        ? records
-            .filter(project => !project.isEvent && getProjectProgramId(project) === selectedProgramId)
+        ? projectsOnly
+            .filter(project => !project.isEvent && getProjectProgramId(project, programs) === selectedProgramId)
             .sort(sortByDate)
         : [],
-    [records, selectedProgramId]
+    [programs, projectsOnly, selectedProgramId]
   );
 
   const projectsForProgramDetails = useMemo(
     () =>
       selectedProgramDetailsId
-        ? records
-            .filter(project => !project.isEvent && getProjectProgramId(project) === selectedProgramDetailsId)
+        ? projectsOnly
+            .filter(project => !project.isEvent && getProjectProgramId(project, programs) === selectedProgramDetailsId)
             .sort(sortByDate)
         : [],
-    [records, selectedProgramDetailsId]
+    [programs, projectsOnly, selectedProgramDetailsId]
   );
 
   const selectedProject = useMemo(
@@ -284,13 +316,13 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
     const joinedCount = volunteerMatches.filter(match => match.status === 'Matched' || match.status === 'Completed').length;
 
     return {
-      programCount: programs.length,
-      projectCount: records.filter(project => !project.isEvent).length,
+      programCount: programGroups.length,
+      projectCount: projectsOnly.length,
       eventCount: eventRecords.length,
       pendingCount,
       joinedCount,
     };
-  }, [programs.length, records, volunteerMatches]);
+  }, [programGroups.length, projectsOnly.length, records, volunteerMatches]);
 
   const nextOpenEvent = useMemo(() => {
     const now = Date.now();
@@ -341,7 +373,7 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
         return;
       }
 
-      const firstProgram = programs[0];
+      const firstProgram = programGroups[0];
       if (firstProgram) {
         setSelectedProgramId(firstProgram.id);
         setSelectedProjectId(null);
@@ -353,13 +385,13 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
       return;
     }
 
-    const resolvedProgramId = selectedProgramId || programs[0]?.id || null;
+    const resolvedProgramId = selectedProgramId || programGroups[0]?.id || null;
     if (!resolvedProgramId) {
       return;
     }
 
-    const firstProjectForProgram = records
-      .filter(project => !project.isEvent && getProjectProgramId(project) === resolvedProgramId)
+    const firstProjectForProgram = projectsOnly
+      .filter(project => !project.isEvent && getProjectProgramId(project, programs) === resolvedProgramId)
       .sort(sortByDate)[0];
 
     setSelectedProgramId(resolvedProgramId);
@@ -536,7 +568,7 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
             const parentProject = nextOpenEvent.parentProjectId
               ? records.find(project => project.id === nextOpenEvent.parentProjectId)
               : null;
-            const programId = parentProject ? getProjectProgramId(parentProject) : getProjectProgramId(nextOpenEvent);
+            const programId = parentProject ? getProjectProgramId(parentProject, programs) : getProjectProgramId(nextOpenEvent, programs);
             setSelectedProgramId(programId);
             setSelectedProjectId(parentProject?.id || null);
           }}
@@ -557,8 +589,8 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
             <Text style={styles.screenTitle}>Explore Programs</Text>
             <Text style={styles.screenSubtitle}>Start with a cause area, then choose a project and event.</Text>
           </View>
-          {programs.length ? (
-            programs.map(program => {
+          {programGroups.length ? (
+            programGroups.map(program => {
               const visual = getProgramVisual(program.id);
               return (
                 <TouchableOpacity
@@ -605,12 +637,12 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
         <>
           <View style={styles.sectionHeader}>
             <Text style={styles.screenTitle}>{selectedProgram.title}</Text>
-            <Text style={styles.screenSubtitle}>Select a project to see event schedules and join options.</Text>
+            <Text style={styles.screenSubtitle}>All available projects to contribute to.</Text>
           </View>
           {projectsForSelectedProgram.length ? (
             projectsForSelectedProgram.map(project => {
               const eventCount = records.filter(event => event.isEvent && event.parentProjectId === project.id).length;
-              const visual = getProgramVisual(getProjectProgramId(project));
+              const visual = getProgramVisual(getProjectProgramId(project, programs));
               return (
                 <TouchableOpacity
                   key={project.id}
@@ -644,7 +676,7 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
             })
           ) : (
             <View style={styles.centerContent}>
-              <Text style={styles.loadingText}>No projects available for this program.</Text>
+              <Text style={styles.loadingText}>No projects available right now.</Text>
             </View>
           )}
         </>

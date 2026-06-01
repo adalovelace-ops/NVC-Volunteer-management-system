@@ -46,11 +46,7 @@ import {
 
   composePhilippineAddress,
 
-  getBarangaysByCity,
-
   getCitiesByRegion,
-
-  PHBarangay,
 
   PHCityMunicipality,
 
@@ -246,6 +242,44 @@ type ProposalChatItem = {
 
 type ChatMessage = Message | ProjectGroupMessage;
 
+function getProposalReviewCardKey(message: ChatMessage): string | null {
+  if (!message.content?.startsWith(PROPOSAL_PREFIX)) {
+    return null;
+  }
+
+  try {
+    const data = JSON.parse(message.content.replace(PROPOSAL_PREFIX, ''));
+    const status = String(data.status || '').trim();
+    const applicationId = String(data.applicationId || data.application?.id || '').trim();
+    const reviewedAt = String(data.reviewedAt || '').trim();
+    const reviewedBy = String(data.reviewedBy || '').trim();
+    if (!applicationId || !reviewedAt || !reviewedBy || !['Approved', 'Rejected'].includes(status)) {
+      return null;
+    }
+
+    return [applicationId, status, reviewedAt, reviewedBy, message.senderId].join(':');
+  } catch (_) {
+    return null;
+  }
+}
+
+function dedupeProposalReviewCards(messagesToDedupe: ChatMessage[]): ChatMessage[] {
+  const seenReviewCards = new Set<string>();
+  return messagesToDedupe.filter(message => {
+    const reviewCardKey = getProposalReviewCardKey(message);
+    if (!reviewCardKey) {
+      return true;
+    }
+
+    if (seenReviewCards.has(reviewCardKey)) {
+      return false;
+    }
+
+    seenReviewCards.add(reviewCardKey);
+    return true;
+  });
+}
+
 
 
 function upsertChatMessage(current: ChatMessage[], incoming: ChatMessage): ChatMessage[] {
@@ -254,69 +288,9 @@ function upsertChatMessage(current: ChatMessage[], incoming: ChatMessage): ChatM
 
   byId.set(incoming.id, incoming);
 
-  const result = Array.from(byId.values());
+  const result = dedupeProposalReviewCards(Array.from(byId.values()));
 
-  // Deduplicate proposal cards by application ID (keep only the latest card per app regardless of status)
-
-  const latestCardsByAppId = new Map<string, ChatMessage>();
-
-  result.forEach(msg => {
-
-    if (msg.content?.startsWith(PROPOSAL_PREFIX)) {
-
-      try {
-
-        const data = JSON.parse(msg.content.replace(PROPOSAL_PREFIX, ''));
-
-        const appId = data.applicationId || data.application?.id;
-
-        if (appId) {
-
-          const existing = latestCardsByAppId.get(appId);
-
-          if (!existing || new Date(msg.timestamp).getTime() > new Date(existing.timestamp).getTime()) {
-
-            latestCardsByAppId.set(appId, msg);
-
-          }
-
-        }
-
-      } catch (_) {}
-
-    }
-
-  });
-
-  // Remove older cards for the same app if we have duplicates
-
-  const finalResult = result.filter(msg => {
-
-    if (msg.content?.startsWith(PROPOSAL_PREFIX)) {
-
-      try {
-
-        const data = JSON.parse(msg.content.replace(PROPOSAL_PREFIX, ''));
-
-        const appId = data.applicationId || data.application?.id;
-
-        if (appId) {
-
-          const latestForApp = latestCardsByAppId.get(appId);
-
-          return latestForApp?.id === msg.id;
-
-        }
-
-      } catch (_) {}
-
-    }
-
-    return true;
-
-  });
-
-  return finalResult.sort(
+  return result.sort(
 
     (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime()
 
@@ -408,6 +382,18 @@ type ProposalFormState = {
 
 };
 
+const createEmptyProposalForm = (title = ''): ProposalFormState => ({
+  proposedTitle: title,
+  proposedDescription: '',
+  proposedStartDate: '',
+  proposedEndDate: '',
+  proposedLocation: '',
+  proposedVolunteersNeeded: '',
+  communityNeed: '',
+  expectedDeliverables: '',
+  photoAttachment: '',
+});
+
 
 
 function getSidebarSectionMeta(section: SidebarSection): {
@@ -467,6 +453,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   const {
 
     projectId: requestedProjectId,
+
+    conversationUserId,
 
     newProposalModule,
 
@@ -561,27 +549,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
 
-  const [proposalForm, setProposalForm] = useState<ProposalFormState>({
-
-    proposedTitle: newProposalTitle || '',
-
-    proposedDescription: '',
-
-    proposedStartDate: '',
-
-    proposedEndDate: '',
-
-    proposedLocation: '',
-
-    proposedVolunteersNeeded: '',
-
-    communityNeed: '',
-
-    expectedDeliverables: '',
-
-    photoAttachment: '',
-
-  });
+  const [proposalForm, setProposalForm] = useState<ProposalFormState>(() =>
+    createEmptyProposalForm(newProposalTitle || '')
+  );
 
 
 
@@ -595,13 +565,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   const [filteredCities, setFilteredCities] = useState<PHCityMunicipality[]>([]);
 
-  const [filteredBarangays, setFilteredBarangays] = useState<PHBarangay[]>([]);
-
   const [locRegion, setLocRegion] = useState('');
 
   const [locCity, setLocCity] = useState('');
-
-  const [locBarangay, setLocBarangay] = useState('');
 
 
 
@@ -914,7 +880,10 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
       setProposalChats(
 
-        (user.role === 'admin' ? directPartnerApplications : [])
+        (user.role === 'admin' 
+          ? directPartnerApplications 
+          : (partnerApplicationsResult.status === 'fulfilled' ? partnerApplicationsResult.value : [])
+        )
 
           .sort((left, right) => {
 
@@ -1014,7 +983,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
         const chat = await getConversation(user.id, selectedUser.id);
 
-        setMessages(chat);
+        setMessages(dedupeProposalReviewCards(chat));
 
         const unread = chat.filter(m => !m.read && m.recipientId === user.id);
 
@@ -1030,23 +999,23 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
         const chat = await getProjectGroupMessages(selectedProjectChat.project.id, user.id);
 
-        setMessages(chat);
+        setMessages(dedupeProposalReviewCards(chat));
 
       }
 
     } catch (e) {
 
-      if (selectedProjectChat && user.role === 'partner') {
+      // Gracefully handle errors - set empty messages and silently fail
+      setMessages([]);
 
-        setMessages([]);
+      // Only log for debugging if not a known API error
+      const errorMsg = e instanceof Error ? e.message : String(e);
 
-        return;
+      if (!errorMsg.includes('API request failed')) {
+
+        console.warn(`[CommunicationHub] Error loading messages: ${errorMsg}`);
 
       }
-
-
-
-      console.error(e);
 
     }
 
@@ -1276,6 +1245,26 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   }, [requestedProjectId, loading, navigation, projectChats]);
 
+
+
+  useEffect(() => {
+
+    if (!conversationUserId || loading) return;
+
+
+    const matchedUser = allUsers.find((candidate) => candidate.id === conversationUserId);
+    if (matchedUser) {
+      setSelectedUser(matchedUser);
+      setSelectedProjectChat(null);
+      setSelectedProposalApplication(null);
+      setProposalIntent(null);
+      setView('detail');
+    }
+
+
+    navigation.setParams({ conversationUserId: undefined });
+
+  }, [conversationUserId, loading, navigation, allUsers]);
 
 
   useEffect(() => {
@@ -1520,6 +1509,19 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   const handleRemoveProposalPhoto = () => {
     setProposalForm(current => ({ ...current, photoAttachment: '' }));
   };
+
+  const closeProposalComposer = () => {
+    setProposalForm(createEmptyProposalForm());
+    setProposalRevisionMode(false);
+    setProposalIntent(null);
+    navigation.setParams({
+      newProposalModule: undefined,
+      newProposalProjectId: undefined,
+      newProposalTitle: undefined,
+    });
+    setView(isWide ? 'detail' : 'sidebar');
+  };
+
   const closeActiveConversation = () => {
 
     setSelectedUser(null);
@@ -1529,6 +1531,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
     setSelectedProposalApplication(null);
 
     setProposalIntent(null);
+
+    setProposalRevisionMode(false);
 
     setShowConversationMenu(false);
 
@@ -1924,15 +1928,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
       });
 
+      closeProposalComposer();
+
       Alert.alert('Success', 'Your proposal has been submitted for review.');
-
-      setProposalForm(f => ({ ...f, photoAttachment: '' }));
-
-      setProposalRevisionMode(false);
-
-      setProposalIntent(null);
-
-      setView(isWide ? 'detail' : 'sidebar');
 
       void loadData();
 
@@ -1948,11 +1946,11 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   useEffect(() => {
 
-    const composed = composePhilippineAddress(locRegion, locCity, locBarangay);
+    const composed = composePhilippineAddress(locRegion, locCity, '');
 
     setProposalForm(f => ({ ...f, proposedLocation: composed }));
 
-  }, [locRegion, locCity, locBarangay]);
+  }, [locRegion, locCity]);
 
 
 
@@ -1994,6 +1992,12 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   const handleReview = async (app: PartnerProjectApplication, status: 'Approved' | 'Rejected', notes?: string) => {
 
+    console.log('=== PROPOSAL REVIEW DEBUG ===');
+    console.log('Application ID:', app.id);
+    console.log('Status:', status);
+    console.log('Notes:', notes);
+    console.log('User ID:', user?.id);
+
     const previousProposalChats = proposalChats;
 
     const previousSelectedProposalApplication = selectedProposalApplication;
@@ -2003,60 +2007,27 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
     try {
 
       // Call API first so we have the real result
-
+      console.log('Calling reviewPartnerProjectApplication API...');
       const reviewedApplication = await reviewPartnerProjectApplication(app.id, status, user?.id || '', notes);
+      console.log('API Response:', reviewedApplication);
+      console.log('Project ID:', reviewedApplication.projectId);
 
 
-
-      // Patch any existing proposal message cards in the chat so "Revision Sent" flips to the real status (only for Approved, not Rejected)
-
-      if (status === 'Approved') {
-
-        setMessages(curr =>
-
-          curr.map(m => {
-
-            if (!m.content?.startsWith(PROPOSAL_PREFIX)) return m;
-
-            try {
-
-              const data = JSON.parse(m.content.replace(PROPOSAL_PREFIX, ''));
-
-              if (data.applicationId === app.id || data.application?.id === app.id) {
-
-                const patched = {
-
-                  ...data,
-
-                  status,
-
-                  isRevision: false,
-
-                  projectId: reviewedApplication.projectId || data.projectId,
-
-                  application: { ...(data.application || {}), status, projectId: reviewedApplication.projectId },
-
-                };
-
-                return { ...m, content: `${PROPOSAL_PREFIX}${JSON.stringify(patched)}` };
-
+      // Keep reviewed proposals visible so rejected applications can still be referenced and approved history remains visible
+      setProposalChats(current =>
+        current.map(item =>
+          item.application.id === reviewedApplication.id
+            ? {
+                ...item,
+                application: reviewedApplication,
+                projectTitle:
+                  reviewedApplication.proposalDetails?.proposedTitle ||
+                  reviewedApplication.proposalDetails?.targetProjectTitle ||
+                  item.projectTitle,
               }
-
-            } catch (_) {}
-
-            return m;
-
-          })
-
-        );
-
-      }
-
-
-
-      // Remove from proposal sidebar
-
-      setProposalChats(current => current.filter(item => item.application.id !== app.id));
+            : item
+        )
+      );
 
       setReviewNotice(
 
@@ -2064,21 +2035,36 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
           ? { title: 'Proposal approved', message: 'The proposal was approved and a new project was created.', tone: 'success' }
 
-          : { title: 'Proposal rejected', message: 'The proposal was rejected and removed from the review queue.', tone: 'warning' }
+          : { title: 'Proposal rejected', message: 'The proposal was rejected and remains visible for revision.', tone: 'warning' }
 
       );
 
-      setSelectedProposalApplication(null);
+      if (selectedProposalApplication?.id === reviewedApplication.id) {
+        setSelectedProposalApplication(reviewedApplication);
+      }
+
+      if (
+        activeProposalCardData &&
+        (activeProposalCardData.applicationId === reviewedApplication.id || activeProposalCardData.id === reviewedApplication.id)
+      ) {
+        setActiveProposalCardData((prev: any) =>
+          prev
+            ? {
+                ...prev,
+                status: reviewedApplication.status,
+                reviewNotes: reviewedApplication.reviewNotes || prev.reviewNotes,
+              }
+            : prev
+        );
+      }
 
       setView(isWide ? 'detail' : 'sidebar');
 
-
-
-      // Reload so the new project appears in the list
-
-      await loadData();
+      // Reload data in background without blocking UI
+      console.log('Reloading data in background...');
+      void loadData();
       if (selectedUser) {
-        await loadMessages();
+        void loadMessages();
       }
 
 
@@ -2157,7 +2143,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   const filteredProjects = projectChats.filter(c => c.project.title.toLowerCase().includes(searchText.toLowerCase()));
 
-  const filteredProposals = pendingProposalChats.filter(c => c.application.partnerName.toLowerCase().includes(searchText.toLowerCase()) || c.projectTitle.toLowerCase().includes(searchText.toLowerCase()));
+  const filteredProposals = proposalChats.filter(c => c.application.partnerName.toLowerCase().includes(searchText.toLowerCase()) || c.projectTitle.toLowerCase().includes(searchText.toLowerCase()));
 
   const filteredUsers = allUsers.filter(u => u.name.toLowerCase().includes(searchText.toLowerCase()));
 
@@ -2789,8 +2775,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                           setLocCity('');
 
-                          setLocBarangay('');
-
                         }}
 
                         style={styles.picker}
@@ -2829,10 +2813,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                           setLocCity(city ? city.name : '');
 
-                          setFilteredBarangays(getBarangaysByCity(code));
-
-                          setLocBarangay('');
-
                         }}
 
                         style={styles.picker}
@@ -2842,36 +2822,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                         <Picker.Item label="Select City" value="" color="#94a3b8" />
 
                         {filteredCities.map(c => <Picker.Item key={c.code} label={c.name} value={c.code} />)}
-
-                      </Picker>
-
-                    </View>
-
-                  </View>
-
-
-
-                  <View style={styles.pickerWrap}>
-
-                    <Text style={styles.pickerLabel}>Barangay</Text>
-
-                    <View style={styles.pickerBorder}>
-
-                      <Picker
-
-                        selectedValue={locBarangay}
-
-                        enabled={!!selectedCityCode}
-
-                        onValueChange={(name) => setLocBarangay(name)}
-
-                        style={styles.picker}
-
-                      >
-
-                        <Picker.Item label="Select Barangay" value="" color="#94a3b8" />
-
-                        {filteredBarangays.map(b => <Picker.Item key={b.name} label={b.name} value={b.name} />)}
 
                       </Picker>
 
@@ -3631,31 +3581,22 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
               });
 
+              // Filter to only show the latest proposal card per application (no duplicates)
+              // Other messages (text, files) are preserved in order
               const filteredMessages = messages.filter(msg => {
-
                 if (msg.content?.startsWith(PROPOSAL_PREFIX)) {
-
                   try {
-
                     const data = JSON.parse(msg.content.replace(PROPOSAL_PREFIX, ''));
-
                     const appId = data.applicationId || data.application?.id;
-
                     if (appId) {
-
                       return latestCardsByAppId.get(appId)?.id === msg.id;
-
                     }
-
                   } catch (_) {}
-
                 }
-
                 return true;
-
               });
 
-              return filteredMessages.map((m, i) => {
+              return messages.map((m, i) => {
 
               const isOwn = m.senderId === user?.id;
 
@@ -7042,19 +6983,17 @@ const styles = StyleSheet.create({
 
     borderWidth: 1,
 
-    borderColor: '#e2e8f0',
+    borderColor: '#cbd5e1',
 
-    borderRadius: 12,
+    borderRadius: 10,
 
     paddingHorizontal: 12,
 
-    paddingVertical: 12,
-
-    fontSize: 14,
-
-    backgroundColor: '#f8fafc',
+    paddingVertical: 10,
 
     color: '#0f172a',
+
+    backgroundColor: '#ffffff',
 
   },
 

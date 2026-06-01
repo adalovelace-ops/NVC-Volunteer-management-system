@@ -1,0 +1,91 @@
+﻿
+  old_ProjectLifecycleScreen.txt:5263:                </Text>
+  old_ProjectLifecycleScreen.txt:5264:
+  old_ProjectLifecycleScreen.txt:5265:                <ScrollView
+  old_ProjectLifecycleScreen.txt:5266:                  horizontal
+  old_ProjectLifecycleScreen.txt:5267:                  
+showsHorizontalScrollIndicator={false}
+> old_ProjectLifecycleScreen.txt:5268:                  
+contentContainerStyle={styles.attendanceDatePickerRow}
+  old_ProjectLifecycleScreen.txt:5269:                >
+  old_ProjectLifecycleScreen.txt:5270:                  
+{availableAttendanceDateKeys.map(dateKey => (
+  old_ProjectLifecycleScreen.txt:5271:                    <TouchableOpacity
+  old_ProjectLifecycleScreen.txt:5272:                      key={dateKey}
+  old_ProjectLifecycleScreen.txt:5273:                      style={[
+  old_ProjectLifecycleScreen.txt:5274:                        
+styles.attendanceDateChip,
+  old_ProjectLifecycleScreen.txt:5275:                        
+resolvedAttendanceDateKey === dateKey && styles.attendanceDateChipActive,
+  old_ProjectLifecycleScreen.txt:5276:                      ]}
+  old_ProjectLifecycleScreen.txt:5277:                      onPress={() => 
+setSelectedAttendanceDateKey(dateKey)}
+  old_ProjectLifecycleScreen.txt:5278:                      
+activeOpacity={0.85}
+  old_ProjectLifecycleScreen.txt:5279:                    >
+  old_ProjectLifecycleScreen.txt:5280:                      <Text
+  old_ProjectLifecycleScreen.txt:5281:                        style={[
+  old_ProjectLifecycleScreen.txt:5282:                          
+styles.attendanceDateChipText,
+  old_ProjectLifecycleScreen.txt:5283:                          
+resolvedAttendanceDateKey === dateKey && styles.attendanceDateChipTextActive,
+  old_ProjectLifecycleScreen.txt:5284:                        ]}
+  old_ProjectLifecycleScreen.txt:5285:                      >
+  old_ProjectLifecycleScreen.txt:5286:                        {format(new 
+Date(`${dateKey}T00:00:00`), 'MMM d')}
+  old_ProjectLifecycleScreen.txt:5287:                      </Text>
+  old_ProjectLifecycleScreen.txt:5288:                    </TouchableOpacity>
+  old_ProjectLifecycleScreen.txt:5289:                  ))}
+  old_ProjectLifecycleScreen.txt:5290:                </ScrollView>
+  old_ProjectLifecycleScreen.txt:5291:
+  old_ProjectLifecycleScreen.txt:5292:                <View 
+style={styles.detailsQuickGrid}>
+  old_ProjectLifecycleScreen.txt:5293:                  <View 
+style={styles.detailsQuickCard}>
+  old_ProjectLifecycleScreen.txt:5294:                    <Text 
+style={styles.detailsQuickLabel}>Selected Day</Text>
+  old_ProjectLifecycleScreen.txt:5295:                    <Text 
+style={styles.detailsQuickValue}>
+  old_ProjectLifecycleScreen.txt:5296:                      {format(new 
+Date(`${resolvedAttendanceDateKey}T00:00:00`), 'MMM d')}
+  old_ProjectLifecycleScreen.txt:5297:                    </Text>
+  old_ProjectLifecycleScreen.txt:5298:                    <Text 
+style={styles.detailsQuickMeta}>Current day under review</Text>
+  old_ProjectLifecycleScreen.txt:8953:    marginTop: 14,
+  old_ProjectLifecycleScreen.txt:8954:    flexDirection: 'row',
+  old_ProjectLifecycleScreen.txt:8955:    flexWrap: 'wrap',
+  old_ProjectLifecycleScreen.txt:8956:    gap: 12,
+  old_ProjectLifecycleScreen.txt:8957:  },
+> old_ProjectLifecycleScreen.txt:8958:  attendanceDatePickerRow: {
+  old_ProjectLifecycleScreen.txt:8959:    gap: 8,
+  old_ProjectLifecycleScreen.txt:8960:    paddingBottom: 4,
+  old_ProjectLifecycleScreen.txt:8961:    paddingRight: 8,
+  old_ProjectLifecycleScreen.txt:8962:  },
+  old_ProjectLifecycleScreen.txt:8963:  attendanceDateChip: {
+  old_ProjectLifecycleScreen.txt:8964:    borderRadius: 999,
+  old_ProjectLifecycleScreen.txt:8965:    borderWidth: 1,
+  old_ProjectLifecycleScreen.txt:8966:    borderColor: '#9fb4a6',
+  old_ProjectLifecycleScreen.txt:8967:    backgroundColor: '#ffffff',
+  old_ProjectLifecycleScreen.txt:8968:    paddingHorizontal: 14,
+  old_ProjectLifecycleScreen.txt:8969:    paddingVertical: 9,
+  old_ProjectLifecycleScreen.txt:8970:  },
+  old_ProjectLifecycleScreen.txt:8971:  attendanceDateChipActive: {
+  old_ProjectLifecycleScreen.txt:8972:    backgroundColor: '#166534',
+  old_ProjectLifecycleScreen.txt:8973:    borderColor: '#166534',
+  old_ProjectLifecycleScreen.txt:8974:  },
+  old_ProjectLifecycleScreen.txt:8975:  attendanceDateChipText: {
+  old_ProjectLifecycleScreen.txt:8976:    fontSize: 12,
+  old_ProjectLifecycleScreen.txt:8977:    fontWeight: '700',
+  old_ProjectLifecycleScreen.txt:8978:    color: '#334155',
+  old_ProjectLifecycleScreen.txt:8979:  },
+  old_ProjectLifecycleScreen.txt:8980:  attendanceDateChipTextActive: {
+  old_ProjectLifecycleScreen.txt:8981:    color: '#ffffff',
+  old_ProjectLifecycleScreen.txt:8982:  },
+  old_ProjectLifecycleScreen.txt:8983:  attendanceCheckerList: {
+  old_ProjectLifecycleScreen.txt:8984:    gap: 12,
+  old_ProjectLifecycleScreen.txt:8985:    marginTop: 14,
+  old_ProjectLifecycleScreen.txt:8986:  },
+  old_ProjectLifecycleScreen.txt:8987:  attendanceCheckerCard: {
+  old_ProjectLifecycleScreen.txt:8988:    backgroundColor: '#ffffff',
+
+

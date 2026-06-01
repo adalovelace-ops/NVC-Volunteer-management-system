@@ -34,8 +34,7 @@ import type {
 import { navigateToAvailableRoute, debounce } from '../utils/navigation';
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
-
-const CORE_PROGRAM_MODULES = ['Livelihood', 'Education', 'Nutrition'] as const;
+import { formatProjectLocation } from '../utils/locationFormat';
 
 function formatLongDate(value?: string): string {
   if (!value) {
@@ -93,6 +92,41 @@ function getUpcomingProject(projects: Project[]): Project | null {
 function isVolunteerOpportunityOpen(project: Project): boolean {
   const status = getProjectDisplayStatus(project);
   return status !== 'Completed' && status !== 'Cancelled';
+}
+
+function inferProgramTrackFocus(track: ProgramTrack): Project['category'] | null {
+  const text = `${track.id || ''} ${track.title || ''}`.toLowerCase();
+  if (text.includes('education')) return 'Education';
+  if (text.includes('livelihood')) return 'Livelihood';
+  if (text.includes('nutrition')) return 'Nutrition';
+  if (text.includes('disaster')) return 'Disaster';
+  return null;
+}
+
+function getProjectProgramId(project: Project, programTracks: ProgramTrack[] = []): string {
+  if (project.parentProjectId) {
+    return project.parentProjectId;
+  }
+
+  const projectFocus = project.programModule || project.category;
+  const matchingTrack = programTracks.find(track => inferProgramTrackFocus(track) === projectFocus);
+  return matchingTrack?.id || projectFocus;
+}
+
+function isVolunteerProjectRecord(project: Project, programTracks: ProgramTrack[] = []): boolean {
+  if (project.isEvent) {
+    return false;
+  }
+
+  if (project.parentProjectId) {
+    return true;
+  }
+
+  if (String(project.id || '').startsWith('project-proposal-')) {
+    return true;
+  }
+
+  return false;
 }
 
 function isVolunteerAssignedToTask(
@@ -372,21 +406,21 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
     () =>
       projects.filter(
         project =>
-          !project.isEvent &&
+          isVolunteerProjectRecord(project, programTracks) &&
           (
             (project.joinedUserIds || []).includes(user?.id || '') ||
             (volunteerProfile ? project.volunteers.includes(volunteerProfile.id) : false) ||
             (volunteerProfile ? (project.internalTasks || []).some(task => isVolunteerAssignedToTask(task, volunteerProfile.id)) : false)
           )
       ),
-    [projects, user?.id, volunteerProfile]
+    [programTracks, projects, user?.id, volunteerProfile]
   );
 
   const availableProjects = useMemo(
     () =>
       projects.filter(
         project =>
-          !project.isEvent &&
+          isVolunteerProjectRecord(project, programTracks) &&
           isVolunteerOpportunityOpen(project) &&
           !(
             (project.joinedUserIds || []).includes(user?.id || '') ||
@@ -394,34 +428,24 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
             (volunteerProfile ? (project.internalTasks || []).some(task => isVolunteerAssignedToTask(task, volunteerProfile.id)) : false)
           )
       ),
-    [projects, user?.id, volunteerProfile]
+    [programTracks, projects, user?.id, volunteerProfile]
   );
   const programOverviewCards = useMemo(
     () => {
-      const trackMap = new Map<string, (typeof programTracks)[number] | undefined>();
+      // Only show programs that exist in the database (no hardcoded defaults)
+      const activeTracks = programTracks.filter(track => track.isActive !== false);
       
-      // Add core programs
-      CORE_PROGRAM_MODULES.forEach(module => {
-        trackMap.set(module, undefined);
-      });
-      
-      // Add custom program tracks
-      programTracks.forEach(track => {
-        if (track.isActive !== false) {
-          trackMap.set(track.id, track);
-        }
-      });
-      
-      return Array.from(trackMap.entries()).map(([programId, track]) => {
+      return activeTracks.map(track => {
+        // Count only actual projects that belong to this program.
         const moduleProjectCount = projects.filter(
           project =>
-            !project.isEvent &&
-            isVolunteerOpportunityOpen(project) &&
-            (project.programModule || project.category) === programId
+            isVolunteerProjectRecord(project, programTracks) &&
+            getProjectProgramId(project, programTracks) === track.id &&
+            isVolunteerOpportunityOpen(project)
         ).length;
 
         return {
-          label: track?.title || programId,
+          label: track.title,
           value: String(moduleProjectCount),
           meta: `${moduleProjectCount} project${moduleProjectCount === 1 ? '' : 's'} available`,
         };
@@ -527,7 +551,7 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
             details: [
               { label: 'Campaign', value: featuredEvent.programModule || featuredEvent.category },
               { label: 'Schedule', value: featuredEventDateRange },
-              { label: 'Venue', value: featuredEvent.location.address || 'Venue to be confirmed' },
+              { label: 'Venue', value: formatProjectLocation(featuredEvent) },
               {
                 label: 'Volunteer Slots',
                 value: `${featuredEvent.volunteers.length}/${featuredEvent.volunteersNeeded}`,
@@ -836,7 +860,7 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
           <View style={styles.metricCard}>
             <MaterialIcons name="timer" size={16} color="#bbf7d0" />
             <Text style={styles.metricValue}>{totalHours.toFixed(1)}</Text>
-            <Text style={styles.metricLabel}>Hours Served</Text>
+            <Text style={styles.metricLabel}>Beneficiary Served</Text>
           </View>
           <View style={styles.metricCard}>
             <MaterialIcons name="mark-email-unread" size={16} color="#bbf7d0" />

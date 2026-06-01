@@ -61,9 +61,6 @@ export default function ReportUploadModal({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [selectedProject, setSelectedProject] = useState<string | undefined>();
-  const [volunteerSummary, setVolunteerSummary] = useState('');
-  const [volunteerExperience, setVolunteerExperience] = useState('');
-  const [volunteerFollowUp, setVolunteerFollowUp] = useState('');
   const [collaborationFeedback, setCollaborationFeedback] = useState('');
   const [volunteerPraise, setVolunteerPraise] = useState('');
   const [gratitudeNote, setGratitudeNote] = useState('');
@@ -124,6 +121,7 @@ export default function ReportUploadModal({
         volunteerEventJoins: 0,
         tasksCompleted: 0,
         attendanceDays: 0,
+        hoursServed: 0,
         latestAttendancePhoto: '',
         assignedTaskTitles: [] as string[],
       };
@@ -141,6 +139,14 @@ export default function ReportUploadModal({
         .map(log => getLocalDateKey(log.attendanceConfirmedAt || log.timeIn || ''))
         .filter(Boolean)
     ).size;
+    const hoursServed = logsForProject.reduce((sum, log) => {
+      if (!log.timeIn || !log.timeOut) {
+        return sum;
+      }
+      const duration =
+        (new Date(log.timeOut).getTime() - new Date(log.timeIn).getTime()) / 3_600_000;
+      return sum + Math.max(0, duration);
+    }, 0);
     const latestPhotoLog = [...logsForProject]
       .sort(
         (left, right) =>
@@ -161,6 +167,7 @@ export default function ReportUploadModal({
       volunteerEventJoins: eventJoinCount,
       tasksCompleted: assignedTaskTitles.length,
       attendanceDays,
+      hoursServed,
       latestAttendancePhoto: latestPhotoLog?.attendancePhoto || latestPhotoLog?.completionPhoto || '',
       assignedTaskTitles,
     };
@@ -257,7 +264,7 @@ export default function ReportUploadModal({
     setTitle(
       isFieldOfficerForSelectedProject
         ? `${selectedEvent.title} Field Officer Report`
-        : `${selectedEvent.title} Volunteer Reflection`
+        : `${selectedEvent.title} Event Report`
     );
   }, [isFieldOfficerForSelectedProject, isVolunteer, projects, selectedProject, title, visible]);
 
@@ -304,12 +311,6 @@ export default function ReportUploadModal({
     }
 
     if (isVolunteer) {
-      if (!volunteerSummary.trim()) {
-        nextErrors.volunteerSummary = 'Tell the admin what happened during the event';
-      }
-      if (!volunteerExperience.trim()) {
-        nextErrors.volunteerExperience = 'Share your experience during the event';
-      }
       if (!description.trim()) {
         nextErrors.description = 'Add a short summary for the admin side';
       }
@@ -340,9 +341,6 @@ export default function ReportUploadModal({
     setTitle('');
     setDescription('');
     setSelectedProject(undefined);
-    setVolunteerSummary('');
-    setVolunteerExperience('');
-    setVolunteerFollowUp('');
     setCollaborationFeedback('');
     setVolunteerPraise('');
     setGratitudeNote('');
@@ -450,6 +448,7 @@ export default function ReportUploadModal({
 
     const volunteerMetricValues = isVolunteer
       ? {
+          volunteerHours: Number(volunteerMetrics.hoursServed.toFixed(1)),
           volunteerEventJoins: volunteerMetrics.volunteerEventJoins,
           verifiedAttendance: volunteerMetrics.attendanceDays,
           tasksCompleted: volunteerMetrics.tasksCompleted,
@@ -473,21 +472,10 @@ export default function ReportUploadModal({
 
     const volunteerNarrative = isVolunteer
       ? [
-          volunteerSummary.trim()
-            ? `What happened during the event:\n${volunteerSummary.trim()}`
-            : '',
           volunteerMetrics.assignedTaskTitles.length
             ? `Assigned event task:\n${volunteerMetrics.assignedTaskTitles.join(', ')}`
             : '',
-          volunteerExperience.trim()
-            ? `My experience:\n${volunteerExperience.trim()}`
-            : '',
-          volunteerFollowUp.trim()
-            ? `Suggestions or follow-up needs:\n${volunteerFollowUp.trim()}`
-            : '',
-          description.trim()
-            ? `Short admin summary:\n${description.trim()}`
-            : '',
+          description.trim() ? `Summary:\n${description.trim()}` : '',
         ]
           .filter(Boolean)
           .join('\n\n')
@@ -498,7 +486,7 @@ export default function ReportUploadModal({
       'id' | 'submittedAt' | 'submittedBy' | 'submitterName' | 'submitterRole' | 'viewedBy'
     > = {
       reportType,
-      title: title.trim() || `${selectedProjectData?.title || 'Event'} Volunteer Reflection`,
+      title: title.trim() || `${selectedProjectData?.title || 'Event'} Event Report`,
       description: volunteerNarrative,
       projectId: selectedProject,
       projectTitle: selectedProjectData?.title,
@@ -535,15 +523,13 @@ export default function ReportUploadModal({
     selectedPartnerProjectSummary,
     title,
     volunteerPraise,
-    volunteerExperience,
-    volunteerFollowUp,
     volunteerMetrics.assignedTaskTitles,
     volunteerMetrics.attendanceDays,
+    volunteerMetrics.hoursServed,
     volunteerMetrics.latestAttendancePhoto,
     volunteerMetrics.tasksCompleted,
     volunteerMetrics.volunteerEventJoins,
     selectedReportPhoto,
-    volunteerSummary,
     volunteerTimeLogs,
     onClose,
   ]);
@@ -770,7 +756,7 @@ export default function ReportUploadModal({
       <Text style={styles.label}>Title *</Text>
       <TextInput
         style={[styles.input, errors.title && styles.inputError]}
-        placeholder="Event volunteer reflection"
+        placeholder="Event report title"
         value={title}
         onChangeText={setTitle}
         placeholderTextColor="#cbd5e1"
@@ -791,21 +777,7 @@ export default function ReportUploadModal({
         </View>
       ) : null}
 
-      <Text style={styles.sectionTitle}>Volunteer Reflection</Text>
-
-      <Text style={styles.label}>What happened during the event? *</Text>
-      <TextInput
-        style={[styles.textArea, errors.volunteerSummary && styles.inputError]}
-        placeholder="Describe the activities, turnout, important moments, and how the event went."
-        value={volunteerSummary}
-        onChangeText={setVolunteerSummary}
-        multiline
-        numberOfLines={4}
-        placeholderTextColor="#cbd5e1"
-      />
-      {errors.volunteerSummary ? (
-        <Text style={styles.errorText}>{errors.volunteerSummary}</Text>
-      ) : null}
+      <Text style={styles.sectionTitle}>Event Summary</Text>
 
       <Text style={styles.label}>Assigned Event Task</Text>
       <View style={styles.readOnlyCardLarge}>
@@ -817,31 +789,6 @@ export default function ReportUploadModal({
             : 'Select an event to load your assigned task.'}
         </Text>
       </View>
-
-      <Text style={styles.label}>How was your experience? *</Text>
-      <TextInput
-        style={[styles.textArea, errors.volunteerExperience && styles.inputError]}
-        placeholder="Share what you learned, what stood out, or how the event affected you and the community."
-        value={volunteerExperience}
-        onChangeText={setVolunteerExperience}
-        multiline
-        numberOfLines={4}
-        placeholderTextColor="#cbd5e1"
-      />
-      {errors.volunteerExperience ? (
-        <Text style={styles.errorText}>{errors.volunteerExperience}</Text>
-      ) : null}
-
-      <Text style={styles.label}>Any suggestions or follow-up needed?</Text>
-      <TextInput
-        style={styles.textArea}
-        placeholder="Optional: mention issues, supplies needed, or ideas to improve the next event."
-        value={volunteerFollowUp}
-        onChangeText={setVolunteerFollowUp}
-        multiline
-        numberOfLines={3}
-        placeholderTextColor="#cbd5e1"
-      />
 
       <Text style={styles.sectionTitle}>Auto-generated Event Metrics</Text>
       <Text style={styles.sectionHelper}>
@@ -1121,7 +1068,7 @@ export default function ReportUploadModal({
 
 function formatMetricLabel(field: string, isVolunteer = false): string {
   const labels: Record<string, string> = {
-    volunteerHours: 'Volunteer Event Joins',
+    volunteerHours: 'Volunteer Hours Served',
     volunteerEventJoins: isVolunteer ? 'Your Event Joins' : 'Volunteer Event Joins',
     verifiedAttendance: 'Verified Attendance',
     activeVolunteers: 'Active Volunteers',

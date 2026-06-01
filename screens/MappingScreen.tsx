@@ -25,6 +25,7 @@ import {
 } from '../models/storage';
 import { getPrimaryReportMediaUri } from '../utils/media';
 import { navigateToAvailableRoute } from '../utils/navigation';
+import { withImpactMapFallbackProjects } from '../utils/impactMapFallbacks';
 import {
   getInitialProjectRegion,
   getMappedProjects,
@@ -32,6 +33,7 @@ import {
   getPrimaryProjectImageSource,
   getProjectMarkerColor,
 } from '../utils/projectMap';
+import { getPartnerForMappedProject, getProjectIdsForPartnerUser } from '../utils/mapProjectLinks';
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
 import { getProjectVolunteerMapEntries } from '../utils/projectVolunteers';
@@ -82,15 +84,21 @@ export default function MappingScreen({ navigation }: any) {
         'volunteerJoinRecords',
         'volunteerProfile',
       ]);
-
-      const approvedPartnerProjectIds = new Set(
-        snapshot.partnerApplications
-          .filter(
-            application =>
-              application.status === 'Approved' &&
-              String(application.projectId || '').startsWith('project-proposal-')
-          )
-          .map(application => application.projectId)
+      const allPartners = await getAllPartners();
+      const mapSourceProjects = withImpactMapFallbackProjects(
+        snapshot.projects,
+        snapshot.partnerApplications,
+        snapshot.volunteerJoinRecords
+      );
+      const partnerProjectIds = new Set(
+        user?.role === 'partner'
+          ? getProjectIdsForPartnerUser(
+              user,
+              allPartners,
+              mapSourceProjects,
+              snapshot.partnerApplications
+            )
+          : []
       );
       const joinedVolunteerProjectIds = new Set(
         snapshot.volunteerJoinRecords.map(record => record.projectId)
@@ -98,11 +106,11 @@ export default function MappingScreen({ navigation }: any) {
 
       const visibleProjects =
         user?.role === 'partner'
-          ? snapshot.projects.filter(
-              project => approvedPartnerProjectIds.has(project.id)
+          ? mapSourceProjects.filter(
+              project => partnerProjectIds.has(project.id)
             )
           : user?.role === 'volunteer'
-          ? snapshot.projects.filter(
+          ? mapSourceProjects.filter(
               project =>
                 joinedVolunteerProjectIds.has(project.id) ||
                 (snapshot.volunteerProfile && (project.volunteers || []).includes(snapshot.volunteerProfile.id)) ||
@@ -111,23 +119,22 @@ export default function MappingScreen({ navigation }: any) {
                   (task.assignedVolunteerIds || []).includes(snapshot.volunteerProfile?.id || '')
                 ))
             )
-          : snapshot.projects;
+          : mapSourceProjects;
 
       const visibleProjectIds = new Set(visibleProjects.map(project => project.id));
 
       setProjects(visibleProjects);
       setVolunteerJoinRecords(snapshot.volunteerJoinRecords || []);
+      setPartners(allPartners);
       
       // Load secondary data immediately without the artificial delay
       try {
-        const [allReports, allVolunteers, allPartners] = await Promise.all([
+        const [allReports, allVolunteers] = await Promise.all([
           getAllPartnerReports(),
           getAllVolunteers(),
-          getAllPartners(),
         ]);
         setPartnerReports(allReports.filter(report => visibleProjectIds.has(report.projectId)));
         setVolunteers(allVolunteers);
-        setPartners(allPartners);
       } catch (err) {
         // ignore — keep map responsive
       }
@@ -279,9 +286,7 @@ export default function MappingScreen({ navigation }: any) {
                   })()}
 
                   {(() => {
-                    const partner = project.partnerId
-                      ? partners.find(entry => entry.id === project.partnerId) || null
-                      : null;
+                    const partner = getPartnerForMappedProject(project, partners);
                     if (!partner) {
                       return null;
                     }

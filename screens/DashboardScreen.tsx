@@ -26,6 +26,8 @@ import type {
 import { useAuth } from '../contexts/AuthContext';
 import { navigateToAvailableRoute } from '../utils/navigation';
 import { getMappedProjects } from '../utils/projectMap';
+import { withImpactMapFallbackProjects } from '../utils/impactMapFallbacks';
+import { getProjectIdsForPartner } from '../utils/mapProjectLinks';
 import { getProjectDisplayStatus } from '../utils/projectStatus';
 import VolunteerImpactMap from '../components/VolunteerImpactMap';
 import { getRequestErrorMessage } from '../utils/requestErrors';
@@ -172,6 +174,7 @@ export default function DashboardScreen({ navigation }: any) {
   const loadDashboardData = React.useCallback(async () => {
     const startedAt = perfNow();
     try {
+      console.log('[DASHBOARD] Loading dashboard snapshot...');
       // Single batch load — getDashboardSnapshot fetches all keys in one request.
       const {
         projects,
@@ -189,8 +192,16 @@ export default function DashboardScreen({ navigation }: any) {
         events,
       } = await getDashboardSnapshot();
 
+      console.log('[DASHBOARD] Snapshot loaded:', {
+        projects: projects.length,
+        programs: programs.length,
+        events: events.length,
+        programTracks: programTracks.length
+      });
+
       setLoadError(null);
       setProjectsData(projects);
+      console.log('[DASHBOARD] Set projectsData to:', projects.length, 'projects');
       setPartnersData(partners);
       setPartnerApplicationsData(partnerProjectApplications || []);
       setVolunteersData(volunteers);
@@ -200,7 +211,9 @@ export default function DashboardScreen({ navigation }: any) {
         allProjects: projects.filter(
           project => !(programs || []).some(program => program.id === project.id)
         ).length,
-        programs: (programTracks || []).filter(track => track.isActive !== false).length || (programs || []).length,
+        programs: (programTracks || []).length > 0 
+          ? (programTracks || []).filter(track => track.isActive !== false).length 
+          : (programs || []).filter(p => !p.parentProjectId && !p.isEvent).length,
         events: (events || []).length || projects.filter(project => project.isEvent).length,
       });
 
@@ -403,9 +416,39 @@ export default function DashboardScreen({ navigation }: any) {
     [navigation]
   );
 
+  const impactMapSourceProjects = useMemo(
+    () => {
+      const result = withImpactMapFallbackProjects(
+        projectsData,
+        partnerApplicationsData,
+        volunteerJoinRecordsData
+      );
+      console.log('[DASHBOARD DEBUG] projectsData:', projectsData.length);
+      console.log('[DASHBOARD DEBUG] impactMapSourceProjects:', result.length);
+      return result;
+    },
+    [partnerApplicationsData, projectsData, volunteerJoinRecordsData]
+  );
+
   const mapProjects = useMemo(
-    () => getMappedProjects(projectsData),
-    [projectsData]
+    () => {
+      const result = getMappedProjects(impactMapSourceProjects);
+      console.log('[DASHBOARD DEBUG] impactMapSourceProjects for map:', impactMapSourceProjects.length);
+      console.log('[DASHBOARD DEBUG] impactMapSourceProjects details:', impactMapSourceProjects.map(p => ({
+        id: p.id,
+        title: p.title,
+        parentProjectId: p.parentProjectId,
+        isEvent: p.isEvent
+      })));
+      console.log('[DASHBOARD DEBUG] mapProjects (filtered):', result.length);
+      console.log('[DASHBOARD DEBUG] mapProjects details:', result.map(p => ({
+        id: p.id,
+        title: p.title,
+        parentProjectId: p.parentProjectId
+      })));
+      return result;
+    },
+    [impactMapSourceProjects]
   );
 
   // Memoize mapProjects by content to prevent unnecessary map re-renders from WebSocket updates
@@ -416,21 +459,22 @@ export default function DashboardScreen({ navigation }: any) {
       [...volunteersData]
         .sort((left, right) => left.name.localeCompare(right.name))
         .map(volunteer => {
-          const joinedEventIds = new Set(
-            volunteerJoinRecordsData
+          const joinedProjectIds = new Set([
+            ...(volunteer.pastProjects || []),
+            ...volunteerJoinRecordsData
               .filter(
                 record =>
                   record.volunteerId === volunteer.id ||
                   record.volunteerUserId === volunteer.userId
               )
-              .map(record => record.projectId)
-          );
-          const joinedEventProjectIds = projectsData
+              .map(record => record.projectId),
+          ]);
+          const joinedEventProjectIds = impactMapSourceProjects
             .filter(
               project =>
-                project.isEvent &&
+                (project.isEvent || joinedProjectIds.has(project.id)) &&
                 (
-                  joinedEventIds.has(project.id) ||
+                  joinedProjectIds.has(project.id) ||
                   (project.joinedUserIds || []).includes(volunteer.userId) ||
                   (project.volunteers || []).includes(volunteer.id) ||
                   (project.internalTasks || []).some(
@@ -448,63 +492,52 @@ export default function DashboardScreen({ navigation }: any) {
             projectIds: joinedEventProjectIds,
           };
         }),
-    [projectsData, volunteerJoinRecordsData, volunteersData]
+    [impactMapSourceProjects, volunteerJoinRecordsData, volunteersData]
   );
 
   const partnerMapAccounts = useMemo(
     () => {
-      const projectById = new Map(projectsData.map(project => [project.id, project]));
-      const partnerById = new Map(partnersData.map(partner => [partner.id, partner]));
-      const proposalProjectIdsByPartnerId = new Map<string, Set<string>>();
-      const assignedProposalProjectIds = new Set<string>();
-      const approvedProposalProjectIds = new Set<string>();
-
-      partnerApplicationsData
-        .filter(
-          application =>
-            application.status === 'Approved' &&
-            String(application.projectId || '').startsWith('project-proposal-') &&
-            projectsData.some(project => project.id === application.projectId)
-        )
-        .forEach(application => {
-          approvedProposalProjectIds.add(application.projectId);
-
-          const proposalProject = projectById.get(application.projectId);
-          const matchingPartner =
-            (proposalProject?.partnerId ? partnerById.get(proposalProject.partnerId) || null : null) ||
-            partnersData.find(partner => {
-              if (partner.ownerUserId && application.partnerUserId === partner.ownerUserId) {
-                return true;
-              }
-
-              const partnerEmail = String(partner.contactEmail || '').trim().toLowerCase();
-              const applicationEmail = String(application.partnerEmail || '').trim().toLowerCase();
-              return Boolean(partnerEmail) && partnerEmail === applicationEmail;
-            }) ||
-            null;
-
-          if (!matchingPartner) {
-            return;
-          }
-
-          const currentProjectIds =
-            proposalProjectIdsByPartnerId.get(matchingPartner.id) || new Set<string>();
-          currentProjectIds.add(application.projectId);
-          proposalProjectIdsByPartnerId.set(matchingPartner.id, currentProjectIds);
-          assignedProposalProjectIds.add(application.projectId);
-        });
-
       const accounts = [...partnersData]
         .sort((left, right) => left.name.localeCompare(right.name))
-        .map(partner => ({
-          id: partner.id,
-          label: partner.name,
-          projectIds: Array.from(proposalProjectIdsByPartnerId.get(partner.id) || []),
-        }));
+        .map(partner => {
+          const projectIds = getProjectIdsForPartner(
+            partner,
+            impactMapSourceProjects,
+            partnerApplicationsData
+          );
 
-      const unassignedProjectIds = Array.from(approvedProposalProjectIds).filter(
-        projectId => !assignedProposalProjectIds.has(projectId)
+          return {
+            id: partner.id,
+            label: partner.name,
+            projectIds,
+          };
+        });
+
+      const assignedProjectIds = new Set(
+        accounts.flatMap(account => account.projectIds)
       );
+      const knownPartnerKeys = new Set(
+        partnersData.flatMap(partner =>
+          [partner.id, partner.ownerUserId, partner.contactEmail, partner.name]
+            .map(value => String(value || '').trim().toLowerCase())
+            .filter(Boolean)
+        )
+      );
+      const approvedApplicationProjectIds = partnerApplicationsData
+        .filter(application => application.status === 'Approved')
+        .map(application => application.projectId)
+        .filter(Boolean);
+      const unassignedProjectIds = Array.from(
+        new Set([
+          ...projectsData
+            .filter(project => {
+              const partnerKey = String(project.partnerId || '').trim().toLowerCase();
+              return Boolean(partnerKey) && !knownPartnerKeys.has(partnerKey);
+            })
+            .map(project => project.id),
+          ...approvedApplicationProjectIds,
+        ])
+      ).filter(projectId => !assignedProjectIds.has(projectId));
 
       if (unassignedProjectIds.length > 0) {
         accounts.push({
@@ -516,7 +549,7 @@ export default function DashboardScreen({ navigation }: any) {
 
       return accounts;
     },
-    [partnerApplicationsData, partnersData, projectsData]
+    [impactMapSourceProjects, partnerApplicationsData, partnersData, projectsData]
   );
 
   const upcomingProjects = useMemo(() => {
@@ -713,7 +746,8 @@ export default function DashboardScreen({ navigation }: any) {
 
           {activeVolunteers.length ? (
             activeVolunteers.map(volunteer => {
-              const progress = Math.min(100, Math.max(8, (volunteer.totalHoursContributed || 0) * 3));
+              const hours = volunteer.totalHoursContributed || 0;
+              const progress = hours > 0 ? Math.min(100, Math.max(8, hours * 3)) : 0;
               const completedCount = (volunteerCompletedProjectIdsByVolunteerId[volunteer.id] || []).length;
               return (
                 <View key={volunteer.id} style={styles.volunteerRow}>

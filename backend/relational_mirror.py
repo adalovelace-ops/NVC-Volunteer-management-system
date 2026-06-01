@@ -247,6 +247,9 @@ RELATIONAL_TABLE_DDL = [
     "alter table projects add column if not exists skills_needed text[] not null default '{}'::text[]",
     "alter table projects add column if not exists updated_at text",
     "alter table projects alter column updated_at type text using updated_at::text",
+    "alter table projects add column if not exists location_region text",
+    "alter table projects add column if not exists location_city text",
+    "alter table projects add column if not exists location_barangay text",
     "create index if not exists projects_partner_id_idx on projects (partner_id)",
     "create index if not exists projects_parent_project_id_idx on projects (parent_project_id)",
     "create index if not exists projects_status_idx on projects (status)",
@@ -349,6 +352,9 @@ RELATIONAL_TABLE_DDL = [
     "alter table events add column if not exists program_id text",
     "alter table events add column if not exists internal_tasks text not null default '[]'",
     "alter table events add column if not exists skills_needed text[] not null default '{}'::text[]",
+    "alter table events add column if not exists location_region text",
+    "alter table events add column if not exists location_city text",
+    "alter table events add column if not exists location_barangay text",
     "create index if not exists events_partner_id_idx on events (partner_id)",
     "create index if not exists events_parent_project_id_idx on events (parent_project_id)",
     "create index if not exists events_status_idx on events (status)",
@@ -679,6 +685,9 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             ("start_date", False),
             ("end_date", False),
             ("location", False),
+            ("location_region", False),
+            ("location_city", False),
+            ("location_barangay", False),
             ("volunteers_needed", False),
             ("volunteers", False),
             ("joined_user_ids", False),
@@ -751,6 +760,9 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             ("start_date", False),
             ("end_date", False),
             ("location", False),
+            ("location_region", False),
+            ("location_city", False),
+            ("location_barangay", False),
             ("volunteers_needed", False),
             ("volunteers", False),
             ("joined_user_ids", False),
@@ -918,6 +930,9 @@ FIELD_NAME_MAPS: dict[str, dict[str, str]] = {
         "manualStatus": "manual_status",
         "startDate": "start_date",
         "endDate": "end_date",
+        "locationRegion": "location_region",
+        "locationCity": "location_city",
+        "locationBarangay": "location_barangay",
         "volunteersNeeded": "volunteers_needed",
         "joinedUserIds": "joined_user_ids",
         "skillsNeeded": "skills_needed",
@@ -958,6 +973,9 @@ FIELD_NAME_MAPS: dict[str, dict[str, str]] = {
         "manualStatus": "manual_status",
         "startDate": "start_date",
         "endDate": "end_date",
+        "locationRegion": "location_region",
+        "locationCity": "location_city",
+        "locationBarangay": "location_barangay",
         "volunteersNeeded": "volunteers_needed",
         "joinedUserIds": "joined_user_ids",
         "skillsNeeded": "skills_needed",
@@ -966,6 +984,7 @@ FIELD_NAME_MAPS: dict[str, dict[str, str]] = {
         "updatedAt": "updated_at",
     },
     "volunteers": {"userId": "user_id"},
+    "partners": {"ownerUserId": "owner_user_id"},
     "statusUpdates": {
         "projectId": "project_id",
         "updatedBy": "updated_by",
@@ -1378,6 +1397,9 @@ def _normalize_row(key: str, item: dict[str, Any]) -> tuple[Any, ...]:
             item.get("startDate"),
             item.get("endDate"),
             _json_dump(item.get("location"), {}),
+            item.get("locationRegion"),
+            item.get("locationCity"),
+            item.get("locationBarangay"),
             _to_int(item.get("volunteersNeeded")),
             _normalize_string_list(item.get("volunteers")),
             _normalize_string_list(item.get("joinedUserIds")),
@@ -1447,6 +1469,9 @@ def _normalize_row(key: str, item: dict[str, Any]) -> tuple[Any, ...]:
             item.get("startDate"),
             item.get("endDate"),
             _json_dump(item.get("location"), {}),
+            item.get("locationRegion"),
+            item.get("locationCity"),
+            item.get("locationBarangay"),
             _to_int(item.get("volunteersNeeded")),
             _normalize_string_list(item.get("volunteers")),
             _normalize_string_list(item.get("joinedUserIds")),
@@ -1734,6 +1759,9 @@ def _row_to_item(key: str, row: dict[str, Any]) -> dict[str, Any]:
             "startDate": row.get("start_date"),
             "endDate": row.get("end_date"),
             "location": _json_load(row.get("location"), {}),
+            "locationRegion": row.get("location_region"),
+            "locationCity": row.get("location_city"),
+            "locationBarangay": row.get("location_barangay"),
             "volunteersNeeded": row.get("volunteers_needed"),
             "volunteers": row.get("volunteers") or [],
             "joinedUserIds": row.get("joined_user_ids") or [],
@@ -1797,11 +1825,15 @@ def _row_to_item(key: str, row: dict[str, Any]) -> dict[str, Any]:
             "parentProjectId": row.get("parent_project_id"),
             "statusMode": row.get("status_mode"),
             "manualStatus": row.get("manual_status"),
+            "program_id": row.get("program_id"),
             "status": row.get("status"),
             "category": row.get("category"),
             "startDate": row.get("start_date"),
             "endDate": row.get("end_date"),
             "location": _json_load(row.get("location"), {}),
+            "locationRegion": row.get("location_region"),
+            "locationCity": row.get("location_city"),
+            "locationBarangay": row.get("location_barangay"),
             "volunteersNeeded": row["volunteers_needed"],
             "volunteers": row.get("volunteers") or [],
             "joinedUserIds": row.get("joined_user_ids") or [],
@@ -1977,6 +2009,11 @@ def _backfill_skills_from_existing_relational_data(connection: Any) -> None:
 
 def ensure_default_program_tracks(connection: Any) -> None:
     with connection.cursor() as cursor:
+        cursor.execute("select exists (select 1 from program_tracks)")
+        has_program_tracks = bool(cursor.fetchone()[0])
+        if has_program_tracks:
+            return
+
         cursor.execute(
             """
             insert into program_tracks (
@@ -1996,21 +2033,7 @@ def ensure_default_program_tracks(connection: Any) -> None:
               ('Education', 'Education', 'Learning, literacy, and skill development for students.', 'school', '#2563eb', '', 20, true, now()::text, now()::text),
               ('Livelihood', 'Livelihood', 'Economic empowerment and vocational training programs.', 'work', '#7c3aed', '', 30, true, now()::text, now()::text),
               ('Disaster', 'Disaster', 'Preparedness, relief, and recovery programs for affected communities.', 'warning', '#f97316', '', 40, true, now()::text, now()::text)
-                        on conflict (id) do update set
-              title = excluded.title,
-              description = excluded.description,
-              icon = excluded.icon,
-              color = excluded.color,
-              image_url = excluded.image_url,
-              sort_order = excluded.sort_order,
-              is_active = true,
-              updated_at = excluded.updated_at
-            """
-        )
-        cursor.execute(
-            """
-            delete from program_tracks
-            where id not in ('Nutrition', 'Education', 'Livelihood', 'Disaster')
+            on conflict (id) do nothing
             """
         )
 

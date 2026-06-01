@@ -13,7 +13,7 @@ import CommunicationHubScreen from '../screens/CommunicationHubScreen';
 import VolunteerReportsScreen from '../screens/VolunteerReportsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import VolunteerProjectDetailsScreen from '../screens/VolunteerProjectDetailsScreen';
-import { getMessagesForUser, subscribeToMessages, getAllUsers, subscribeToStorageChanges } from '../models/storage';
+import { getMessagesForUser, subscribeToMessages, getAllUsers, subscribeToStorageChanges, markMessageAsRead } from '../models/storage';
 
 export type VolunteerTabParamList = {
   Dashboard: undefined;
@@ -77,6 +77,13 @@ export default function VolunteerNavigator() {
     };
   }, [user?.id]);
 
+  const handleNotificationsSeen = React.useCallback(async () => {
+    if (!user?.id || unreadMessages.length === 0) return;
+    await Promise.all(
+      unreadMessages.map((msg) => markMessageAsRead(msg.id).catch(() => undefined))
+    );
+  }, [unreadMessages, user?.id]);
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -88,6 +95,7 @@ export default function VolunteerNavigator() {
             userId={user?.id}
             notificationCount={unreadMessages.length}
             unreadMessages={unreadMessages}
+            onNotificationOpen={handleNotificationsSeen}
           />
         ),
         tabBarIcon: ({ color, size }) => (

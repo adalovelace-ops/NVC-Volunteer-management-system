@@ -60,9 +60,15 @@ export const composePhilippineAddress = (
   const normalizedCityMunicipality = cleanLabel(cityMunicipalityName);
   const normalizedBarangay = cleanLabel(barangayName);
 
-  if (!normalizedRegion || !normalizedCityMunicipality || !normalizedBarangay) {
+  // Barangay is optional - only require region and city
+  if (!normalizedRegion || !normalizedCityMunicipality) {
     return '';
   }
 
-  return [normalizedBarangay, normalizedCityMunicipality, normalizedRegion].join(', ');
+  // If barangay is provided, include it; otherwise just use city and region
+  if (normalizedBarangay) {
+    return [normalizedBarangay, normalizedCityMunicipality, normalizedRegion].join(', ');
+  }
+  
+  return [normalizedCityMunicipality, normalizedRegion].join(', ');
 };

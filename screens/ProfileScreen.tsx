@@ -217,17 +217,27 @@ export default function ProfileScreen() {
 
   // Confirms logout before clearing the signed-in session.
   const handleLogout = () => {
+    const confirmLogout = async () => {
+      try {
+        await logout();
+      } catch (error) {
+        Alert.alert('Error', 'Failed to logout. Please try again.');
+      }
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm('Are you sure you want to logout?')) {
+        void confirmLogout();
+      }
+      return;
+    }
+
     Alert.alert('Logout', 'Are you sure you want to logout?', [
       { text: 'Cancel', onPress: () => {} },
       {
         text: 'Logout',
-        onPress: async () => {
-          try {
-            await logout();
-          } catch (error) {
-            Alert.alert('Error', 'Failed to logout. Please try again.');
-          }
-        },
+        style: 'destructive',
+        onPress: () => void confirmLogout(),
       },
     ]);
   };

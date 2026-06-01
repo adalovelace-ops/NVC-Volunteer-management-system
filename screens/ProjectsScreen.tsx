@@ -3164,7 +3164,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
                 style={styles.proposalInput}
                 value={partnerProposalDraft?.proposedLocation || ''}
                 onChangeText={value => handlePartnerProposalDraftChange('proposedLocation', value)}
-                placeholder="Barangay, city, municipality, or venue"
+                placeholder="City, municipality, or venue"
                 placeholderTextColor="#94a3b8"
                 editable={loadingProjectId !== activeProposalProject?.id}
               />

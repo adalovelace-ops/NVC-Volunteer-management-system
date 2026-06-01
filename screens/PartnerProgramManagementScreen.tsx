@@ -12,53 +12,64 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  buildProgramProposalProjectId,
   getProgramModuleFromProposalProjectId,
   getPartnerDashboardSnapshot,
   subscribeToStorageChanges,
 } from '../models/storage';
-import { AdvocacyFocus, PartnerProjectApplication } from '../models/types';
+import { AdvocacyFocus, PartnerProjectApplication, Project } from '../models/types';
 import { isAbortLikeError } from '../utils/requestErrors';
 
 type ProgramCardConfig = {
+  id: string;
+  title: string;
   module: AdvocacyFocus;
   description: string;
   icon: keyof typeof MaterialIcons.glyphMap;
   accent: string;
 };
 
-const PROGRAM_CARDS: ProgramCardConfig[] = [
-  {
-    module: 'Nutrition',
-    description: 'Food security and health programs',
-    icon: 'restaurant',
-    accent: '#ef4444',
-  },
-  {
-    module: 'Education',
-    description: 'Learning and skill development programs',
-    icon: 'school',
-    accent: '#3b82f6',
-  },
-  {
-    module: 'Livelihood',
-    description: 'Economic empowerment programs',
-    icon: 'work',
-    accent: '#8b5cf6',
-  },
-  {
-    module: 'Disaster',
-    description: 'Emergency relief programs',
-    icon: 'warning',
-    accent: '#f97316',
-  },
-];
+function getAdvocacyFocusFromText(value?: string): AdvocacyFocus | null {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.includes('nutrition')) return 'Nutrition';
+  if (normalized.includes('education')) return 'Education';
+  if (normalized.includes('livelihood')) return 'Livelihood';
+  if (normalized.includes('disaster')) return 'Disaster';
+  return null;
+}
+
+function getProgramModule(program: Project): AdvocacyFocus | null {
+  return (
+    getAdvocacyFocusFromText(program.programModule) ||
+    getAdvocacyFocusFromText(program.id) ||
+    getAdvocacyFocusFromText(program.title) ||
+    getAdvocacyFocusFromText(program.category)
+  );
+}
+
+function getProgramIcon(module: AdvocacyFocus): keyof typeof MaterialIcons.glyphMap {
+  if (module === 'Nutrition') return 'restaurant';
+  if (module === 'Education') return 'school';
+  if (module === 'Livelihood') return 'work';
+  return 'warning';
+}
+
+function getProgramAccent(module: AdvocacyFocus): string {
+  if (module === 'Nutrition') return '#dc2626';
+  if (module === 'Education') return '#2563eb';
+  if (module === 'Livelihood') return '#7c3aed';
+  return '#ea580c';
+}
 
 export default function PartnerProgramManagementScreen() {
   const { user } = useAuth();
   const navigation = useNavigation<any>();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [programs, setPrograms] = useState<Project[]>([]);
   const [partnerApplications, setPartnerApplications] = useState<PartnerProjectApplication[]>([]);
 
   const loadData = useCallback(async (showRefresh = false) => {
@@ -73,6 +84,9 @@ export default function PartnerProgramManagementScreen() {
 
     try {
       const snapshot = await getPartnerDashboardSnapshot();
+      setPrograms(
+        (snapshot.programs || []).filter(program => !program.isEvent && !program.parentProjectId)
+      );
       setPartnerApplications(
         (snapshot.partnerApplications || []).filter(application => application.partnerUserId === user.id)
       );
@@ -97,6 +111,29 @@ export default function PartnerProgramManagementScreen() {
     }, [loadData])
   );
 
+  const programCards = useMemo<ProgramCardConfig[]>(() => {
+    const byId = new Map<string, ProgramCardConfig>();
+
+    programs.forEach(program => {
+      const module = getProgramModule(program);
+      const id = String(program.id || '').trim();
+      if (!id || !module || byId.has(id)) {
+        return;
+      }
+
+      byId.set(id, {
+        id,
+        title: program.title || module,
+        module,
+        description: program.description || `${module} program`,
+        icon: getProgramIcon(module),
+        accent: program.color || getProgramAccent(module),
+      });
+    });
+
+    return Array.from(byId.values()).sort((left, right) => left.title.localeCompare(right.title));
+  }, [programs]);
+
   const applicationByModule = useMemo(() => {
     const byModule = new Map<string, PartnerProjectApplication>();
     partnerApplications.forEach(application => {
@@ -117,11 +154,11 @@ export default function PartnerProgramManagementScreen() {
     return byModule;
   }, [partnerApplications]);
 
-  const handleOpenProposal = (module: AdvocacyFocus) => {
+  const handleOpenProposal = (card: ProgramCardConfig) => {
     navigation.navigate('Messages', {
-      newProposalModule: module,
-      newProposalProjectId: buildProgramProposalProjectId(module),
-      newProposalTitle: `${module} Project Proposal`,
+      newProposalModule: card.module,
+      newProposalProjectId: card.id,
+      newProposalTitle: card.title,
     });
   };
 
@@ -142,10 +179,15 @@ export default function PartnerProgramManagementScreen() {
       showsVerticalScrollIndicator={false}
     >
       <Text style={styles.availableProgramHeader}>Available Program</Text>
-      {PROGRAM_CARDS.map(card => {
+      {programCards.length === 0 ? (
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyText}>No programs available yet.</Text>
+        </View>
+      ) : null}
+      {programCards.map(card => {
         const application = applicationByModule.get(card.module);
         const status = application?.status;
-        const proposalProjectId = buildProgramProposalProjectId(card.module);
+        const proposalProjectId = card.id;
         const isApproved = status === 'Approved';
         const isPending = status === 'Pending';
         const isRejected = status === 'Rejected';
@@ -153,14 +195,14 @@ export default function PartnerProgramManagementScreen() {
         const buttonLabel = application ? 'Submit Another Proposal' : 'Submit Project Proposal';
 
         return (
-          <View key={card.module} style={[styles.programCard, { borderColor: `${card.accent}66` }]}>
+          <View key={card.id} style={[styles.programCard, { borderColor: `${card.accent}66` }]}>
             <View style={styles.programHeader}>
               <View style={[styles.iconBadge, { backgroundColor: card.accent }]}>
                 <MaterialIcons name={card.icon} size={20} color="#fff" />
               </View>
 
               <View style={styles.programCopy}>
-                <Text style={styles.programTitle}>{card.module}</Text>
+                <Text style={styles.programTitle}>{card.title}</Text>
                 <Text style={styles.programDescription}>{card.description}</Text>
               </View>
 
@@ -171,7 +213,7 @@ export default function PartnerProgramManagementScreen() {
 
             <TouchableOpacity
               style={styles.primaryButton}
-              onPress={() => handleOpenProposal(card.module)}
+              onPress={() => handleOpenProposal(card)}
               accessibilityLabel={`${buttonLabel} for ${card.module}`}
               testID={proposalProjectId}
             >
@@ -213,6 +255,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#475569',
+  },
+  emptyCard: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#dbe7df',
+    borderRadius: 18,
+    padding: 16,
+  },
+  emptyText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: '#64748b',
   },
   programCard: {
     backgroundColor: '#fff',

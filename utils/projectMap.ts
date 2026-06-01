@@ -64,6 +64,10 @@ const PROGRAM_PHOTO_MATCHERS: Array<{
 ];
 
 function getProgramPhotoSource(project: Project): ImageSourcePropType | undefined {
+  if (!project || !project.title) {
+    return undefined;
+  }
+
   if (PROGRAM_PHOTO_BY_TITLE[project.title]) {
     return PROGRAM_PHOTO_BY_TITLE[project.title];
   }
@@ -73,6 +77,10 @@ function getProgramPhotoSource(project: Project): ImageSourcePropType | undefine
 }
 
 function getProjectImageSources(project: Project): ImageSourcePropType[] {
+  if (!project) {
+    return [];
+  }
+
   if (project.imageHidden) {
     return [];
   }
@@ -80,7 +88,7 @@ function getProjectImageSources(project: Project): ImageSourcePropType[] {
   const imageSources: ImageSourcePropType[] = [];
   const hasUploadedProjectImage = isImageMediaUri(project.imageUrl);
   if (hasUploadedProjectImage) {
-    imageSources.push({ uri: project.imageUrl });
+    imageSources.push({ uri: project.imageUrl! });
   }
   const isProposalCreatedProject = String(project.id || '').startsWith('project-proposal-');
   if (isProposalCreatedProject && !hasUploadedProjectImage) {
@@ -98,7 +106,7 @@ function getProjectImageSources(project: Project): ImageSourcePropType[] {
     );
   }
 
-  const categoryImageSource = PROGRAM_IMAGE_BY_CATEGORY[project.category];
+  const categoryImageSource = project.category ? PROGRAM_IMAGE_BY_CATEGORY[project.category] : undefined;
   if (categoryImageSource && !imageSources.includes(categoryImageSource)) {
     imageSources.push(categoryImageSource);
   }
@@ -181,6 +189,91 @@ const KNOWN_PLACE_COORDINATES: Array<{
     keywords: ['bindoy', 'camudlas bindoy', 'camudlas'],
     latitude: 10.4026,
     longitude: 123.0059,
+  },
+  {
+    keywords: ['badian'],
+    latitude: 9.8647,
+    longitude: 123.3967,
+  },
+  {
+    keywords: ['central visayas', 'region vii', 'region 7'],
+    latitude: 10.3157,
+    longitude: 123.8854,
+  },
+  {
+    keywords: ['region vi', 'region 6', 'western visayas'],
+    latitude: 10.7202,
+    longitude: 122.5621,
+  },
+  {
+    keywords: ['region iv a', 'calabarzon'],
+    latitude: 14.1008,
+    longitude: 121.0794,
+  },
+  {
+    keywords: ['region iii', 'region 3', 'central luzon'],
+    latitude: 15.4828,
+    longitude: 120.712,
+  },
+  {
+    keywords: ['region i ', 'region 1', 'ilocos region'],
+    latitude: 16.0832,
+    longitude: 120.6199,
+  },
+  {
+    keywords: ['region ii', 'region 2', 'cagayan valley'],
+    latitude: 17.6132,
+    longitude: 121.727,
+  },
+  {
+    keywords: ['mimaropa', 'region iv b', 'region 4 b'],
+    latitude: 12.1896,
+    longitude: 121.3063,
+  },
+  {
+    keywords: ['bicol region', 'region v', 'region 5'],
+    latitude: 13.1391,
+    longitude: 123.7438,
+  },
+  {
+    keywords: ['eastern visayas', 'region viii', 'region 8'],
+    latitude: 11.2433,
+    longitude: 125.0046,
+  },
+  {
+    keywords: ['zamboanga peninsula', 'region ix', 'region 9'],
+    latitude: 7.8383,
+    longitude: 123.2967,
+  },
+  {
+    keywords: ['northern mindanao', 'region x', 'region 10'],
+    latitude: 8.4542,
+    longitude: 124.6319,
+  },
+  {
+    keywords: ['davao region', 'region xi', 'region 11'],
+    latitude: 7.1907,
+    longitude: 125.4553,
+  },
+  {
+    keywords: ['soccsksargen', 'region xii', 'region 12'],
+    latitude: 6.1164,
+    longitude: 125.1716,
+  },
+  {
+    keywords: ['caraga', 'region xiii', 'region 13'],
+    latitude: 8.9475,
+    longitude: 125.5406,
+  },
+  {
+    keywords: ['cordillera administrative region', 'region xiv'],
+    latitude: 16.4023,
+    longitude: 120.596,
+  },
+  {
+    keywords: ['barmm', 'bangsamoro'],
+    latitude: 7.2167,
+    longitude: 124.25,
   },
   {
     keywords: ['negros occidental'],
@@ -541,14 +634,8 @@ export function inferCoordinatesFromPlace(
     };
   }
 
-  const isPhilippinePlace = PHILIPPINES_PLACE_KEYWORDS.some(keyword => normalizedPlace.includes(keyword));
-  if (isPhilippinePlace) {
-    return {
-      latitude: 12.8797,
-      longitude: 121.7740,
-    };
-  }
-
+  // No specific place found - do NOT default to Philippines ocean center.
+  // Return null and let the caller handle appropriate fallback logic.
   return null;
 }
 
@@ -593,7 +680,22 @@ export function getProjectMarkerColor(
 }
 
 export function getMappedProjects(projects: Project[]): Project[] {
-  const resolvedProjects = projects
+  // Filter out programs (top-level items that are neither events nor have a parent)
+  // Only show projects and events on the map
+  const projectsAndEvents = projects.filter(project => {
+    // If it has a parent, it's a project or event under a program - include it
+    if (project.parentProjectId) {
+      return true;
+    }
+    // If it's marked as an event, include it
+    if (project.isEvent) {
+      return true;
+    }
+    // Otherwise, it's a top-level program - exclude it
+    return false;
+  });
+
+  const resolvedProjects = projectsAndEvents
     .map(project => resolveProjectMapPlacement(project, projects))
     .filter(project => hasUsableCoordinates(project.location));
 

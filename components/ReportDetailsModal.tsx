@@ -521,7 +521,7 @@ function formatReportType(type: string): string {
 
 function formatMetricKey(key: string): string {
   const labels: Record<string, string> = {
-    volunteerHours: 'Volunteer Event Joins',
+    volunteerHours: 'Volunteer Hours Served',
     volunteerEventJoins: 'Volunteer Event Joins',
     verifiedAttendance: 'Verified Attendance',
     activeVolunteers: 'Active Volunteers',
