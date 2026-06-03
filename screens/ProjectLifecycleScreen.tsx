@@ -9,7 +9,6 @@ import {
   Pressable,
   TouchableOpacity,
   Alert,
-  Linking,
   Modal,
   TextInput,
   Image,
@@ -444,12 +443,6 @@ function getTaskAssignedVolunteerNames(task: ProjectInternalTask): string[] {
         .filter(Boolean)
     )
   );
-}
-
-function getProjectAttachmentName(uri: string, index: number): string {
-  const cleanUri = String(uri || '').trim().split('?')[0];
-  const fileName = cleanUri.split('/').pop();
-  return fileName || `Attachment ${index + 1}`;
 }
 
 function getStartOfWeekMonday(sourceDate: Date): Date {
@@ -1824,6 +1817,21 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     }));
   };
 
+  // Helper: Auto-updates latitude/longitude when address is set from location selection
+  const updateLocationCoordinatesFromAddress = (address: string) => {
+    if (!address) {
+      handleProjectDraftChange('latitude', '');
+      handleProjectDraftChange('longitude', '');
+      return;
+    }
+
+    const coordinates = inferCoordinatesFromPlace(address);
+    if (coordinates) {
+      handleProjectDraftChange('latitude', String(coordinates.latitude));
+      handleProjectDraftChange('longitude', String(coordinates.longitude));
+    }
+  };
+
   const handleProjectRegionChange = (regionCode: string) => {
     setProjectRegionCode(regionCode);
     setProjectCityCode('');
@@ -1831,6 +1839,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     setProjectLocationBarangays([]);
     setProjectLocationCities(regionCode ? getCitiesByRegion(regionCode) : []);
     handleProjectDraftChange('address', '');
+    updateLocationCoordinatesFromAddress('');
   };
 
   const handleProjectCityChange = (cityCode: string) => {
@@ -1840,20 +1849,20 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     
     if (!projectRegionCode || !cityCode) {
       handleProjectDraftChange('address', '');
+      updateLocationCoordinatesFromAddress('');
       return;
     }
 
     const selectedRegion = PHRegions.find(region => region.code === projectRegionCode);
     const selectedCity = projectLocationCities.find(city => city.code === cityCode);
 
-    handleProjectDraftChange(
-      'address',
-      composePhilippineAddress(
-        selectedRegion?.name || '',
-        selectedCity?.displayName || '',
-        ''
-      )
+    const newAddress = composePhilippineAddress(
+      selectedRegion?.name || '',
+      selectedCity?.displayName || '',
+      ''
     );
+    handleProjectDraftChange('address', newAddress);
+    updateLocationCoordinatesFromAddress(newAddress);
   };
 
   const handleProjectBarangayChange = (barangayCode: string) => {
@@ -1861,6 +1870,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
     if (!projectRegionCode || !projectCityCode) {
       handleProjectDraftChange('address', '');
+      updateLocationCoordinatesFromAddress('');
       return;
     }
 
@@ -1871,25 +1881,23 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     );
 
     if (!barangayCode) {
-      handleProjectDraftChange(
-        'address',
-        composePhilippineAddress(
-          selectedRegion?.name || '',
-          selectedCity?.displayName || '',
-          ''
-        )
+      const newAddress = composePhilippineAddress(
+        selectedRegion?.name || '',
+        selectedCity?.displayName || '',
+        ''
       );
+      handleProjectDraftChange('address', newAddress);
+      updateLocationCoordinatesFromAddress(newAddress);
       return;
     }
 
-    handleProjectDraftChange(
-      'address',
-      composePhilippineAddress(
-        selectedRegion?.name || '',
-        selectedCity?.displayName || '',
-        selectedBarangay?.name || ''
-      )
+    const newAddress = composePhilippineAddress(
+      selectedRegion?.name || '',
+      selectedCity?.displayName || '',
+      selectedBarangay?.name || ''
     );
+    handleProjectDraftChange('address', newAddress);
+    updateLocationCoordinatesFromAddress(newAddress);
   };
 
   const handleTaskDraftChange = <K extends keyof ProjectTaskDraft>(
@@ -1933,31 +1941,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
   const handleRemoveProjectDocument = () => {
     handleProjectDraftChange('attachmentUrl', '');
-  };
-
-  const handleOpenProjectAttachment = async (uri: string, index: number) => {
-    const normalizedUri = String(uri || '').trim();
-    if (!normalizedUri) {
-      return;
-    }
-
-    try {
-      if (Platform.OS === 'web' && typeof document !== 'undefined') {
-        const link = document.createElement('a');
-        link.href = normalizedUri;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        link.download = getProjectAttachmentName(normalizedUri, index);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        return;
-      }
-
-      await Linking.openURL(normalizedUri);
-    } catch {
-      Alert.alert('Attachment Unavailable', 'Unable to open this project attachment right now.');
-    }
   };
 
   const openCreateTaskModal = () => {
@@ -4576,7 +4559,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         animationType="fade"
         onRequestClose={() => setSelectedProgramWebModule(null)}
       >
-        <View style={programWebStyles.backdrop}>
+        <View style={[programWebStyles.backdrop, isDesktop && programWebStyles.backdropDesktop]}>
           <View style={programWebStyles.window}>
 
             {/* Browser chrome bar */}
@@ -5163,10 +5146,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     const volunteerSlotsFilled = volunteerEntries.length;
     const volunteerSlotsNeeded = activeSelectedProject.volunteersNeeded;
     const remainingVolunteerSlots = Math.max(volunteerSlotsNeeded - volunteerSlotsFilled, 0);
-    const activeVolunteerCount = volunteerEntries.filter(
-      volunteerEntry => volunteerEntry.participationStatus === 'Active'
-    ).length;
-    const completedVolunteerCount = Math.max(volunteerSlotsFilled - activeVolunteerCount, 0);
     const pendingVolunteerRequestCount = pendingVolunteerRequestEntries.length;
     const latestTimeActivityLabel = projectTimeLogEntries[0]
       ? `Confirmed ${format(new Date(projectTimeLogEntries[0].attendanceConfirmedAt || projectTimeLogEntries[0].timeIn), 'PPpp')}`
@@ -5178,11 +5157,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     const detailWorkspaceCaption = activeSelectedProject.isEvent
       ? 'Track staffing, schedule, and delivery activity from a single event workspace.'
       : 'Review program setup, delivery details, and volunteer coverage in one place.';
-    const projectAttachments = Array.isArray(activeSelectedProject.attachments)
-      ? activeSelectedProject.attachments.filter(
-        attachment => Boolean(String(attachment?.url || '').trim())
-      )
-      : [];
     const linkedEvents = activeSelectedProject.isEvent
       ? []
       : projects
@@ -5219,70 +5193,13 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         }]
         : []),
     ];
-    const overviewCards = [
-      {
-        label: activeSelectedProject.isEvent ? 'Parent Program' : 'Program Module',
-        value: activeSelectedProject.isEvent
-          ? parentProject?.title || detailModuleLabel
-          : detailModuleLabel,
-        meta: activeSelectedProject.isEvent ? 'Program this event rolls up to' : 'Primary focus area',
-      },
-      ...(hasPartneredOrg
-        ? [
-          {
-            label: 'Partner',
-            value: selectedPartnerName,
-            meta: 'Coordinating organization',
-          },
-        ]
-        : []),
-      {
-        label: 'Schedule',
-        value: formattedScheduleRange,
-        meta: activeSelectedProject.isEvent ? 'Event window' : 'Project timeline',
-      },
-      {
-        label: 'Team Coverage',
-        value: `${volunteerSlotsFilled}/${volunteerSlotsNeeded}`,
-        meta:
-          pendingVolunteerRequestCount > 0
-            ? `${pendingVolunteerRequestCount} request${pendingVolunteerRequestCount === 1 ? '' : 's'} awaiting review`
-            : remainingVolunteerSlots > 0
-              ? `${remainingVolunteerSlots} slot${remainingVolunteerSlots === 1 ? '' : 's'} still open`
-              : 'All volunteer slots are filled',
-      },
-      {
-        label: activeSelectedProject.isEvent ? 'Participation' : 'Confirmed Volunteers',
-        value: activeSelectedProject.isEvent ? `${activeVolunteerCount} active` : `${volunteerSlotsFilled}`,
-        meta:
-          completedVolunteerCount > 0
-            ? `${completedVolunteerCount} completed volunteer${completedVolunteerCount === 1 ? '' : 's'} kept in history`
-            : 'No completed volunteer records yet',
-      },
-      {
-        label: 'Location',
-        value: activeSelectedProject.location.address || 'Location not set',
-        meta: activeSelectedProject.isEvent ? 'Venue and meetup point' : 'Primary project site',
-      },
-    ];
     const setupDetails = [
-      {
-        label: 'Project Type',
-        value: detailEntityLabel,
-        meta: activeSelectedProject.isEvent
-          ? 'Use this record for event execution and staffing.'
-          : 'Use this record for long-running program coordination.',
-      },
-      {
-        label: activeSelectedProject.isEvent ? 'Parent Program' : 'Program Module',
-        value: activeSelectedProject.isEvent
-          ? parentProject?.title || detailModuleLabel
-          : detailModuleLabel,
-        meta: activeSelectedProject.isEvent
-          ? 'This event inherits its parent program context.'
-          : 'Main advocacy area for planning and reporting.',
-      },
-      ...(hasPartneredOrg
+      ...(!activeSelectedProject.isEvent ? [{
+        label: 'Program Module',
+        value: detailModuleLabel,
+        meta: 'Main advocacy area for planning and reporting.',
+      }] : []),
+      ...(hasPartneredOrg && !activeSelectedProject.isEvent
         ? [
           {
             label: 'Partnered Organization',
@@ -5292,53 +5209,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         ]
         : []),
     ];
-    const logisticsDetails = [
-      {
-        label: 'Start Date',
-        value: formattedStartDate,
-        meta: 'Planned kickoff date',
-      },
-      {
-        label: 'End Date',
-        value: formattedEndDate,
-        meta: 'Expected wrap-up date',
-      },
-      {
-        label: 'Location',
-        value: activeSelectedProject.location.address || 'Location not set',
-        meta: 'Address used in project and event views',
-      },
-      {
-        label: 'Volunteer Capacity',
-        value: `${volunteerSlotsFilled}/${volunteerSlotsNeeded}`,
-        meta:
-          remainingVolunteerSlots > 0
-            ? `${remainingVolunteerSlots} more volunteer${remainingVolunteerSlots === 1 ? '' : 's'} can join`
-            : 'Capacity reached',
-      },
-    ];
     const eventOperationsDetails = activeSelectedProject.isEvent
       ? [
-        {
-          label: 'Start Date',
-          value: formattedStartDate,
-          meta: 'Admins can customize this in Edit Event',
-        },
-        {
-          label: 'End Date',
-          value: formattedEndDate,
-          meta: 'Admins can customize this in Edit Event',
-        },
-        {
-          label: 'Event Name',
-          value: activeSelectedProject.title,
-          meta: 'Displayed across volunteer and admin views',
-        },
-        {
-          label: 'Parent Program',
-          value: parentProject?.title || detailModuleLabel,
-          meta: 'Used for context and reporting',
-        },
         {
           label: 'Skills Needed',
           value: (activeSelectedProject.skillsNeeded || []).length > 0
@@ -5350,14 +5222,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           label: 'Task Board',
           value: `${internalTasks.length} task${internalTasks.length === 1 ? '' : 's'}`,
           meta: internalTasks.length ? 'Assignments are ready to review' : 'No tasks created yet',
-        },
-        {
-          label: 'Join Requests',
-          value: `${pendingVolunteerRequestCount}`,
-          meta:
-            pendingVolunteerRequestCount > 0
-              ? 'Requests are waiting for review'
-              : 'No requests currently pending',
         },
       ]
       : [];
@@ -5502,15 +5366,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               </View>
             </View>
 
-            <View style={styles.detailsQuickGrid}>
-              {overviewCards.map(card => (
-                <View key={card.label} style={styles.detailsQuickCard}>
-                  <Text style={styles.detailsQuickLabel}>{card.label}</Text>
-                  <Text style={styles.detailsQuickValue}>{card.value}</Text>
-                  <Text style={styles.detailsQuickMeta}>{card.meta}</Text>
-                </View>
-              ))}
-            </View>
           </View>
 
           {activeSelectedProject.isEvent ? (
@@ -5580,33 +5435,21 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             </View>
           )}
 
-          <View style={[styles.detailsSection, styles.detailsSectionCard]}>
-            <Text style={styles.sectionTitle}>Core Setup</Text>
-            <Text style={styles.sectionHint}>The foundational record details your team refers to most often.</Text>
-            <View style={styles.detailFieldGrid}>
-              {setupDetails.map(field => (
-                <View key={field.label} style={styles.detailField}>
-                  <Text style={styles.detailFieldLabel}>{field.label}</Text>
-                  <Text style={styles.detailFieldValue}>{field.value}</Text>
-                  <Text style={styles.detailFieldMeta}>{field.meta}</Text>
-                </View>
-              ))}
+          {!activeSelectedProject.isEvent && (
+            <View style={[styles.detailsSection, styles.detailsSectionCard]}>
+              <Text style={styles.sectionTitle}>Core Setup</Text>
+              <Text style={styles.sectionHint}>The foundational record details your team refers to most often.</Text>
+              <View style={styles.detailFieldGrid}>
+                {setupDetails.map(field => (
+                  <View key={field.label} style={styles.detailField}>
+                    <Text style={styles.detailFieldLabel}>{field.label}</Text>
+                    <Text style={styles.detailFieldValue}>{field.value}</Text>
+                    <Text style={styles.detailFieldMeta}>{field.meta}</Text>
+                  </View>
+                ))}
+              </View>
             </View>
-          </View>
-
-          <View style={[styles.detailsSection, styles.detailsSectionCard]}>
-            <Text style={styles.sectionTitle}>Logistics and Capacity</Text>
-            <Text style={styles.sectionHint}>Dates, venue details, and volunteer coverage are grouped here for quicker review.</Text>
-            <View style={styles.detailFieldGrid}>
-              {logisticsDetails.map(field => (
-                <View key={field.label} style={styles.detailField}>
-                  <Text style={styles.detailFieldLabel}>{field.label}</Text>
-                  <Text style={styles.detailFieldValue}>{field.value}</Text>
-                  <Text style={styles.detailFieldMeta}>{field.meta}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
+          )}
 
           {!activeSelectedProject.isEvent ? (
             <View style={[styles.detailsSection, styles.detailsSectionCard]}>
@@ -5673,67 +5516,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   </View>
                 ))
               )}
-            </View>
-          ) : null}
-
-          {!activeSelectedProject.isEvent ? (
-            <View style={[styles.detailsSection, styles.detailsSectionCard]}>
-              <Text style={styles.sectionTitle}>Proposal Alignment</Text>
-              <Text style={styles.sectionHint}>These fields stay aligned with the approved proposal details.</Text>
-
-              <View style={styles.projectNarrativeCard}>
-                <Text style={styles.detailFieldLabel}>Community Need</Text>
-                <Text style={styles.projectNarrativeText}>
-                  {activeSelectedProject.communityNeed?.trim() || 'No community need recorded.'}
-                </Text>
-              </View>
-
-              <View style={styles.projectNarrativeCard}>
-                <Text style={styles.detailFieldLabel}>Expected Deliverables</Text>
-                <Text style={styles.projectNarrativeText}>
-                  {activeSelectedProject.expectedDeliverables?.trim() || 'No expected deliverables recorded.'}
-                </Text>
-              </View>
-
-              <View style={styles.projectNarrativeCard}>
-                <Text style={styles.detailFieldLabel}>Attachments</Text>
-                {projectAttachments.length > 0 ? (
-                  <View style={styles.projectAttachmentList}>
-                    {projectAttachments.map((attachment, index) => {
-                      const isImageAttachment =
-                        attachment.type === 'image' || isImageMediaUri(attachment.url);
-                      return (
-                        <View key={`${attachment.url}-${index}`} style={styles.projectAttachmentCard}>
-                          {isImageAttachment ? (
-                            <Image source={{ uri: attachment.url }} style={styles.projectAttachmentPreviewImage} />
-                          ) : (
-                            <View style={styles.projectAttachmentPreviewFile}>
-                              <MaterialIcons name="description" size={26} color="#166534" />
-                            </View>
-                          )}
-                          <View style={styles.projectAttachmentInfo}>
-                            <Text style={styles.projectAttachmentTitle}>
-                              {getProjectAttachmentName(attachment.url, index)}
-                            </Text>
-                            <Text style={styles.projectAttachmentMeta}>
-                              {isImageAttachment ? 'Project photo' : 'Project document'}
-                            </Text>
-                            <TouchableOpacity
-                              style={styles.projectAttachmentAction}
-                              onPress={() => void handleOpenProjectAttachment(attachment.url, index)}
-                            >
-                              <MaterialIcons name="download" size={16} color="#166534" />
-                              <Text style={styles.projectAttachmentActionText}>Open or Download</Text>
-                            </TouchableOpacity>
-                          </View>
-                        </View>
-                      );
-                    })}
-                  </View>
-                ) : (
-                  <Text style={styles.projectNarrativeText}>No project attachments uploaded.</Text>
-                )}
-              </View>
             </View>
           ) : null}
 
@@ -9758,76 +9540,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: '#64748b',
   },
-  projectNarrativeCard: {
-    marginTop: 14,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#97a8b8',
-    backgroundColor: '#f8fafc',
-    padding: 16,
-  },
-  projectNarrativeText: {
-    marginTop: 8,
-    fontSize: 14,
-    lineHeight: 22,
-    color: '#334155',
-  },
-  projectAttachmentList: {
-    gap: 14,
-    marginTop: 10,
-  },
-  projectAttachmentCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#97a8b8',
-    backgroundColor: '#ffffff',
-    overflow: 'hidden',
-  },
-  projectAttachmentPreviewImage: {
-    width: '100%',
-    height: 220,
-    backgroundColor: '#e2e8f0',
-  },
-  projectAttachmentPreviewFile: {
-    width: '100%',
-    height: 110,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f0fdf4',
-    borderBottomWidth: 1,
-    borderBottomColor: '#97a8b8',
-  },
-  projectAttachmentInfo: {
-    padding: 14,
-    gap: 6,
-  },
-  projectAttachmentTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0f172a',
-  },
-  projectAttachmentMeta: {
-    fontSize: 12,
-    color: '#64748b',
-  },
-  projectAttachmentAction: {
-    marginTop: 6,
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 12,
-    backgroundColor: '#f0fdf4',
-    borderWidth: 1,
-    borderColor: '#86efac',
-  },
-  projectAttachmentActionText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#166534',
-  },
   timelineDetails: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -11686,14 +11398,19 @@ const programWebStyles = StyleSheet.create({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
+    justifyContent: 'flex-start',
+    alignItems: 'stretch',
+    padding: 12,
+  },
+  backdropDesktop: {
+    paddingTop: 28,
+    paddingRight: 32,
+    paddingBottom: 28,
+    paddingLeft: 232,
   },
   window: {
     width: '100%',
-    maxWidth: 960,
-    maxHeight: '92%',
+    height: '100%',
     backgroundColor: '#ffffff',
     borderRadius: 12,
     overflow: 'hidden',

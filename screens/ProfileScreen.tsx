@@ -75,6 +75,8 @@ export default function ProfileScreen() {
   const [emailDraft, setEmailDraft] = useState('');
   const [phoneDraft, setPhoneDraft] = useState('');
   const [passwordDraft, setPasswordDraft] = useState('');
+  const [newPasswordDraft, setNewPasswordDraft] = useState('');
+  const [confirmPasswordDraft, setConfirmPasswordDraft] = useState('');
   const [userTypeDraft, setUserTypeDraft] = useState<UserType>('Adult');
   const [pillarsDraft, setPillarsDraft] = useState<NVCSector[]>([]);
   const [skillsDraft, setSkillsDraft] = useState('');
@@ -202,6 +204,8 @@ export default function ProfileScreen() {
     setEmailDraft(user.email || '');
     setPhoneDraft(user.phone || '');
     setPasswordDraft(user.password || '');
+    setNewPasswordDraft('');
+    setConfirmPasswordDraft('');
     setUserTypeDraft(user.userType || 'Adult');
     setPillarsDraft(user.pillarsOfInterest || []);
     setSkillsDraft(volunteerProfile?.skills.join(', ') || '');
@@ -314,7 +318,20 @@ export default function ProfileScreen() {
     const normalizedName = nameDraft.trim();
     const normalizedEmail = emailDraft.trim().toLowerCase();
     const normalizedPhone = phoneDraft.trim();
-    const normalizedPassword = passwordDraft.trim();
+    
+    // Use new password if provided, otherwise keep current password
+    let normalizedPassword = passwordDraft.trim();
+    if (newPasswordDraft.trim()) {
+      if (newPasswordDraft !== confirmPasswordDraft) {
+        Alert.alert('Validation Error', 'New passwords do not match.');
+        return;
+      }
+      if (newPasswordDraft.trim().length < 6) {
+        Alert.alert('Validation Error', 'Password must be at least 6 characters long.');
+        return;
+      }
+      normalizedPassword = newPasswordDraft.trim();
+    }
 
     if (!normalizedName || !normalizedPassword) {
       Alert.alert('Validation Error', 'Name and password are required.');
@@ -432,9 +449,19 @@ export default function ProfileScreen() {
 
       await updateUserProfile(syncedUser);
       closeEditModal(false);
+      
+      const changedItems = [];
+      if (normalizedEmail !== user.email) changedItems.push('email');
+      if (normalizedPhone !== user.phone) changedItems.push('phone');
+      if (newPasswordDraft.trim()) changedItems.push('password');
+      
+      const changesText = changedItems.length > 0 
+        ? ` Your ${changedItems.join(', ')} has been updated.`
+        : '';
+      
       Alert.alert(
         'Saved',
-        `Profile updated successfully. Use ${loginIdentifier} the next time you log in.`
+        `Profile updated successfully.${changesText} Use ${loginIdentifier} to log in.`
       );
     } catch (error) {
       Alert.alert(
@@ -916,30 +943,54 @@ export default function ProfileScreen() {
               placeholder="Full name"
               editable={!saveLoading}
             />
+
+            <Text style={styles.sectionHeader}>Login Credentials</Text>
+            <Text style={styles.sectionHint}>Change your username (email) or phone number below.</Text>
+            
+            <Text style={styles.fieldLabel}>Username (Email)</Text>
             <TextInput
               style={styles.input}
               value={emailDraft}
               onChangeText={setEmailDraft}
-              placeholder="Email"
+              placeholder={user?.email || "your.username@example.com"}
               keyboardType="email-address"
               autoCapitalize="none"
               editable={!saveLoading}
             />
+            
+            <Text style={styles.fieldLabel}>Phone Number (Optional)</Text>
             <TextInput
               style={styles.input}
               value={phoneDraft}
               onChangeText={setPhoneDraft}
-              placeholder="Phone number"
+              placeholder={user?.phone || "Phone number"}
               keyboardType="phone-pad"
               editable={!saveLoading}
             />
+
+            <Text style={styles.sectionHeader}>Change Password</Text>
+            <Text style={styles.sectionHint}>Leave blank to keep your current password.</Text>
+            
+            <Text style={styles.fieldLabel}>New Password</Text>
             <TextInput
               style={styles.input}
-              value={passwordDraft}
-              onChangeText={setPasswordDraft}
-              placeholder="Password"
+              value={newPasswordDraft}
+              onChangeText={setNewPasswordDraft}
+              placeholder="Enter new password (min 6 characters)"
               secureTextEntry
               editable={!saveLoading}
+              autoCapitalize="none"
+            />
+            
+            <Text style={styles.fieldLabel}>Confirm New Password</Text>
+            <TextInput
+              style={styles.input}
+              value={confirmPasswordDraft}
+              onChangeText={setConfirmPasswordDraft}
+              placeholder="Re-enter new password"
+              secureTextEntry
+              editable={!saveLoading}
+              autoCapitalize="none"
             />
 
             <Text style={styles.fieldLabel}>Profile Type</Text>
@@ -1512,6 +1563,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#334155',
     marginBottom: 8,
+  },
+  sectionHeader: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginTop: 20,
+    marginBottom: 6,
+  },
+  sectionHint: {
+    fontSize: 12,
+    color: '#64748b',
+    marginBottom: 12,
+    lineHeight: 18,
   },
   optionRow: {
     flexDirection: 'row',

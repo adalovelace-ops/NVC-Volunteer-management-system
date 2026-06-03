@@ -186,14 +186,19 @@ const KNOWN_PLACE_COORDINATES: Array<{
     longitude: 122.4665,
   },
   {
-    keywords: ['bindoy', 'camudlas bindoy', 'camudlas'],
-    latitude: 10.4026,
-    longitude: 123.0059,
+    keywords: ['bindoy', 'camudlas bindoy', 'camudlas', 'danawan bindoy', 'danawan'],
+    latitude: 10.0539,
+    longitude: 123.4442,
   },
   {
     keywords: ['badian'],
     latitude: 9.8647,
     longitude: 123.3967,
+  },
+  {
+    keywords: ['alcantara'],
+    latitude: 12.5167,
+    longitude: 122.0000,
   },
   {
     keywords: ['central visayas', 'region vii', 'region 7'],

@@ -1,10 +1,16 @@
 import "./platformInit";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NavigationContainer } from "@react-navigation/native";
-import { Platform } from "react-native";
+import { Platform, View, ActivityIndicator } from "react-native";
 import { AuthProvider } from "./contexts/AuthContext";
 import StackNavigator from "./navigation/StackNavigator";
 import ErrorBoundary from './components/ErrorBoundary';
+import { useNunitoFont } from './utils/fonts';
+import { useEffect } from 'react';
+import * as SplashScreen from 'expo-splash-screen';
+
+// Keep the splash screen visible while fonts load
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 // Detect ?mode=mobile on web at module level so it stays stable across renders.
 const isMobileModeOnWeb = (() => {
@@ -102,6 +108,23 @@ if (typeof document !== "undefined") {
 
 // Bootstraps the root providers and navigation tree for the mobile and web app.
 export default function App() {
+  const fontsLoaded = useNunitoFont();
+
+  useEffect(() => {
+    if (fontsLoaded) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [fontsLoaded]);
+
+  // Show loading screen while fonts are loading on mobile
+  if (!fontsLoaded && Platform.OS !== 'web') {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
+        <ActivityIndicator size="large" color="#15803d" />
+      </View>
+    );
+  }
+
   return (
     <SafeAreaProvider>
       <AuthProvider>

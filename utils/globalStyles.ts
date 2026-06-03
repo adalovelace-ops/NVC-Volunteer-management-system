@@ -2,134 +2,60 @@ import { StyleSheet, Platform } from 'react-native';
 import { GLOBAL_FONT_FAMILY, FONT_WEIGHTS } from './fonts';
 
 /**
- * Global stylesheet with Nunito font applied by default
- * Use these base styles as a foundation for component styles
+ * Global text styles using Nunito font family
+ * Use these throughout your app for consistent typography
  */
-export const globalStyles = StyleSheet.create({
-  // Text styles with Nunito font
-  textBase: {
-    fontFamily: Platform.select({
-      web: GLOBAL_FONT_FAMILY,
-      default: 'Nunito-Regular',
-    }),
+export const globalTextStyles = StyleSheet.create({
+  // Base text styles
+  text: {
+    fontFamily: GLOBAL_FONT_FAMILY,
+    fontWeight: Platform.OS === 'web' ? '400' : undefined,
   },
-
   textLight: {
-    fontFamily: Platform.select({
-      web: GLOBAL_FONT_FAMILY,
-      default: 'Nunito-Light',
-    }),
-    ...(Platform.OS === 'web' && { fontWeight: '300' }),
+    fontFamily: Platform.OS === 'web' ? GLOBAL_FONT_FAMILY : FONT_WEIGHTS.light as string,
+    fontWeight: Platform.OS === 'web' ? '300' : undefined,
   },
-
   textRegular: {
-    fontFamily: Platform.select({
-      web: GLOBAL_FONT_FAMILY,
-      default: 'Nunito-Regular',
-    }),
-    ...(Platform.OS === 'web' && { fontWeight: '400' }),
+    fontFamily: Platform.OS === 'web' ? GLOBAL_FONT_FAMILY : FONT_WEIGHTS.normal as string,
+    fontWeight: Platform.OS === 'web' ? '400' : undefined,
   },
-
-  textSemibold: {
-    fontFamily: Platform.select({
-      web: GLOBAL_FONT_FAMILY,
-      default: 'Nunito-SemiBold',
-    }),
-    ...(Platform.OS === 'web' && { fontWeight: '600' }),
+  textSemiBold: {
+    fontFamily: Platform.OS === 'web' ? GLOBAL_FONT_FAMILY : FONT_WEIGHTS.semibold as string,
+    fontWeight: Platform.OS === 'web' ? '600' : undefined,
   },
-
   textBold: {
-    fontFamily: Platform.select({
-      web: GLOBAL_FONT_FAMILY,
-      default: 'Nunito-Bold',
-    }),
-    ...(Platform.OS === 'web' && { fontWeight: '700' }),
+    fontFamily: Platform.OS === 'web' ? GLOBAL_FONT_FAMILY : FONT_WEIGHTS.bold as string,
+    fontWeight: Platform.OS === 'web' ? '700' : undefined,
   },
-
   textExtraBold: {
-    fontFamily: Platform.select({
-      web: GLOBAL_FONT_FAMILY,
-      default: 'Nunito-ExtraBold',
-    }),
-    ...(Platform.OS === 'web' && { fontWeight: '800' }),
-  },
-
-  // Common text sizes with Nunito
-  h1: {
-    fontFamily: Platform.select({
-      web: GLOBAL_FONT_FAMILY,
-      default: 'Nunito-ExtraBold',
-    }),
-    fontSize: 32,
-    fontWeight: Platform.select({ web: '800', default: undefined }),
-  },
-
-  h2: {
-    fontFamily: Platform.select({
-      web: GLOBAL_FONT_FAMILY,
-      default: 'Nunito-Bold',
-    }),
-    fontSize: 28,
-    fontWeight: Platform.select({ web: '700', default: undefined }),
-  },
-
-  h3: {
-    fontFamily: Platform.select({
-      web: GLOBAL_FONT_FAMILY,
-      default: 'Nunito-Bold',
-    }),
-    fontSize: 24,
-    fontWeight: Platform.select({ web: '700', default: undefined }),
-  },
-
-  body: {
-    fontFamily: Platform.select({
-      web: GLOBAL_FONT_FAMILY,
-      default: 'Nunito-Regular',
-    }),
-    fontSize: 16,
-    lineHeight: 24,
-  },
-
-  bodySmall: {
-    fontFamily: Platform.select({
-      web: GLOBAL_FONT_FAMILY,
-      default: 'Nunito-Regular',
-    }),
-    fontSize: 14,
-    lineHeight: 20,
-  },
-
-  caption: {
-    fontFamily: Platform.select({
-      web: GLOBAL_FONT_FAMILY,
-      default: 'Nunito-Light',
-    }),
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: Platform.select({ web: '300', default: undefined }),
-  },
-
-  label: {
-    fontFamily: Platform.select({
-      web: GLOBAL_FONT_FAMILY,
-      default: 'Nunito-SemiBold',
-    }),
-    fontSize: 14,
-    fontWeight: Platform.select({ web: '600', default: undefined }),
+    fontFamily: Platform.OS === 'web' ? GLOBAL_FONT_FAMILY : FONT_WEIGHTS.extrabold as string,
+    fontWeight: Platform.OS === 'web' ? '800' : undefined,
   },
 });
 
 /**
- * Apply global Nunito font to a style object
- * @param style - The style object to enhance
- * @returns The enhanced style with Nunito font applied
+ * Helper to get font style based on weight
  */
-export function withNunitoFont(style: any = {}): any {
+export function getFontStyle(weight: 'light' | 'normal' | 'semibold' | 'bold' | 'extrabold' = 'normal') {
   return {
-    ...globalStyles.textBase,
-    ...style,
+    fontFamily: Platform.OS === 'web' ? GLOBAL_FONT_FAMILY : FONT_WEIGHTS[weight] as string,
+    fontWeight: Platform.OS === 'web' ? {
+      light: '300',
+      normal: '400',
+      semibold: '600',
+      bold: '700',
+      extrabold: '800',
+    }[weight] : undefined,
   };
 }
 
-export default globalStyles;
+/**
+ * Apply Nunito font to any text component
+ * Example: <Text style={withNunito({ fontSize: 16, color: '#000' })}>Hello</Text>
+ */
+export function withNunito(styles?: any) {
+  return {
+    ...globalTextStyles.text,
+    ...styles,
+  };
+}

@@ -392,7 +392,7 @@ export default function MappingScreen({ navigation }: any) {
             header.innerHTML = `<div style="font-weight:700;color:#0f172a;margin-bottom:4px;">${escapeHtml(project.title)}</div><div style="font-weight:700;color:#475569;margin-bottom:6px;">${project.isEvent ? 'Event' : 'Project'}</div>`;
             container.appendChild(header);
 
-            if (partner) {
+            if (partner && !project.isEvent) {
               const partnerRow = document.createElement('button');
               partnerRow.type = 'button';
               partnerRow.dataset.kind = 'partner';
