@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import ModernTheme from '../utils/modernTheme';
 import {
   Animated,
   Easing,
@@ -975,6 +976,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const [allVolunteerMatches, setAllVolunteerMatches] = useState<VolunteerProjectMatch[]>([]);
   const [volunteerTimeLogs, setVolunteerTimeLogs] = useState<VolunteerTimeLog[]>([]);
   const [selectedAttendanceVolunteerId, setSelectedAttendanceVolunteerId] = useState<string | null>(null);
+  const [selectedAttendancePhotoUri, setSelectedAttendancePhotoUri] = useState<string | null>(null);
   const [selectedAttendanceDateKey, setSelectedAttendanceDateKey] = useState<string | null>(null);
   const [attendancePickerVisible, setAttendancePickerVisible] = useState(false);
   const [taskBoardModalVisible, setTaskBoardModalVisible] = useState(false);
@@ -984,6 +986,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const [projectEditorMode, setProjectEditorMode] = useState<'project' | 'event' | null>(null);
   const [isProjectSaveSuccess, setIsProjectSaveSuccess] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [showParticipantsSection, setShowParticipantsSection] = useState(false);
   const [isTaskSaveSuccess, setIsTaskSaveSuccess] = useState(false);
   const [taskSaveSuccessMessage, setTaskSaveSuccessMessage] = useState('');
   const [taskSaveNotice, setTaskSaveNotice] = useState<string | null>(null);
@@ -1094,6 +1097,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
   const closeVolunteerAttendanceDetails = () => {
     setSelectedAttendanceVolunteerId(null);
+    setSelectedAttendancePhotoUri(null);
   };
 
   const resetProjectLocationSelection = () => {
@@ -1519,13 +1523,35 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     const doDelete = async () => {
       setActionLoadingKey(`deleteProgram-${trackId}`);
       try {
+        // Optimistically remove from UI
         setProgramTracks(current => current.filter(track => track.id !== trackId));
+        
+        // Delete from backend
         await deleteProgram(trackId);
+        
+        // Force clear cache to ensure fresh data
+        clearStorageCache(['programs', 'programTracks', 'projects', 'events']);
+        
+        // Wait a bit to ensure backend deletion propagates
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // Reload fresh data
         await loadProgramTracks();
-        Alert.alert('✅ Program Deleted', `"${trackTitle}" has been removed from the dashboard.`);
+        
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(`✅ Program Deleted\n\n"${trackTitle}" has been removed from the dashboard.`);
+        } else {
+          Alert.alert('✅ Program Deleted', `"${trackTitle}" has been removed from the dashboard.`);
+        }
       } catch (error) {
+        // On error, reload to restore correct state
         await loadProgramTracks();
-        Alert.alert('Error', getRequestErrorMessage(error, 'Failed to delete program.'));
+        const errorMsg = getRequestErrorMessage(error, 'Failed to delete program.');
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(`Error\n\n${errorMsg}`);
+        } else {
+          Alert.alert('Error', errorMsg);
+        }
       } finally {
         setActionLoadingKey(null);
       }
@@ -1744,16 +1770,28 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       );
 
       try {
+        // Delete from backend
         await deleteProjectLikeRecord(event);
-        void loadProjects();
+        
+        // Force clear cache to ensure fresh data
+        clearStorageCache(['events', 'projects', 'statusUpdates', 'volunteerProjectJoins', 'volunteerMatches', 'volunteerTimeLogs']);
+        
+        // Wait a bit to ensure backend deletion propagates
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // Reload fresh data
+        await loadProjects();
+        
         showTaskSaveNotice(`Event "${event.title}" was deleted successfully.`, 1200);
       } catch (error) {
         setProjects(previousProjects);
         setSelectedProject(previousSelectedProject);
-        Alert.alert(
-          getRequestErrorTitle(error),
-          getRequestErrorMessage(error, 'Failed to delete event.')
-        );
+        const errorMsg = getRequestErrorMessage(error, 'Failed to delete event.');
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(`${getRequestErrorTitle(error)}\n\n${errorMsg}`);
+        } else {
+          Alert.alert(getRequestErrorTitle(error), errorMsg);
+        }
       } finally {
         setActionLoadingKey(null);
       }
@@ -1818,17 +1856,66 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   };
 
   // Helper: Auto-updates latitude/longitude when address is set from location selection
-  const updateLocationCoordinatesFromAddress = (address: string) => {
+  const updateLocationCoordinatesFromAddress = async (address: string) => {
     if (!address) {
       handleProjectDraftChange('latitude', '');
       handleProjectDraftChange('longitude', '');
       return;
     }
 
-    const coordinates = inferCoordinatesFromPlace(address);
+    // 1. First try synchronous city-level local lookup (no province fallback yet)
+    const coordinates = inferCoordinatesFromPlace(address, [], false);
     if (coordinates) {
       handleProjectDraftChange('latitude', String(coordinates.latitude));
       handleProjectDraftChange('longitude', String(coordinates.longitude));
+      return;
+    }
+
+    // 2. If city is not found locally, fetch accurate coordinates using live geocoding API
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`,
+        {
+          headers: {
+            'User-Agent': 'NVC-Connect-Volunteer-System/1.0',
+          },
+        }
+      );
+      const data = await response.json();
+      if (data && data.length > 0) {
+        handleProjectDraftChange('latitude', String(data[0].lat));
+        handleProjectDraftChange('longitude', String(data[0].lon));
+        return;
+      }
+
+      // Try geocoding with a slightly shorter query (e.g. drop barangay if present) if full address fails
+      const parts = address.split(',').map(p => p.trim());
+      if (parts.length > 2) {
+        const shorterQuery = parts.slice(1).join(', '); // drop barangay, keep city + region
+        const fallbackResponse = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(shorterQuery)}&format=json&limit=1`,
+          {
+            headers: {
+              'User-Agent': 'NVC-Connect-Volunteer-System/1.0',
+            },
+          }
+        );
+        const fallbackData = await fallbackResponse.json();
+        if (fallbackData && fallbackData.length > 0) {
+          handleProjectDraftChange('latitude', String(fallbackData[0].lat));
+          handleProjectDraftChange('longitude', String(fallbackData[0].lon));
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn('[Geocoder] Live geocoding request failed, falling back to local database:', error);
+    }
+
+    // 3. Last resort: fall back to local province center coordinates
+    const provinceCoords = inferCoordinatesFromPlace(address, [], true);
+    if (provinceCoords) {
+      handleProjectDraftChange('latitude', String(provinceCoords.latitude));
+      handleProjectDraftChange('longitude', String(provinceCoords.longitude));
     }
   };
 
@@ -2138,7 +2225,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
     const parsedLatitude = Number(projectDraft.latitude);
     const parsedLongitude = Number(projectDraft.longitude);
-    const volunteersNeeded = Number(projectDraft.volunteersNeeded);
+    // For events, use the user-provided value; for projects, set to 0
+    const volunteersNeeded = projectDraft.isEvent ? Number(projectDraft.volunteersNeeded) : 0;
     const startDateValue = new Date(projectDraft.startDate);
     const endDateValue = new Date(projectDraft.endDate);
     const existingProject = editingProjectId
@@ -2422,21 +2510,42 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     const projectToDelete = selectedProject;
     const doDelete = async () => {
       try {
+        // Optimistically remove from UI
         setProjects(currentProjects => currentProjects.filter(project => project.id !== projectToDelete.id));
+        
+        // Delete from backend
         await deleteProjectLikeRecord(projectToDelete);
+        
+        // Force clear cache to ensure fresh data
+        clearStorageCache(['projects', 'events', 'statusUpdates', 'volunteerProjectJoins', 'volunteerMatches', 'volunteerTimeLogs', 'partnerProjectApplications', 'partnerReports']);
+        
+        // Wait a bit to ensure backend deletion propagates
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // Navigate back and clear related state
         handleReturnToProjectList();
         setStatusUpdates([]);
         setAllPartnerApplications([]);
         setPartnerReports([]);
         setVolunteerJoinRecords([]);
+        
+        // Reload fresh data
         await loadProjects();
-        Alert.alert('Deleted', projectToDelete.isEvent ? 'Event removed.' : 'Program removed.');
+        
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(`Deleted\n\n${projectToDelete.isEvent ? 'Event removed.' : 'Project removed.'}`);
+        } else {
+          Alert.alert('Deleted', projectToDelete.isEvent ? 'Event removed.' : 'Project removed.');
+        }
       } catch (error) {
+        // On error, reload to restore correct state
         await loadProjects();
-        Alert.alert(
-          getRequestErrorTitle(error),
-          getRequestErrorMessage(error, `Failed to delete ${selectedRecordType.toLowerCase()}.`)
-        );
+        const errorMsg = getRequestErrorMessage(error, `Failed to delete ${selectedRecordType.toLowerCase()}.`);
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(`${getRequestErrorTitle(error)}\n\n${errorMsg}`);
+        } else {
+          Alert.alert(getRequestErrorTitle(error), errorMsg);
+        }
       }
     };
 
@@ -2667,8 +2776,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       Alert.alert(
         'Saved',
         removeImage
-          ? `${updatedProject.isEvent ? 'Event' : 'Program'} picture removed.`
-          : `${updatedProject.isEvent ? 'Event' : 'Program'} picture updated.`
+          ? `${updatedProject.isEvent ? 'Event' : 'Project'} picture removed.`
+          : `${updatedProject.isEvent ? 'Event' : 'Project'} picture updated.`
       );
     } catch (error: any) {
       Alert.alert(
@@ -3133,72 +3242,100 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       return;
     }
 
-    Alert.alert(
-      'Delete Task',
-      'Remove this internal task from the project?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            const updatedProject: Project = {
-              ...currentSelectedProject,
-              internalTasks: (Array.isArray(currentSelectedProject.internalTasks) ? currentSelectedProject.internalTasks : []).filter(task => task.id !== taskId),
-              updatedAt: new Date().toISOString(),
-            };
+    const confirmDelete = () => {
+      const executeDelete = async () => {
+        const updatedProject: Project = {
+          ...currentSelectedProject,
+          internalTasks: (Array.isArray(currentSelectedProject.internalTasks) ? currentSelectedProject.internalTasks : []).filter(task => task.id !== taskId),
+          updatedAt: new Date().toISOString(),
+        };
 
-            try {
-              await saveProjectLikeRecord(updatedProject);
-              clearStorageCache(['projects', 'events']);
-              setProjects(currentProjects =>
-                currentProjects.map(project =>
-                  project.id === updatedProject.id ? updatedProject : project
-                )
-              );
-              setSelectedProject(updatedProject);
-              if (editingTaskId === taskId) {
-                closeTaskModal();
-              }
-              Alert.alert('Deleted', 'Internal task removed.');
-            } catch (error) {
-              Alert.alert(
-                getRequestErrorTitle(error),
-                getRequestErrorMessage(error, 'Failed to delete the internal task.')
-              );
-            }
+        try {
+          await saveProjectLikeRecord(updatedProject);
+          clearStorageCache(['projects', 'events']);
+          setProjects(currentProjects =>
+            currentProjects.map(project =>
+              project.id === updatedProject.id ? updatedProject : project
+            )
+          );
+          setSelectedProject(updatedProject);
+          if (editingTaskId === taskId) {
+            closeTaskModal();
+          }
+          
+          if (Platform.OS === 'web') {
+            window.alert('Task deleted successfully');
+          } else {
+            Alert.alert('Deleted', 'Internal task removed.');
+          }
+        } catch (error) {
+          if (Platform.OS === 'web') {
+            window.alert(getRequestErrorMessage(error, 'Failed to delete the internal task.'));
+          } else {
+            Alert.alert(
+              getRequestErrorTitle(error),
+              getRequestErrorMessage(error, 'Failed to delete the internal task.')
+            );
+          }
+        }
+      };
+      
+      executeDelete();
+    };
+
+    // Platform-specific confirmation
+    if (Platform.OS === 'web') {
+      if (window.confirm('Remove this internal task from the project?')) {
+        confirmDelete();
+      }
+    } else {
+      Alert.alert(
+        'Delete Task',
+        'Remove this internal task from the project?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: confirmDelete,
           },
-        },
-      ]
-    );
+        ]
+      );
+    }
   };
 
   // Renders one project card in the lifecycle list.
   const renderProjectCard = (project: Project) => {
     const pendingRequestCount = pendingVolunteerRequestCountByProjectId.get(project.id) || 0;
     const projectImageSource = getPrimaryProjectImageSource(project);
-    const projectCategoryLabel = `${project.isEvent ? 'Event' : 'Program'} | ${project.programModule || project.category}`;
+    const projectCategoryLabel = `${project.isEvent ? 'Event' : 'Project'} | ${project.programModule || project.category}`;
     const projectDateLabel = `${format(new Date(project.startDate), 'EEE, dd MMM yyyy')} - ${format(
       new Date(project.endDate),
       'EEE, dd MMM yyyy'
     )}`;
-
+    
     const projectAuthor = partnerApplicationByProjectId.get(project.id);
+    const projectStatus = getProjectDisplayStatus(project);
+    const isEnded = projectStatus === 'Completed' || projectStatus === 'Cancelled';
 
     return (
       <View
         key={project.id}
-        style={[styles.card, isDesktop ? styles.cardDesktop : styles.cardMobile]}
+        style={[
+          styles.card, 
+          isDesktop ? styles.cardDesktop : styles.cardMobile,
+          isEnded && styles.cardEnded
+        ]}
       >
         <TouchableOpacity onPress={() => handleSelectProject(project)} activeOpacity={0.9}>
           {projectImageSource ? (
             <Image
               source={projectImageSource}
-              style={styles.cardImage}
+              style={[styles.cardImage, isEnded && styles.cardImageEnded]}
               resizeMode="cover"
             />
           ) : (
-            <View style={styles.cardImage} />
+            <View style={[styles.cardImage, isEnded && styles.cardImageEnded]} />
           )}
 
           <View style={styles.cardBody}>
@@ -3415,10 +3552,14 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             ) : (
               <View>
                 <View style={styles.projectBoxGrid}>
-                  {sectionProjects.map(project => (
+                  {sectionProjects.map(project => {
+                    const projectStatus = getProjectDisplayStatus(project);
+                    const isEnded = projectStatus === 'Completed' || projectStatus === 'Cancelled';
+                    
+                    return (
                     <TouchableOpacity
                       key={project.id}
-                      style={styles.projectBox}
+                      style={[styles.projectBox, isEnded && styles.projectBoxEnded]}
                       onPress={() => {
                         void handleSelectProject(project);
                       }}
@@ -3454,7 +3595,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                         {(project.volunteers || []).length}/{project.volunteersNeeded} volunteers
                       </Text>
 
-                      {isAdmin && (
+                      {isAdmin && getProjectDisplayStatus(project) !== 'Completed' && getProjectDisplayStatus(project) !== 'Cancelled' && (
                         <View style={styles.eventBoxActions} pointerEvents="box-none">
                           <Pressable
                             style={styles.eventBoxActionButton}
@@ -3489,7 +3630,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                         </View>
                       )}
                     </TouchableOpacity>
-                  ))}
+                  );
+                  })}
                 </View>
                 {isAdmin && (
                   <TouchableOpacity
@@ -3576,10 +3718,14 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
         {events.length ? (
           <View style={styles.eventBoxGrid}>
-            {events.map(event => (
+            {events.map(event => {
+              const eventStatus = getProjectDisplayStatus(event);
+              const isEnded = eventStatus === 'Completed' || eventStatus === 'Cancelled';
+              
+              return (
               <TouchableOpacity
                 key={event.id}
-                style={styles.eventBox}
+                style={[styles.eventBox, isEnded && styles.eventBoxEnded]}
                 onPress={() => {
                   void handleSelectProject(event);
                 }}
@@ -3615,7 +3761,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   {event.volunteers.length}/{event.volunteersNeeded} volunteers
                 </Text>
 
-                {isAdmin && (
+                {isAdmin && getProjectDisplayStatus(event) !== 'Completed' && getProjectDisplayStatus(event) !== 'Cancelled' && (
                   <View style={styles.eventBoxActions} pointerEvents="box-none">
                     <Pressable
                       style={styles.eventBoxActionButton}
@@ -3650,7 +3796,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   </View>
                 )}
               </TouchableOpacity>
-            ))}
+            );
+            })}
           </View>
         ) : (
           <View style={[styles.programSuiteEmptyState, { paddingBottom: 8 }]}>
@@ -4165,17 +4312,20 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             <Text style={[styles.labelRight, styles.labelTop]}>Place</Text>
           </View>
 
-          <View style={[styles.formRow, styles.formRowReverse]}>
-            <TextInput
-              style={[styles.textArea, styles.inputWithLabel, styles.singleLineInput]}
-              placeholder="Volunteer slots"
-              placeholderTextColor="#999"
-              keyboardType="number-pad"
-              value={projectDraft.volunteersNeeded}
-              onChangeText={value => handleProjectDraftChange('volunteersNeeded', value)}
-            />
-            <Text style={styles.labelRight}>Volunteer Slots</Text>
-          </View>
+          {/* Show Volunteer Slots field only for events, not projects */}
+          {projectDraft.isEvent && (
+            <View style={[styles.formRow, styles.formRowReverse]}>
+              <TextInput
+                style={[styles.textArea, styles.inputWithLabel, styles.singleLineInput]}
+                placeholder="Volunteer slots"
+                placeholderTextColor="#999"
+                keyboardType="number-pad"
+                value={projectDraft.volunteersNeeded}
+                onChangeText={value => handleProjectDraftChange('volunteersNeeded', value)}
+              />
+              <Text style={styles.labelRight}>Volunteer Slots</Text>
+            </View>
+          )}
 
           <View style={[styles.formRow, styles.formRowTop, styles.formRowReverse]}>
             <View style={[styles.statusOptionsCard, styles.skillSelectionCard]}>
@@ -4957,6 +5107,16 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           isApprovedProposalLikeProject(project, module, activeProgramTracks, approvedProposalModules)
         );
         const sectionEvents = sectionItems.filter(project => project.isEvent);
+        
+        // Also include events from child projects (events where parentProjectId points to a project in this program)
+        const sectionProjectIds = new Set(sectionProjects.map(p => p.id));
+        const eventsFromChildProjects = projects.filter(
+          project => project.isEvent && project.parentProjectId && sectionProjectIds.has(project.parentProjectId)
+        );
+        const allSectionEvents = [...sectionEvents, ...eventsFromChildProjects]
+          .filter((event, index, array) => array.findIndex(e => e.id === event.id) === index) // Remove duplicates
+          .sort((left, right) => new Date(left.startDate).getTime() - new Date(right.startDate).getTime());
+
 
         return {
           module,
@@ -4969,17 +5129,17 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           border: '#ddd6fe',
           imageUrl: track.imageUrl,
           projects: sectionProjects,
-          events: sectionEvents,
+          events: allSectionEvents,
           totalPrograms: sectionProjects.length,
           inProgressCount: sectionProjects.filter(project => getProjectDisplayStatus(project) === 'In Progress').length,
           planningCount: sectionProjects.filter(project => getProjectDisplayStatus(project) === 'Planning').length,
           completedCount: sectionProjects.filter(project => getProjectDisplayStatus(project) === 'Completed').length,
           cancelledCount: sectionProjects.filter(project => getProjectDisplayStatus(project) === 'Cancelled').length,
-          eventCount: sectionEvents.length,
-          eventInProgressCount: sectionEvents.filter(event => getProjectDisplayStatus(event) === 'In Progress').length,
-          eventPlanningCount: sectionEvents.filter(event => getProjectDisplayStatus(event) === 'Planning').length,
-          eventCompletedCount: sectionEvents.filter(event => getProjectDisplayStatus(event) === 'Completed').length,
-          eventCancelledCount: sectionEvents.filter(event => getProjectDisplayStatus(event) === 'Cancelled').length,
+          eventCount: allSectionEvents.length,
+          eventInProgressCount: allSectionEvents.filter(event => getProjectDisplayStatus(event) === 'In Progress').length,
+          eventPlanningCount: allSectionEvents.filter(event => getProjectDisplayStatus(event) === 'Planning').length,
+          eventCompletedCount: allSectionEvents.filter(event => getProjectDisplayStatus(event) === 'Completed').length,
+          eventCancelledCount: allSectionEvents.filter(event => getProjectDisplayStatus(event) === 'Cancelled').length,
           pendingProposalCount: pendingProposalApplication ? 1 : 0,
         };
       }),
@@ -5034,6 +5194,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   }, [expandedProgramModules, programSections]);
 
   const activeSelectedProject = getCurrentSelectedProject();
+  const isProjectReadOnly = activeSelectedProject 
+    ? (getProjectDisplayStatus(activeSelectedProject) === 'Completed' || getProjectDisplayStatus(activeSelectedProject) === 'Cancelled')
+    : false;
 
   if (activeSelectedProject) {
     const volunteerEntries = getProjectVolunteerEntries(activeSelectedProject);
@@ -5134,8 +5297,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       activeSelectedProject.parentProjectId
         ? projects.find(project => project.id === activeSelectedProject.parentProjectId) || null
         : null;
-    const detailEntityLabel = activeSelectedProject.isEvent ? 'Event' : 'Program';
-    const detailWorkspaceLabel = activeSelectedProject.isEvent ? 'Event Workspace' : 'Program Workspace';
+    const detailEntityLabel = activeSelectedProject.isEvent ? 'Event' : 'Project';
+    const detailWorkspaceLabel = activeSelectedProject.isEvent ? 'Event Workspace' : 'Project Workspace';
     const detailModuleLabel = activeSelectedProject.programModule || activeSelectedProject.category;
     const formattedStartDate = formatProjectDateLabel(activeSelectedProject.startDate);
     const formattedEndDate = formatProjectDateLabel(activeSelectedProject.endDate);
@@ -5156,7 +5319,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         : 'This program record keeps planning, staffing, and delivery details in one place.');
     const detailWorkspaceCaption = activeSelectedProject.isEvent
       ? 'Track staffing, schedule, and delivery activity from a single event workspace.'
-      : 'Review program setup, delivery details, and volunteer coverage in one place.';
+      : 'Review program setup and delivery details in one place.';
     const linkedEvents = activeSelectedProject.isEvent
       ? []
       : projects
@@ -5168,11 +5331,14 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         label: 'Schedule',
         value: formattedScheduleRange,
       },
-      {
-        icon: 'groups' as const,
-        label: activeSelectedProject.isEvent ? 'Confirmed Team' : 'Volunteer Coverage',
-        value: `${volunteerSlotsFilled}/${volunteerSlotsNeeded}`,
-      },
+      // Show volunteer coverage only for events, not projects
+      ...(activeSelectedProject.isEvent
+        ? [{
+          icon: 'groups' as const,
+          label: 'Confirmed Team',
+          value: `${volunteerSlotsFilled}/${volunteerSlotsNeeded}`,
+        }]
+        : []),
       {
         icon: 'location-on' as const,
         label: 'Location',
@@ -5457,14 +5623,16 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 <View style={styles.projectEventPanelCopy}>
                   <Text style={styles.projectEventPanelTitle}>Events</Text>
                 </View>
-                <TouchableOpacity
-                  style={styles.projectEventPanelButton}
-                  onPress={() => openCreateEventModal(activeSelectedProject)}
-                  activeOpacity={0.85}
-                >
-                  <MaterialIcons name="event" size={16} color="#0f766e" />
-                  <Text style={styles.projectEventPanelButtonText}>Add Event</Text>
-                </TouchableOpacity>
+                {!isProjectReadOnly && (
+                  <TouchableOpacity
+                    style={styles.projectEventPanelButton}
+                    onPress={() => openCreateEventModal(activeSelectedProject)}
+                    activeOpacity={0.85}
+                  >
+                    <MaterialIcons name="event" size={16} color="#0f766e" />
+                    <Text style={styles.projectEventPanelButtonText}>Add Event</Text>
+                  </TouchableOpacity>
+                )}
               </View>
 
               {linkedEvents.length === 0 ? (
@@ -5519,6 +5687,36 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             </View>
           ) : null}
 
+          {!activeSelectedProject.isEvent && (
+            <View style={[styles.detailsSection, styles.detailsSectionCard]}>
+              <Text style={styles.sectionTitle}>Document Attachments</Text>
+              <Text style={styles.sectionHint}>Proposal or supporting documents from partner organization.</Text>
+              
+              {(activeSelectedProject.attachments || []).filter(attachment => attachment.type === 'document').length === 0 ? (
+                <View style={styles.projectEventEmptyState}>
+                  <Text style={styles.projectEventEmptyTitle}>No attachments yet</Text>
+                  <Text style={styles.projectEventEmptyMeta}>
+                    Documents from partner proposals will appear here.
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.detailFieldGrid}>
+                  {(activeSelectedProject.attachments || [])
+                    .filter(attachment => attachment.type === 'document')
+                    .map((attachment, index) => (
+                      <View key={index} style={styles.detailField}>
+                        <Text style={styles.detailFieldLabel}>Document {index + 1}</Text>
+                        <Text style={styles.detailFieldValue}>
+                          {attachment.url.split('/').pop() || 'Attached document'}
+                        </Text>
+                        <Text style={styles.detailFieldMeta}>From project proposal</Text>
+                      </View>
+                    ))}
+                </View>
+              )}
+            </View>
+          )}
+
           <View
             style={[
               styles.detailsSection,
@@ -5528,7 +5726,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           >
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Event Task Board</Text>
-              {isAdmin && (
+              {isAdmin && !isProjectReadOnly && (
                 <TouchableOpacity style={styles.addButton} onPress={openCreateTaskModal}>
                   <MaterialIcons name="add-task" size={20} color="#fff" />
                 </TouchableOpacity>
@@ -5643,6 +5841,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
                               {isAdmin && (
                                 <View style={styles.taskActionRow}>
+                                  {!isProjectReadOnly && (
+                                    <>
                                   <TouchableOpacity
                                     style={[styles.applicationButton, styles.approveButton]}
                                     onPress={() => {
@@ -5658,6 +5858,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                                   >
                                     <Text style={styles.applicationButtonText}>Delete</Text>
                                   </TouchableOpacity>
+                                    </>
+                                  )}
                                 </View>
                               )}
                             </View>
@@ -5889,6 +6091,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                           <>
                             {isAdmin && (
                               <View style={styles.applicationActions}>
+                                {!isProjectReadOnly && (
+                                  <>
                                 <TouchableOpacity
                                   style={[styles.applicationButton, styles.approveButton]}
                                   onPress={() => confirmReviewVolunteerRequest(requestEntry, 'Matched')}
@@ -5901,6 +6105,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                                 >
                                   <Text style={styles.applicationButtonText}>Reject</Text>
                                 </TouchableOpacity>
+                                  </>
+                                )}
                               </View>
                             )}
 
@@ -5920,84 +6126,73 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               </View>
 
               <View style={[styles.detailsSection, styles.detailsSectionCard]}>
-                <Text style={styles.sectionTitle}>
-                  Event Participants ({volunteerEntries.length})
-                </Text>
-                <Text style={styles.sectionHint}>
-                  Confirmed volunteers are listed here with their participation history and current status.
-                </Text>
-
-                {volunteerEntries.length === 0 ? (
-                  <Text style={styles.emptyText}>No volunteers have joined this event yet</Text>
-                ) : (
-                  <View style={styles.updatesList}>
-                    {volunteerEntries.map(volunteerEntry => (
-                      <View key={volunteerEntry.id} style={styles.volunteerCard}>
-                        <View style={styles.volunteerCardHeader}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.volunteerName}>{volunteerEntry.name}</Text>
-                            <Text style={styles.volunteerMeta}>{volunteerEntry.email}</Text>
-                            <Text style={styles.volunteerMeta}>
-                              {volunteerEntry.joinedAt
-                                ? `Joined ${format(new Date(volunteerEntry.joinedAt), 'PPpp')}`
-                                : 'Joined before tracking was enabled'}
-                            </Text>
-                            <Text style={styles.volunteerMeta}>
-                              {volunteerEntry.participationStatus === 'Completed' && volunteerEntry.completedAt
-                                ? `Completed ${format(new Date(volunteerEntry.completedAt), 'PPpp')}`
-                                : 'Participation active'}
-                            </Text>
-                          </View>
-                          <View style={styles.volunteerBadges}>
-                            {volunteerEntry.source && (
-                              <View style={styles.volunteerSourceBadge}>
-                                <Text style={styles.volunteerSourceBadgeText}>
-                                  {volunteerEntry.source === 'VolunteerJoin'
-                                    ? 'Volunteer Join'
-                                    : 'Admin Match'}
-                                </Text>
-                              </View>
-                            )}
-                            <View
-                              style={[
-                                styles.volunteerParticipationBadge,
-                                volunteerEntry.participationStatus === 'Completed'
-                                  ? styles.volunteerParticipationCompletedBadge
-                                  : styles.volunteerParticipationActiveBadge,
-                              ]}
-                            >
-                              <Text style={styles.volunteerParticipationBadgeText}>
-                                {volunteerEntry.participationStatus}
-                              </Text>
-                            </View>
-                            {volunteerEntry.status && (
-                              <View style={styles.volunteerStatusBadge}>
-                                <Text style={styles.volunteerStatusBadgeText}>
-                                  {volunteerEntry.status}
-                                </Text>
-                              </View>
-                            )}
-                          </View>
-                        </View>
-                        {isAdmin && volunteerEntry.participationStatus !== 'Completed' && (
-                          <TouchableOpacity
-                            style={styles.completeVolunteerButton}
-                            onPress={() => handleCompleteVolunteerParticipation(volunteerEntry.id)}
-                          >
-                            <MaterialIcons name="task-alt" size={16} color="#fff" />
-                            <Text style={styles.completeVolunteerButtonText}>Mark Complete</Text>
-                          </TouchableOpacity>
-                        )}
-                        <TouchableOpacity
-                          style={styles.viewVolunteerProfileButton}
-                          onPress={() => openVolunteerProfile(volunteerEntry.id)}
-                        >
-                          <MaterialIcons name="person-search" size={16} color="#2563eb" />
-                          <Text style={styles.viewVolunteerProfileText}>Open Volunteer Profile</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ))}
+                <TouchableOpacity
+                  style={styles.sectionHeaderClickable}
+                  onPress={() => setShowParticipantsSection(!showParticipantsSection)}
+                  activeOpacity={0.7}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.sectionTitle}>
+                      Event Participants ({volunteerEntries.length})
+                    </Text>
+                    <Text style={styles.sectionHint}>
+                      Confirmed volunteers are listed here with their participation history and current status.
+                    </Text>
                   </View>
+                  <MaterialIcons 
+                    name={showParticipantsSection ? "expand-less" : "expand-more"} 
+                    size={24} 
+                    color="#64748b" 
+                  />
+                </TouchableOpacity>
+
+                {showParticipantsSection && (
+                  <>
+                    {volunteerEntries.length === 0 ? (
+                      <Text style={styles.emptyText}>No volunteers have joined this event yet</Text>
+                    ) : (
+                      <View style={styles.volunteersGrid}>
+                        {volunteerEntries.map(volunteerEntry => (
+                          <View key={volunteerEntry.id} style={styles.volunteerCompactCard}>
+                            <View style={styles.volunteerCompactHeader}>
+                              <Text style={styles.volunteerName}>{volunteerEntry.name}</Text>
+                              <View style={styles.volunteerBadgesCompact}>
+                                <View
+                                  style={[
+                                    styles.volunteerParticipationBadge,
+                                    volunteerEntry.participationStatus === 'Completed'
+                                      ? styles.volunteerParticipationCompletedBadge
+                                      : styles.volunteerParticipationActiveBadge,
+                                  ]}
+                                >
+                                  <Text style={styles.volunteerParticipationBadgeText}>
+                                    {volunteerEntry.participationStatus}
+                                  </Text>
+                                </View>
+                              </View>
+                            </View>
+                            <Text style={styles.volunteerMetaSmall}>{volunteerEntry.email}</Text>
+                            {isAdmin && volunteerEntry.participationStatus !== 'Completed' && (
+                              <TouchableOpacity
+                                style={styles.completeVolunteerButtonSmall}
+                                onPress={() => handleCompleteVolunteerParticipation(volunteerEntry.id)}
+                              >
+                                <MaterialIcons name="task-alt" size={14} color="#fff" />
+                                <Text style={styles.completeVolunteerButtonTextSmall}>Complete</Text>
+                              </TouchableOpacity>
+                            )}
+                            <TouchableOpacity
+                              style={styles.viewVolunteerProfileButtonSmall}
+                              onPress={() => openVolunteerProfile(volunteerEntry.id)}
+                            >
+                              <MaterialIcons name="person-search" size={14} color="#2563eb" />
+                              <Text style={styles.viewVolunteerProfileTextSmall}>View Profile</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </>
                 )}
               </View>
             </>
@@ -6685,11 +6880,13 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                         </Text>
                       </View>
                       {(log.attendancePhoto || log.completionPhoto) && isImageMediaUri(log.attendancePhoto || log.completionPhoto) ? (
-                        <Image
-                          source={{ uri: log.attendancePhoto || log.completionPhoto || '' }}
-                          style={styles.attendanceRecordPhoto}
-                          resizeMode="cover"
-                        />
+                        <TouchableOpacity
+                          style={styles.attendanceRecordPhotoButton}
+                          onPress={() => setSelectedAttendancePhotoUri(log.attendancePhoto || log.completionPhoto || '')}
+                        >
+                          <MaterialIcons name="photo" size={18} color="#166534" />
+                          <Text style={styles.attendanceRecordPhotoButtonText}>View uploaded photo</Text>
+                        </TouchableOpacity>
                       ) : (
                         <View style={styles.attendanceRecordTimeline}>
                           <Text style={styles.attendanceRecordLabel}>Photo</Text>
@@ -6702,6 +6899,28 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   <Text style={styles.emptyText}>No attendance upload for this selected day yet.</Text>
                 )}
               </ScrollView>
+            </View>
+          </View>
+        </Modal>
+        <Modal
+          visible={Boolean(selectedAttendancePhotoUri)}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setSelectedAttendancePhotoUri(null)}
+        >
+          <View style={styles.attendanceImagePreviewBackdrop}>
+            <View style={styles.attendanceImagePreviewCard}>
+              <View style={styles.attendanceImagePreviewHeader}>
+                <Text style={styles.proposalModalTitle}>Attendance Photo</Text>
+                <TouchableOpacity onPress={() => setSelectedAttendancePhotoUri(null)} style={styles.attendanceImagePreviewClose}>
+                  <MaterialIcons name="close" size={20} color="#0f172a" />
+                </TouchableOpacity>
+              </View>
+              <Image
+                source={{ uri: selectedAttendancePhotoUri || '' }}
+                style={styles.attendanceImagePreview}
+                resizeMode="contain"
+              />
             </View>
           </View>
         </Modal>
@@ -8778,6 +8997,9 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 1,
   },
+  projectBoxEnded: {
+    opacity: 0.5,
+  },
   eventBox: {
     width: 200,
     minHeight: 130,
@@ -8792,6 +9014,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 8,
     elevation: 1,
+  },
+  eventBoxEnded: {
+    opacity: 0.5,
   },
   eventBoxTopRow: {
     flexDirection: 'row',
@@ -8887,6 +9112,12 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 80,
     backgroundColor: '#dbe4ea',
+  },
+  cardEnded: {
+    opacity: 0.6,
+  },
+  cardImageEnded: {
+    opacity: 0.4,
   },
   cardBody: {
     flex: 1,
@@ -9488,6 +9719,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0f172a',
     marginBottom: 8,
+  },
+  sectionHeaderClickable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 12,
   },
   sectionHint: {
     fontSize: 13,
@@ -10109,6 +10346,65 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 8,
     elevation: 1,
+  },
+  volunteersGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  volunteerCompactCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    padding: 10,
+    minWidth: 200,
+    flex: 1,
+    maxWidth: '48%',
+  },
+  volunteerCompactHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  volunteerBadgesCompact: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  volunteerMetaSmall: {
+    fontSize: 11,
+    color: '#64748b',
+    marginBottom: 8,
+  },
+  completeVolunteerButtonSmall: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    backgroundColor: '#166534',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+  },
+  completeVolunteerButtonTextSmall: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  viewVolunteerProfileButtonSmall: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 6,
+  },
+  viewVolunteerProfileTextSmall: {
+    color: '#2563eb',
+    fontSize: 11,
+    fontWeight: '600',
   },
   volunteerCardHeader: {
     flexDirection: 'row',
@@ -10734,6 +11030,7 @@ const styles = StyleSheet.create({
   attendanceModalCard: {
     width: '100%',
     maxWidth: 640,
+    maxHeight: '90%',
     backgroundColor: '#ffffff',
     borderRadius: 20,
     padding: 18,
@@ -10745,6 +11042,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 12 },
     elevation: 12,
     gap: 14,
+    overflow: 'hidden',
   },
   attendanceModalLiveNote: {
     marginTop: 8,
@@ -10754,6 +11052,7 @@ const styles = StyleSheet.create({
   },
   attendanceModalScroll: {
     maxHeight: Platform.select({ web: 520, default: 480 }),
+    overflow: 'hidden',
   },
   attendanceModalScrollContent: {
     paddingBottom: 4,
@@ -10882,6 +11181,53 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#0f172a',
     lineHeight: 20,
+  },
+  attendanceRecordPhotoButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+    backgroundColor: '#eff6ff',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  attendanceRecordPhotoButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#164e63',
+  },
+  attendanceImagePreviewBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  attendanceImagePreviewCard: {
+    width: '100%',
+    maxWidth: 720,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  attendanceImagePreviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  attendanceImagePreviewClose: {
+    padding: 8,
+  },
+  attendanceImagePreview: {
+    width: '100%',
+    height: 420,
+    backgroundColor: '#f8fafc',
   },
   attendanceRecordPhoto: {
     width: '100%',

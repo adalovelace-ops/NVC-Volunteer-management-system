@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import ModernTheme from '../utils/modernTheme';
 import {
   View,
   Text,

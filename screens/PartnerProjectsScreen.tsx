@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import ModernTheme from '../utils/modernTheme';
 import {
   ActivityIndicator,
   Modal,

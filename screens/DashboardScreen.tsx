@@ -211,8 +211,8 @@ export default function DashboardScreen({ navigation }: any) {
         allProjects: projects.filter(
           project => !(programs || []).some(program => program.id === project.id)
         ).length,
-        programs: (programTracks || []).length > 0 
-          ? (programTracks || []).filter(track => track.isActive !== false).length 
+        programs: (programTracks || []).length > 0
+          ? (programTracks || []).filter(track => track.isActive !== false).length
           : (programs || []).filter(p => !p.parentProjectId && !p.isEvent).length,
         events: (events || []).length || projects.filter(project => project.isEvent).length,
       });
@@ -339,7 +339,7 @@ export default function DashboardScreen({ navigation }: any) {
   // Confirms logout before clearing the current authenticated session.
   const handleLogout = async () => {
     Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', onPress: () => {} },
+      { text: 'Cancel', onPress: () => { } },
       {
         text: 'Logout',
         onPress: async () => {
@@ -417,37 +417,17 @@ export default function DashboardScreen({ navigation }: any) {
   );
 
   const impactMapSourceProjects = useMemo(
-    () => {
-      const result = withImpactMapFallbackProjects(
+    () =>
+      withImpactMapFallbackProjects(
         projectsData,
         partnerApplicationsData,
         volunteerJoinRecordsData
-      );
-      console.log('[DASHBOARD DEBUG] projectsData:', projectsData.length);
-      console.log('[DASHBOARD DEBUG] impactMapSourceProjects:', result.length);
-      return result;
-    },
+      ),
     [partnerApplicationsData, projectsData, volunteerJoinRecordsData]
   );
 
   const mapProjects = useMemo(
-    () => {
-      const result = getMappedProjects(impactMapSourceProjects);
-      console.log('[DASHBOARD DEBUG] impactMapSourceProjects for map:', impactMapSourceProjects.length);
-      console.log('[DASHBOARD DEBUG] impactMapSourceProjects details:', impactMapSourceProjects.map(p => ({
-        id: p.id,
-        title: p.title,
-        parentProjectId: p.parentProjectId,
-        isEvent: p.isEvent
-      })));
-      console.log('[DASHBOARD DEBUG] mapProjects (filtered):', result.length);
-      console.log('[DASHBOARD DEBUG] mapProjects details:', result.map(p => ({
-        id: p.id,
-        title: p.title,
-        parentProjectId: p.parentProjectId
-      })));
-      return result;
-    },
+    () => getMappedProjects(impactMapSourceProjects),
     [impactMapSourceProjects]
   );
 
@@ -824,14 +804,16 @@ export default function DashboardScreen({ navigation }: any) {
   );
 }
 
+import ModernTheme from '../utils/modernTheme';
+
 const green = {
-  page: '#eef5ef',
-  card: '#ffffff',
-  cardBorder: '#d8e8db',
-  ink: '#203a2a',
-  muted: '#5e7b65',
-  strong: '#2f8f45',
-  strongDark: '#236d35',
+  page: ModernTheme.colors.background.secondary,
+  card: ModernTheme.colors.background.card,
+  cardBorder: ModernTheme.colors.border.primary,
+  ink: ModernTheme.colors.text.primary,
+  muted: ModernTheme.colors.text.secondary,
+  strong: ModernTheme.colors.primary[600],
+  strongDark: ModernTheme.colors.primary[700],
 };
 
 const styles = StyleSheet.create({
@@ -840,19 +822,20 @@ const styles = StyleSheet.create({
     backgroundColor: green.page,
   },
   content: {
-    paddingBottom: 20,
+    paddingBottom: ModernTheme.spacing[5],
   },
   header: {
     backgroundColor: green.card,
-    borderBottomWidth: 1,
-    borderBottomColor: green.cardBorder,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderBottomWidth: 0,
+    borderBottomColor: 'transparent',
+    paddingHorizontal: ModernTheme.spacing[3],
+    paddingVertical: ModernTheme.spacing[2.5],
+    ...ModernTheme.shadows.sm,
   },
   userSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: ModernTheme.spacing[3],
   },
   userSectionCompact: {
     flexWrap: 'wrap',
@@ -867,10 +850,11 @@ const styles = StyleSheet.create({
   avatar: {
     width: 36,
     height: 36,
-    borderRadius: 18,
+    borderRadius: ModernTheme.borderRadius.full,
     backgroundColor: green.strong,
     justifyContent: 'center',
     alignItems: 'center',
+    ...ModernTheme.shadows.sm,
   },
   avatarCompact: {
     width: 32,
@@ -908,17 +892,18 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   errorBanner: {
-    marginHorizontal: 14,
-    marginTop: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: '#fee2e2',
-    borderWidth: 1,
-    borderColor: '#fecaca',
+    marginHorizontal: ModernTheme.spacing[3.5],
+    marginTop: ModernTheme.spacing[3],
+    paddingHorizontal: ModernTheme.spacing[3],
+    paddingVertical: ModernTheme.spacing[2.5],
+    borderRadius: ModernTheme.borderRadius.lg,
+    backgroundColor: ModernTheme.colors.error + '15',
+    borderWidth: 0,
+    borderColor: 'transparent',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: ModernTheme.spacing[2.5],
+    ...ModernTheme.shadows.sm,
   },
   errorBannerText: {
     flex: 1,
@@ -950,11 +935,12 @@ const styles = StyleSheet.create({
   trendCard: {
     flex: 1.45,
     backgroundColor: green.card,
-    borderWidth: 1,
-    borderColor: green.cardBorder,
-    borderRadius: 12,
-    padding: 8,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    borderRadius: ModernTheme.borderRadius.lg,
+    padding: ModernTheme.spacing[2],
     minHeight: Platform.OS === 'web' ? undefined : 300,
+    ...ModernTheme.shadows.base,
   },
   cardHeaderRow: {
     flexDirection: 'row',
@@ -990,12 +976,13 @@ const styles = StyleSheet.create({
   },
   calendarCard: {
     flex: 1.2,
-    borderRadius: 12,
+    borderRadius: ModernTheme.borderRadius.lg,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#bde0c6',
+    borderWidth: 0,
+    borderColor: 'transparent',
     flexDirection: 'row',
     minHeight: Platform.OS === 'web' ? 220 : 190,
+    ...ModernTheme.shadows.base,
   },
   upcomingPane: {
     width: '38%',
@@ -1119,11 +1106,12 @@ const styles = StyleSheet.create({
   cardBase: {
     flex: 1,
     backgroundColor: green.card,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: green.cardBorder,
-    padding: 8,
+    borderRadius: ModernTheme.borderRadius.lg,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    padding: ModernTheme.spacing[2],
     minHeight: 160,
+    ...ModernTheme.shadows.base,
   },
   volunteerRow: {
     flexDirection: 'row',
@@ -1171,13 +1159,14 @@ const styles = StyleSheet.create({
   messagesCard: {
     flex: 0.75,
     backgroundColor: green.strong,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: green.strongDark,
+    borderRadius: ModernTheme.borderRadius.lg,
+    borderWidth: 0,
+    borderColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 140,
-    padding: 8,
+    padding: ModernTheme.spacing[2],
+    ...ModernTheme.shadows.base,
   },
   messagesValue: {
     marginTop: 2,
@@ -1199,12 +1188,13 @@ const styles = StyleSheet.create({
   },
   statisticsCard: {
     flex: 0.85,
-    backgroundColor: '#dff3e3',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#b5dcbf',
+    backgroundColor: ModernTheme.colors.primary[50],
+    borderRadius: ModernTheme.borderRadius.lg,
+    borderWidth: 0,
+    borderColor: 'transparent',
     minHeight: 140,
-    padding: 8,
+    padding: ModernTheme.spacing[2],
+    ...ModernTheme.shadows.base,
   },
   statisticsTitle: {
     textAlign: 'center',
@@ -1236,11 +1226,12 @@ const styles = StyleSheet.create({
   newsCard: {
     flex: 1.4,
     backgroundColor: green.strong,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: green.strongDark,
+    borderRadius: ModernTheme.borderRadius.lg,
+    borderWidth: 0,
+    borderColor: 'transparent',
     minHeight: 140,
-    padding: 8,
+    padding: ModernTheme.spacing[2],
+    ...ModernTheme.shadows.base,
   },
   newsTitle: {
     textAlign: 'center',

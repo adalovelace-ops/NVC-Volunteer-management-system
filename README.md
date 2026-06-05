@@ -179,11 +179,6 @@ partner123
 ```
 
 ```text
-partnerships@jollibeefoundation.org
-partner123
-```
-
-```text
 partner@livelihoods.org
 partner123
 ```
@@ -192,7 +187,6 @@ partner123
 
 - Partners:
   - Philippine Business for Social Progress
-  - Jollibee Group Foundation
   - LGU Kabankalan Livelihood Office
 - Projects:
   - Bacolod Reading Hub Setup

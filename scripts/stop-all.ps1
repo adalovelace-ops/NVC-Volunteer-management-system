@@ -87,9 +87,24 @@ Get-ChildItem -Path $env:TEMP -Filter 'react-*' -ErrorAction SilentlyContinue | 
 }
 Write-Host "  React Native cache cleared"
 
+# ── 7. Clear web cache (Expo web) ──────────────────────────────────────────
+Write-Host "  Clearing web cache..."
+# Clear Expo web dist build
+$webDistDir = Join-Path $projectRoot 'dist'
+if (Test-Path $webDistDir) {
+  Remove-Item -Path $webDistDir -Recurse -Force -ErrorAction SilentlyContinue
+  Write-Host "  Web build cache (dist) cleared"
+}
+# Clear .cache folder if it exists
+$cacheDir = Join-Path $projectRoot '.cache'
+if (Test-Path $cacheDir) {
+  Remove-Item -Path $cacheDir -Recurse -Force -ErrorAction SilentlyContinue
+  Write-Host "  Web cache (.cache) cleared"
+}
+
 Write-Host ""
 Write-Host "  All services stopped. Ports 8000 and 8081 are free."
-Write-Host "  All caches cleared (Python, Expo, Metro, React Native)"
+Write-Host "  All caches cleared (Python, Expo, Metro, React Native, Web)"
 Write-Host ""
 Write-Host "==========================================="
 Write-Host ""

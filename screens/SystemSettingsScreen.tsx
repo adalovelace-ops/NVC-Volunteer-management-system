@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ModernTheme from '../utils/modernTheme';
 import {
   ActivityIndicator,
   Alert,
@@ -121,6 +122,13 @@ export default function SystemSettingsScreen() {
   };
 
   const handleLogout = async () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm('Are you sure you want to logout?')) {
+        await logout();
+      }
+      return;
+    }
+
     Alert.alert('Logout', 'Are you sure you want to logout?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Logout', onPress: async () => await logout() },

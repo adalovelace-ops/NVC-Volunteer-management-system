@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import ModernTheme from '../utils/modernTheme';
 import {
   View,
   Text,
@@ -11,7 +12,9 @@ import {
   TextInput,
   Switch,
   Image,
+  type ImageStyle,
 } from 'react-native';
+import { Picker } from '@react-native-picker/picker';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import InlineLoadError from '../components/InlineLoadError';
@@ -34,6 +37,7 @@ import { NVCSector, Partner, Project, User, UserType, Volunteer, VolunteerTimeLo
 import { isImageMediaUri, pickImageFromDevice } from '../utils/media';
 import { getRequestErrorMessage, getRequestErrorTitle, isAbortLikeError } from '../utils/requestErrors';
 import { getProjectDisplayStatus } from '../utils/projectStatus';
+import { TASK_SKILL_OPTIONS } from '../utils/skills';
 
 const USER_TYPES: UserType[] = ['Student', 'Adult', 'Senior'];
 const PILLAR_OPTIONS: NVCSector[] = ['Nutrition', 'Education', 'Livelihood'];
@@ -79,9 +83,8 @@ export default function ProfileScreen() {
   const [confirmPasswordDraft, setConfirmPasswordDraft] = useState('');
   const [userTypeDraft, setUserTypeDraft] = useState<UserType>('Adult');
   const [pillarsDraft, setPillarsDraft] = useState<NVCSector[]>([]);
-  const [skillsDraft, setSkillsDraft] = useState('');
-  const [skillsDescriptionDraft, setSkillsDescriptionDraft] = useState('');
-  const [backgroundDraft, setBackgroundDraft] = useState('');
+  const [skillsDraft, setSkillsDraft] = useState<string[]>([]);
+  const [showSkillsModal, setShowSkillsModal] = useState(false);
   const [isBusyDraft, setIsBusyDraft] = useState(false);
   const [profilePhotoDraft, setProfilePhotoDraft] = useState('');
 
@@ -208,9 +211,7 @@ export default function ProfileScreen() {
     setConfirmPasswordDraft('');
     setUserTypeDraft(user.userType || 'Adult');
     setPillarsDraft(user.pillarsOfInterest || []);
-    setSkillsDraft(volunteerProfile?.skills.join(', ') || '');
-    setSkillsDescriptionDraft(volunteerProfile?.skillsDescription || '');
-    setBackgroundDraft(volunteerProfile?.background || '');
+    setSkillsDraft(volunteerProfile?.skills || []);
     setIsBusyDraft(volunteerProfile?.engagementStatus === 'Busy');
     setProfilePhotoDraft(user.profilePhoto || '');
   }, [user, volunteerProfile]);
@@ -221,27 +222,27 @@ export default function ProfileScreen() {
 
   // Confirms logout before clearing the signed-in session.
   const handleLogout = () => {
-    const confirmLogout = async () => {
-      try {
-        await logout();
-      } catch (error) {
-        Alert.alert('Error', 'Failed to logout. Please try again.');
-      }
-    };
-
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       if (window.confirm('Are you sure you want to logout?')) {
-        void confirmLogout();
+        logout().catch(() => {
+          window.alert('Failed to logout. Please try again.');
+        });
       }
       return;
     }
 
     Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', onPress: () => {} },
+      { text: 'Cancel', style: 'cancel' },
       {
         text: 'Logout',
         style: 'destructive',
-        onPress: () => void confirmLogout(),
+        onPress: async () => {
+          try {
+            await logout();
+          } catch (error) {
+            Alert.alert('Error', 'Failed to logout. Please try again.');
+          }
+        },
       },
     ]);
   };
@@ -388,11 +389,6 @@ export default function ProfileScreen() {
       await saveUser(updatedUser);
 
       if (user.role === 'volunteer') {
-        const parsedSkills = skillsDraft
-          .split(',')
-          .map(skill => skill.trim())
-          .filter(Boolean);
-
         const updatedVolunteerProfile: Volunteer = {
           ...volunteerProfile,
           id: volunteerProfile?.id || `volunteer-${user.id}`,
@@ -400,8 +396,8 @@ export default function ProfileScreen() {
           name: normalizedName,
           email: normalizedEmail,
           phone: normalizedPhone,
-          skills: parsedSkills,
-          skillsDescription: skillsDescriptionDraft.trim(),
+          skills: skillsDraft,
+          skillsDescription: '',
           availability: volunteerProfile?.availability || {
             daysPerWeek: 0,
             hoursPerWeek: 0,
@@ -411,7 +407,7 @@ export default function ProfileScreen() {
           totalHoursContributed: volunteerProfile?.totalHoursContributed || 0,
           rating: volunteerProfile?.rating || 0,
           engagementStatus: isBusyDraft ? 'Busy' : 'Open to Volunteer',
-          background: backgroundDraft.trim(),
+          background: '',
           createdAt: volunteerProfile?.createdAt || new Date().toISOString(),
         };
 
@@ -551,13 +547,14 @@ export default function ProfileScreen() {
       label: 'Phone',
       value: user?.phone ?? volunteerProfile?.phone ?? primaryPartnerProfile?.contactPhone ?? 'Not provided',
     },
-    {
-      label: 'Pillars of Interest',
-      value:
-        (user?.pillarsOfInterest || []).length > 0
-          ? user?.pillarsOfInterest?.join(', ')
-          : 'No pillar preferences',
-    },
+    ...(user?.role === 'volunteer'
+      ? [
+          {
+            label: 'Events Joined',
+            value: String(new Set(volunteerTimeLogs.map(log => log.projectId)).size),
+          },
+        ]
+      : []),
     ...(user?.role !== 'partner'
       ? [
           {
@@ -577,24 +574,11 @@ export default function ProfileScreen() {
         { label: 'Workplace or School', value: volunteerProfile.workplaceOrSchool || 'Not provided' },
         { label: 'College Course', value: volunteerProfile.collegeCourse || 'Not provided' },
         { label: 'Hobbies and Interests', value: volunteerProfile.hobbiesAndInterests || 'Not provided' },
-        { label: 'Special Skills', value: volunteerProfile.specialSkills || 'Not provided' },
-      ]
-    : [];
-  const volunteerNarrativeCards = volunteerProfile
-    ? [
-        {
-          label: 'Skills Description',
-          value: volunteerProfile.skillsDescription || 'No skills description added yet.',
-        },
-        {
-          label: 'Background',
-          value: volunteerProfile.background || 'No background added yet.',
-        },
       ]
     : [];
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       {loadError ? (
         <View style={styles.inlineErrorWrap}>
           <InlineLoadError
@@ -613,7 +597,7 @@ export default function ProfileScreen() {
           <View style={styles.profileHeroTop}>
             <View style={styles.profileHeroIdentity}>
               {profilePhotoUri ? (
-                <Image source={{ uri: profilePhotoUri }} style={styles.avatarImage} />
+                <Image source={{ uri: profilePhotoUri }} style={styles.avatarImage as ImageStyle} />
               ) : (
                 <View style={styles.avatar}>
                   <Text style={styles.avatarText}>{initials}</Text>
@@ -706,12 +690,8 @@ export default function ProfileScreen() {
 
             <View style={styles.statsContainer}>
               <View style={styles.stat}>
-                <Text style={styles.statNumber}>{volunteerProfile.totalHoursContributed}</Text>
-                <Text style={styles.statLabel}>Hours Logged</Text>
-              </View>
-              <View style={styles.stat}>
                 <Text style={styles.statNumber}>{joinedProgramCount}</Text>
-                <Text style={styles.statLabel}>Joined Programs</Text>
+                <Text style={styles.statLabel}>Joined Events</Text>
               </View>
               <View style={styles.stat}>
                 <Text style={styles.statNumber}>{completedEvents.length}</Text>
@@ -788,15 +768,6 @@ export default function ProfileScreen() {
                   <Text style={styles.detailInfoValue}>No skills added yet.</Text>
                 </View>
               )}
-
-              <View style={styles.detailGrid}>
-                {volunteerNarrativeCards.map(card => (
-                  <View key={card.label} style={[styles.detailInfoCard, styles.detailInfoCardWide]}>
-                    <Text style={styles.detailInfoLabel}>{card.label}</Text>
-                    <Text style={styles.descriptionText}>{card.value}</Text>
-                  </View>
-                ))}
-              </View>
 
               <Text style={styles.subsectionLabel}>Completed Events</Text>
               {completedEvents.length > 0 ? (
@@ -908,7 +879,7 @@ export default function ProfileScreen() {
 
             <View style={styles.photoSection}>
               {draftProfilePhotoUri ? (
-                <Image source={{ uri: draftProfilePhotoUri }} style={styles.modalAvatarImage} />
+                <Image source={{ uri: draftProfilePhotoUri }} style={styles.modalAvatarImage as ImageStyle} />
               ) : (
                 <View style={styles.modalAvatarFallback}>
                   <Text style={styles.modalAvatarFallbackText}>{initials}</Text>
@@ -1038,39 +1009,30 @@ export default function ProfileScreen() {
             {user?.role === 'volunteer' && (
               <>
                 <Text style={styles.fieldLabel}>Skills</Text>
-                <TextInput
-                  style={styles.input}
-                  value={skillsDraft}
-                  onChangeText={setSkillsDraft}
-                  placeholder="Separate skills with commas"
-                  editable={!saveLoading}
-                />
-
-                <Text style={styles.fieldLabel}>Skills Description</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  multiline
-                  numberOfLines={6}
-                  value={skillsDescriptionDraft}
-                  onChangeText={setSkillsDescriptionDraft}
-                  placeholder="Describe the skills you can use in volunteer programs."
-                  placeholderTextColor="#94a3b8"
-                  textAlignVertical="top"
-                  editable={!saveLoading}
-                />
-
-                <Text style={styles.fieldLabel}>Background</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  multiline
-                  numberOfLines={5}
-                  value={backgroundDraft}
-                  onChangeText={setBackgroundDraft}
-                  placeholder="Share your background and experience."
-                  placeholderTextColor="#94a3b8"
-                  textAlignVertical="top"
-                  editable={!saveLoading}
-                />
+                <Text style={styles.sectionHint}>Tap to select skills from the list.</Text>
+                
+                <TouchableOpacity
+                  style={styles.dropdownButton}
+                  onPress={() => setShowSkillsModal(true)}
+                  disabled={saveLoading}
+                >
+                  <Text style={styles.dropdownButtonText}>
+                    {skillsDraft.length > 0 
+                      ? `${skillsDraft.length} skill${skillsDraft.length === 1 ? '' : 's'} selected`
+                      : 'Select skills'}
+                  </Text>
+                  <MaterialIcons name="arrow-drop-down" size={24} color="#64748b" />
+                </TouchableOpacity>
+                
+                {skillsDraft.length > 0 && (
+                  <View style={styles.selectedSkillsPreview}>
+                    {skillsDraft.map(skill => (
+                      <View key={skill} style={styles.skillPreviewChip}>
+                        <Text style={styles.skillPreviewText}>{skill}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
 
                 <View style={styles.switchRow}>
                   <View style={styles.switchTextBlock}>
@@ -1092,6 +1054,49 @@ export default function ProfileScreen() {
           </ScrollView>
         </View>
       </Modal>
+
+      {/* Skills Selection Modal */}
+      <Modal visible={showSkillsModal} animationType="slide" onRequestClose={() => setShowSkillsModal(false)}>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setShowSkillsModal(false)}>
+              <Text style={styles.modalCancel}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Select Skills</Text>
+            <TouchableOpacity onPress={() => setShowSkillsModal(false)}>
+              <Text style={styles.modalSave}>Done</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            <Text style={styles.modalLabel}>Tap to select or deselect skills.</Text>
+            
+            {TASK_SKILL_OPTIONS.map(skill => {
+              const isSelected = skillsDraft.includes(skill);
+              return (
+                <TouchableOpacity
+                  key={skill}
+                  style={styles.skillOptionRow}
+                  onPress={() => {
+                    setSkillsDraft(prev =>
+                      prev.includes(skill)
+                        ? prev.filter(s => s !== skill)
+                        : [...prev, skill]
+                    );
+                  }}
+                >
+                  <Text style={styles.skillOptionText}>{skill}</Text>
+                  <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
+                    {isSelected && (
+                      <MaterialIcons name="check" size={18} color="#fff" />
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -1099,23 +1104,22 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#eef5ee',
-    padding: 14,
+    backgroundColor: ModernTheme.colors.background.secondary,
+    padding: ModernTheme.spacing[3.5],
+  },
+  scrollContent: {
+    paddingBottom: ModernTheme.spacing[8],
   },
   inlineErrorWrap: {
-    marginBottom: 16,
+    marginBottom: ModernTheme.spacing[4],
   },
   profileCard: {
-    backgroundColor: '#fff',
-    borderRadius: 24,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#dbe7df',
-    shadowColor: '#14532d',
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 2,
+    backgroundColor: ModernTheme.colors.background.card,
+    borderRadius: ModernTheme.borderRadius['2xl'],
+    padding: ModernTheme.spacing[4.5],
+    borderWidth: 0,
+    borderColor: 'transparent',
+    ...ModernTheme.shadows.lg,
     overflow: 'hidden',
   },
   profileAccentBar: {
@@ -1124,73 +1128,82 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 8,
-    backgroundColor: '#16a34a',
+    backgroundColor: ModernTheme.colors.primary[600],
   },
   profileHero: {
-    marginBottom: 14,
+    marginBottom: ModernTheme.spacing[3.5],
   },
   profileHeroTop: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-  },
-  roleBadge: {
-    marginTop: 10,
-    alignSelf: 'flex-start',
-    backgroundColor: '#dcfce7',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  roleBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#166534',
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
+    gap: ModernTheme.spacing[3],
   },
   profileHeroIdentity: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
+    alignItems: 'flex-start',
+    flex: 1,
+    minWidth: 200,
   },
   profileHeroCopy: {
     flex: 1,
+    minWidth: 0,
+  },
+  roleBadge: {
+    marginTop: ModernTheme.spacing[2.5],
+    alignSelf: 'flex-start',
+    backgroundColor: ModernTheme.colors.primary[100],
+    borderRadius: ModernTheme.borderRadius.full,
+    paddingHorizontal: ModernTheme.spacing[3],
+    paddingVertical: ModernTheme.spacing[1.5],
+  },
+  roleBadgeText: {
+    fontSize: ModernTheme.typography.fontSize.xs,
+    fontWeight: ModernTheme.typography.fontWeight.semibold,
+    color: ModernTheme.colors.primary[700],
+    letterSpacing: ModernTheme.typography.letterSpacing.wide,
+    textTransform: 'uppercase',
   },
   avatar: {
     width: 88,
     height: 88,
-    borderRadius: 28,
-    backgroundColor: '#166534',
+    borderRadius: ModernTheme.borderRadius['2xl'],
+    backgroundColor: ModernTheme.colors.primary[700],
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: ModernTheme.spacing[3.5],
+    ...ModernTheme.shadows.base,
   },
   avatarText: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontSize: ModernTheme.typography.fontSize['4xl'],
+    fontWeight: ModernTheme.typography.fontWeight.bold,
+    color: ModernTheme.colors.text.inverse,
   },
   avatarImage: {
     width: 88,
     height: 88,
-    borderRadius: 28,
-    backgroundColor: '#dbeafe',
+    borderRadius: ModernTheme.borderRadius['2xl'],
+    backgroundColor: ModernTheme.colors.neutral[100],
+    marginRight: ModernTheme.spacing[3.5],
   },
   name: {
-    fontSize: 19,
-    fontWeight: 'bold',
-    marginBottom: 4,
-    color: '#333',
+    fontSize: ModernTheme.typography.fontSize['2xl'],
+    fontWeight: ModernTheme.typography.fontWeight.bold,
+    marginBottom: ModernTheme.spacing[1],
+    color: ModernTheme.colors.text.primary,
+    flexWrap: 'wrap',
   },
   email: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: ModernTheme.typography.fontSize.md,
+    color: ModernTheme.colors.text.secondary,
+    flexWrap: 'wrap',
   },
   subheading: {
-    fontSize: 13,
-    color: '#4b5563',
-    fontWeight: '600',
-    marginTop: 6,
+    fontSize: ModernTheme.typography.fontSize.sm,
+    color: ModernTheme.colors.text.secondary,
+    fontWeight: ModernTheme.typography.fontWeight.medium,
+    marginTop: ModernTheme.spacing[1.5],
   },
   topVolunteerBadge: {
     width: '100%',
@@ -1234,6 +1247,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     alignSelf: 'flex-start',
+    flexShrink: 1,
   },
   editButtonText: {
     color: '#166534',
@@ -1625,5 +1639,63 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748b',
     lineHeight: 18,
+  },
+  dropdownButton: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  dropdownButtonText: {
+    fontSize: 14,
+    color: '#334155',
+  },
+  selectedSkillsPreview: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  skillPreviewChip: {
+    backgroundColor: '#ecfdf5',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  skillPreviewText: {
+    fontSize: 12,
+    color: '#166534',
+    fontWeight: '600',
+  },
+  skillOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fff',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  skillOptionText: {
+    fontSize: 15,
+    color: '#0f172a',
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderWidth: 2,
+    borderColor: '#cbd5e1',
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxSelected: {
+    backgroundColor: '#166534',
+    borderColor: '#166534',
   },
 });

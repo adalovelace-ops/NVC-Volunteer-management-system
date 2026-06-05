@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import ModernTheme from '../utils/modernTheme';
 import {
   View,
   Text,
@@ -432,12 +433,26 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
     const selectedVolunteerTimeLogs = volunteerTimeLogs
       .filter(log => log.volunteerId === selectedVolunteer.id)
       .sort((a, b) => new Date(b.timeIn).getTime() - new Date(a.timeIn).getTime());
+    
+    // Count unique events joined from time logs, join records, and matches
+    const eventsFromTimeLogs = new Set(selectedVolunteerTimeLogs.map(log => log.projectId));
+    const eventsFromMatches = new Set(
+      volunteerMatches
+        .filter(match => match.status === 'Matched' || match.status === 'Completed')
+        .map(match => match.projectId)
+    );
+    const joinedProjects = projects.filter(p => p.isEvent && (p.joinedUserIds || []).includes(selectedVolunteer.id));
+    const eventsFromJoined = new Set(joinedProjects.map(p => p.id));
+    const allUniqueEvents = new Set([...eventsFromTimeLogs, ...eventsFromMatches, ...eventsFromJoined]);
+    const eventsJoinedCount = allUniqueEvents.size;
+    
     const completedProjects = selectedVolunteerCompletedProjectIds.map(projectId => {
       const project = projects.find(projectEntry => projectEntry.id === projectId);
       return {
         id: projectId,
         title: project?.title || projectId,
         category: project?.category,
+        isEvent: project?.isEvent,
       };
     });
 
@@ -485,19 +500,9 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
 
           <View style={styles.statsGrid}>
             <View style={styles.stat}>
-              <MaterialIcons name="schedule" size={24} color="#2196F3" />
-              <Text style={styles.statValue}>{selectedVolunteer.totalHoursContributed}</Text>
-              <Text style={styles.statLabel}>Hours</Text>
-            </View>
-            <View style={styles.stat}>
-              <MaterialIcons name="star" size={24} color="#FFA500" />
-              <Text style={styles.statValue}>{selectedVolunteer.rating}</Text>
-              <Text style={styles.statLabel}>Rating</Text>
-            </View>
-            <View style={styles.stat}>
-              <MaterialIcons name="task-alt" size={24} color="#4CAF50" />
-              <Text style={styles.statValue}>{selectedVolunteerCompletedProjectIds.length}</Text>
-              <Text style={styles.statLabel}>Projects</Text>
+              <MaterialIcons name="event" size={24} color="#4CAF50" />
+              <Text style={styles.statValue}>{eventsJoinedCount}</Text>
+              <Text style={styles.statLabel}>Events Joined</Text>
             </View>
           </View>
         </View>
@@ -519,14 +524,6 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
           </View>
 
           <View style={styles.availabilityInfo}>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Days per week:</Text>
-              <Text style={styles.infoValue}>{selectedVolunteer.availability.daysPerWeek}</Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Hours per week:</Text>
-              <Text style={styles.infoValue}>{selectedVolunteer.availability.hoursPerWeek}</Text>
-            </View>
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Volunteer status:</Text>
               <Text style={styles.infoValue}>{selectedVolunteer.engagementStatus}</Text>
@@ -701,16 +698,16 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Completed Projects</Text>
-          {completedProjects.length === 0 ? (
-            <Text style={styles.emptyText}>No completed projects yet</Text>
+          <Text style={styles.sectionTitle}>Completed Events</Text>
+          {completedProjects.filter(p => p.isEvent).length === 0 ? (
+            <Text style={styles.emptyText}>No completed events yet</Text>
           ) : (
-            completedProjects.map(project => (
+            completedProjects.filter(p => p.isEvent).map(project => (
               <View key={project.id} style={styles.projectItem}>
                 <View style={styles.projectInfo}>
                   <Text style={styles.projectName}>{project.title}</Text>
                   <Text style={styles.projectCategory}>
-                    {project.category || 'Completed program'}
+                    {project.category || 'Completed event'}
                   </Text>
                 </View>
                 <MaterialIcons name="task-alt" size={20} color="#16a34a" />
@@ -722,14 +719,14 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>
-              Available Projects ({availableProjects.length})
+              Available Events ({availableProjects.filter(p => p.isEvent).length})
             </Text>
           </View>
 
-          {availableProjects.length === 0 ? (
-            <Text style={styles.emptyText}>No available projects</Text>
+          {availableProjects.filter(p => p.isEvent).length === 0 ? (
+            <Text style={styles.emptyText}>No available events</Text>
           ) : (
-            availableProjects.map(project => (
+            availableProjects.filter(p => p.isEvent).map(project => (
               <View key={project.id} style={styles.matchCard}>
                 <View style={styles.matchContent}>
                   <Text style={styles.projectName}>{project.title}</Text>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Alert } from 'react-native';
+import ModernTheme from '../utils/modernTheme';
+import { Alert, Modal, StyleSheet, FlatList, View, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
 import {
   getAllPartnerReports,
@@ -456,6 +457,8 @@ export default function ReportsScreen({ navigation, route }: any) {
   const [volunteerTimedInProjectIds, setVolunteerTimedInProjectIds] = useState<string[]>([]);
   const [volunteerTimeLogs, setVolunteerTimeLogs] = useState<VolunteerTimeLog[]>([]);
   const [volunteerJoinRecords, setVolunteerJoinRecords] = useState<VolunteerProjectJoinRecord[]>([]);
+  const [selectedReportType, setSelectedReportType] = useState<'all' | 'volunteer' | 'partner' | null>(null);
+  const [showFilteredReports, setShowFilteredReports] = useState(false);
   const reportsLoadInFlightRef = useRef<Promise<void> | null>(null);
   const reportsReloadQueuedRef = useRef(false);
   const hasLoadedReportsRef = useRef(false);
@@ -907,9 +910,14 @@ export default function ReportsScreen({ navigation, route }: any) {
     setShowUploadModal(true);
   }, [partnerAcceptedProjects.length, user?.role, volunteerEventProjects.length]);
 
-  const handleViewAnalytics = useCallback(() => {
-    navigation.navigate('Analytics');
-  }, [navigation]);
+  const handleViewAnalytics = useCallback((reportType?: 'all' | 'volunteer' | 'partner') => {
+    // Filter reports by type and display them
+    if (reportType) {
+      setSelectedReportType(reportType);
+      setShowFilteredReports(true);
+    }
+    console.log(`View all clicked for: ${reportType || 'analytics'}`);
+  }, []);
 
   const dashboard =
     user?.role === 'admin' ? (
@@ -982,6 +990,148 @@ export default function ReportsScreen({ navigation, route }: any) {
         userRole={user?.role}
         showModerationActions={user?.role === 'admin'}
       />
+      <Modal
+        visible={showFilteredReports}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowFilteredReports(false)}
+      >
+        <View style={styles.filteredReportsModalOverlay}>
+          <View style={styles.filteredReportsModalContent}>
+            <View style={styles.filteredReportsHeader}>
+              <Text style={styles.filteredReportsTitle}>
+                {selectedReportType === 'all' ? 'All Reports' : 
+                 selectedReportType === 'volunteer' ? 'Volunteer Reports' : 
+                 'Partner Reports'}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setShowFilteredReports(false)}
+                hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+              >
+                <Text style={styles.closeButton}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            
+            {userReports.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateText}>No reports yet</Text>
+              </View>
+            ) : (
+              <ScrollView style={styles.reportsList}>
+                {userReports
+                  .filter(report => {
+                    if (selectedReportType === 'all') return true;
+                    if (selectedReportType === 'volunteer') return report.submitterRole === 'volunteer';
+                    if (selectedReportType === 'partner') return report.submitterRole === 'partner';
+                    return true;
+                  })
+                  .map(report => (
+                    <TouchableOpacity
+                      key={report.id}
+                      style={styles.reportItem}
+                      onPress={() => {
+                        setShowFilteredReports(false);
+                        handleViewReport(report);
+                      }}
+                    >
+                      <View style={styles.reportItemContent}>
+                        <Text style={styles.reportItemTitle}>{report.title || 'Untitled Report'}</Text>
+                        <Text style={styles.reportItemMeta}>
+                          By {report.submitterName} • {new Date(report.submittedAt).toLocaleDateString()}
+                        </Text>
+                        <Text style={styles.reportItemDesc} numberOfLines={2}>
+                          {report.description}
+                        </Text>
+                      </View>
+                      <Text style={styles.reportItemArrow}>›</Text>
+                    </TouchableOpacity>
+                  ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  filteredReportsModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  filteredReportsModalContent: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    maxHeight: '85%',
+    paddingBottom: 20,
+  },
+  filteredReportsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  filteredReportsTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+  },
+  closeButton: {
+    fontSize: 24,
+    color: '#999',
+  },
+  reportsList: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+  },
+  reportItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginVertical: 4,
+    backgroundColor: '#fafafa',
+    borderRadius: 8,
+  },
+  reportItemContent: {
+    flex: 1,
+    marginRight: 12,
+  },
+  reportItemTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  reportItemMeta: {
+    fontSize: 12,
+    color: '#999',
+    marginBottom: 4,
+  },
+  reportItemDesc: {
+    fontSize: 13,
+    color: '#666',
+    lineHeight: 18,
+  },
+  reportItemArrow: {
+    fontSize: 20,
+    color: '#ccc',
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 200,
+  },
+  emptyStateText: {
+    fontSize: 14,
+    color: '#999',
+  },
+});

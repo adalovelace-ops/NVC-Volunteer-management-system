@@ -2035,7 +2035,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
           ? { title: 'Proposal approved', message: 'The proposal was approved and a new project was created.', tone: 'success' }
 
-          : { title: 'Proposal rejected', message: 'The proposal was rejected and remains visible for revision.', tone: 'warning' }
+          : { title: 'Proposal rejected', message: 'The proposal was rejected. A notification card has been sent to the partner.', tone: 'warning' }
 
       );
 
@@ -2487,7 +2487,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                       : '#f59e0b',
 
-                  badge: p.application.status === 'Pending' ? 1 : undefined,
+                  badge: p.application.status === 'Pending' ? 1 : (p.application.status === 'Rejected' ? 1 : undefined),
 
                 }
 
@@ -3137,7 +3137,17 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                           {isImageAttachment ? (
 
-                            <Image source={{ uri: attachmentUri }} style={styles.attachmentPreviewImage} />
+                            <TouchableOpacity
+
+                              onPress={() => void handleOpenProposalAttachment(attachmentUri, attachmentIndex)}
+
+                              activeOpacity={0.85}
+
+                            >
+
+                              <Image source={{ uri: attachmentUri }} style={styles.attachmentPreviewImage} />
+
+                            </TouchableOpacity>
 
                           ) : (
 
@@ -3549,54 +3559,11 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
             (() => {
 
-              // Filter out duplicate proposal cards, keeping only the latest per application regardless of status
+              // Don't deduplicate proposal cards - show all cards as message history
+              // Each status change (Pending → Rejected → Approved) is a separate card
+              const filteredMessages = messages;
 
-              const latestCardsByAppId = new Map<string, ChatMessage>();
-
-              messages.forEach(msg => {
-
-                if (msg.content?.startsWith(PROPOSAL_PREFIX)) {
-
-                  try {
-
-                    const data = JSON.parse(msg.content.replace(PROPOSAL_PREFIX, ''));
-
-                    const appId = data.applicationId || data.application?.id;
-
-                    if (appId) {
-
-                      const existing = latestCardsByAppId.get(appId);
-
-                      if (!existing || new Date(msg.timestamp).getTime() > new Date(existing.timestamp).getTime()) {
-
-                        latestCardsByAppId.set(appId, msg);
-
-                      }
-
-                    }
-
-                  } catch (_) {}
-
-                }
-
-              });
-
-              // Filter to only show the latest proposal card per application (no duplicates)
-              // Other messages (text, files) are preserved in order
-              const filteredMessages = messages.filter(msg => {
-                if (msg.content?.startsWith(PROPOSAL_PREFIX)) {
-                  try {
-                    const data = JSON.parse(msg.content.replace(PROPOSAL_PREFIX, ''));
-                    const appId = data.applicationId || data.application?.id;
-                    if (appId) {
-                      return latestCardsByAppId.get(appId)?.id === msg.id;
-                    }
-                  } catch (_) {}
-                }
-                return true;
-              });
-
-              return messages.map((m, i) => {
+              return filteredMessages.map((m, i) => {
 
               const isOwn = m.senderId === user?.id;
 
@@ -3606,23 +3573,35 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
               if (isProposal) {
 
-                let data: any = {};
+                let application: any = {};
 
                 try {
 
-                  data = JSON.parse(m.content.replace(PROPOSAL_PREFIX, ''));
+                  application = JSON.parse(m.content.replace(PROPOSAL_PREFIX, ''));
 
                 } catch (e) { return null; }
 
+                
+                // Handle both nested (proposalDetails) and flat (legacy) formats
+                const proposalDetails = application.proposalDetails || {};
+                const data = {
+                  proposedTitle: proposalDetails.proposedTitle || application.proposedTitle || 'Untitled Proposal',
+                  proposedDescription: proposalDetails.proposedDescription || application.proposedDescription || 'No description provided.',
+                  proposedStartDate: proposalDetails.proposedStartDate || application.proposedStartDate || 'TBD',
+                  proposedEndDate: proposalDetails.proposedEndDate || application.proposedEndDate || 'TBD',
+                  proposedLocation: proposalDetails.proposedLocation || application.proposedLocation || 'TBD',
+                  proposedVolunteersNeeded: proposalDetails.proposedVolunteersNeeded || application.proposedVolunteersNeeded || '0',
+                  status: application.status || 'Pending',
+                  id: application.id,
+                };
 
-
-                const isApproved = data.status === 'Approved';
+                const isApproved = application.status === 'Approved';
 
 
 
                 return (
 
-                  <View key={m.id} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther, { maxWidth: '90%' }]}>
+                  <View key={`proposal-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther, styles.proposalMessageRow]}>
 
                     <TouchableOpacity 
 
@@ -3630,7 +3609,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                       onPress={() => {
 
-                        setActiveProposalCardData({ ...data, messageId: m.id });
+                        setActiveProposalCardData({ ...application, messageId: m.id });
 
                       }}
 
@@ -3642,13 +3621,13 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                         <View style={styles.propCardIconBox}>
 
-                          <MaterialIcons name="assignment" size={20} color="#d97706" />
+                          <MaterialIcons name="assignment" size={28} color="#d97706" />
 
                         </View>
 
-                        <View style={{ flex: 1 }}>
+                        <View style={{ flex: 1, minWidth: 0 }}>
 
-                          <Text style={styles.propCardTitle} numberOfLines={1}>{data.proposedTitle || 'Untitled Proposal'}</Text>
+                          <Text style={styles.propCardTitle} numberOfLines={2}>{data.proposedTitle}</Text>
 
                           <Text style={styles.propCardSubtitle} numberOfLines={1}>Proposal ΓÇó {data.status}</Text>
 
@@ -3658,7 +3637,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                           <View style={styles.propApprovedBadge}>
 
-                            <MaterialIcons name="check-circle" size={14} color="#166534" />
+                            <MaterialIcons name="check-circle" size={18} color="#166534" />
 
                             <Text style={styles.propApprovedText}>Done</Text>
 
@@ -3684,7 +3663,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                           <View style={styles.propCardMetaItem}>
 
-                            <MaterialIcons name="event" size={12} color="#64748b" />
+                            <MaterialIcons name="event" size={14} color="#64748b" />
 
                             <Text style={styles.propCardMetaText} numberOfLines={1}>{data.proposedStartDate || 'TBD'}</Text>
 
@@ -3692,15 +3671,15 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                           <View style={styles.propCardMetaItem}>
 
-                            <MaterialIcons name="people" size={12} color="#64748b" />
+                            <MaterialIcons name="people" size={14} color="#64748b" />
 
-                            <Text style={styles.propCardMetaText}>{data.proposedVolunteersNeeded || '0'}</Text>
+                            <Text style={styles.propCardMetaText} numberOfLines={1}>{data.proposedVolunteersNeeded || '0'}</Text>
 
                           </View>
 
                           <View style={styles.propCardMetaItem}>
 
-                            <MaterialIcons name="location-on" size={12} color="#64748b" />
+                            <MaterialIcons name="location-on" size={14} color="#64748b" />
 
                             <Text style={styles.propCardMetaText} numberOfLines={1}>{data.proposedLocation || 'TBD'}</Text>
 
@@ -3734,7 +3713,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
               return (
 
-                <View key={m.id} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther]}>
+                <View key={`msg-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther]}>
 
                   <View style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubbleOther]}>
 
@@ -4084,12 +4063,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
       <View style={{ flex: 1 }} />
 
-      <TouchableOpacity style={styles.railItem}>
-
-        <Ionicons name="settings-outline" size={24} color="rgba(255,255,255,0.6)" />
-
-      </TouchableOpacity>
-
       <TouchableOpacity
 
         style={[styles.railAvatar, { backgroundColor: '#fff' }]}
@@ -4115,6 +4088,22 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       {/* Proposal Card Detail Popup */}
       {activeProposalCardData && (() => {
         const pd = activeProposalCardData;
+        const proposalDetails = pd.proposalDetails || {};
+        
+        // Handle both nested and flat formats
+        const extractedData = {
+          proposedTitle: proposalDetails.proposedTitle || pd.proposedTitle || 'Project Proposal',
+          proposedDescription: proposalDetails.proposedDescription || pd.proposedDescription,
+          proposedStartDate: proposalDetails.proposedStartDate || pd.proposedStartDate,
+          proposedEndDate: proposalDetails.proposedEndDate || pd.proposedEndDate,
+          proposedLocation: proposalDetails.proposedLocation || pd.proposedLocation,
+          proposedVolunteersNeeded: proposalDetails.proposedVolunteersNeeded ?? pd.proposedVolunteersNeeded,
+          communityNeed: proposalDetails.communityNeed || pd.communityNeed,
+          expectedDeliverables: proposalDetails.expectedDeliverables || pd.expectedDeliverables,
+          skillsNeeded: proposalDetails.skillsNeeded || pd.skillsNeeded,
+          programModule: proposalDetails.requestedProgramModule || pd.programModule || pd.requestedProgramModule,
+        };
+        
         const pdStatus: string = pd.status || 'Pending';
         const pdApproved = pdStatus === 'Approved';
         const pdRejected = pdStatus === 'Rejected';
@@ -4137,14 +4126,14 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 16, fontWeight: '800', color: '#1e293b' }} numberOfLines={2}>
-                    {pd.proposedTitle || 'Project Proposal'}
+                    {extractedData.proposedTitle}
                   </Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
                     <View style={[{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 99, backgroundColor: pdStatusBg }]}>
                       <Text style={{ fontSize: 11, fontWeight: '700', color: pdStatusColor }}>{pdStatus}</Text>
                     </View>
-                    {pd.programModule || pd.requestedProgramModule ? (
-                      <Text style={{ fontSize: 11, color: '#64748b' }}>{pd.programModule || pd.requestedProgramModule}</Text>
+                    {extractedData.programModule ? (
+                      <Text style={{ fontSize: 11, color: '#64748b' }}>{extractedData.programModule}</Text>
                     ) : null}
                   </View>
                 </View>
@@ -4155,56 +4144,56 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
               <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 400 }}>
                 {/* Description */}
-                {pd.proposedDescription ? (
+                {extractedData.proposedDescription ? (
                   <View style={{ marginBottom: 12 }}>
                     <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748b', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Description</Text>
-                    <Text style={{ fontSize: 13, color: '#374151', lineHeight: 20 }}>{pd.proposedDescription}</Text>
+                    <Text style={{ fontSize: 13, color: '#374151', lineHeight: 20 }}>{extractedData.proposedDescription}</Text>
                   </View>
                 ) : null}
 
                 {/* Meta grid */}
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
-                  {pd.proposedStartDate ? (
+                  {extractedData.proposedStartDate ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#f8fafc', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
                       <MaterialIcons name="event" size={14} color="#64748b" />
-                      <Text style={{ fontSize: 12, color: '#374151' }}>{pd.proposedStartDate}</Text>
+                      <Text style={{ fontSize: 12, color: '#374151' }}>{extractedData.proposedStartDate}</Text>
                     </View>
                   ) : null}
-                  {pd.proposedVolunteersNeeded ? (
+                  {extractedData.proposedVolunteersNeeded ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#f8fafc', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
                       <MaterialIcons name="people" size={14} color="#64748b" />
-                      <Text style={{ fontSize: 12, color: '#374151' }}>{pd.proposedVolunteersNeeded} Volunteers</Text>
+                      <Text style={{ fontSize: 12, color: '#374151' }}>{extractedData.proposedVolunteersNeeded} Volunteers</Text>
                     </View>
                   ) : null}
-                  {pd.proposedLocation ? (
+                  {extractedData.proposedLocation ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#f8fafc', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
                       <MaterialIcons name="location-on" size={14} color="#64748b" />
-                      <Text style={{ fontSize: 12, color: '#374151' }}>{pd.proposedLocation}</Text>
+                      <Text style={{ fontSize: 12, color: '#374151' }}>{extractedData.proposedLocation}</Text>
                     </View>
                   ) : null}
                 </View>
 
                 {/* Community need */}
-                {pd.communityNeed ? (
+                {extractedData.communityNeed ? (
                   <View style={{ marginBottom: 12 }}>
                     <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748b', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Community Need</Text>
-                    <Text style={{ fontSize: 13, color: '#374151', lineHeight: 20 }}>{pd.communityNeed}</Text>
+                    <Text style={{ fontSize: 13, color: '#374151', lineHeight: 20 }}>{extractedData.communityNeed}</Text>
                   </View>
                 ) : null}
 
                 {/* Expected deliverables */}
-                {pd.expectedDeliverables ? (
+                {extractedData.expectedDeliverables ? (
                   <View style={{ marginBottom: 12 }}>
                     <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748b', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Expected Deliverables</Text>
-                    <Text style={{ fontSize: 13, color: '#374151', lineHeight: 20 }}>{pd.expectedDeliverables}</Text>
+                    <Text style={{ fontSize: 13, color: '#374151', lineHeight: 20 }}>{extractedData.expectedDeliverables}</Text>
                   </View>
                 ) : null}
 
-                {Array.isArray(pd.attachments) && pd.attachments.length > 0 ? (
+                {Array.isArray(proposalDetails.attachments) && proposalDetails.attachments.length > 0 ? (
                   <View style={{ marginBottom: 12 }}>
                     <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>Attachments</Text>
                     <View style={styles.attachmentList}>
-                      {pd.attachments.map((attachment: any, attachmentIndex: number) => {
+                      {proposalDetails.attachments.map((attachment: any, attachmentIndex: number) => {
                         const attachmentUri = String(attachment?.url || '').trim();
                         const isImageAttachment =
                           String(attachment?.type || '').trim() === 'image' || isImageMediaUri(attachmentUri);
@@ -4215,7 +4204,12 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                         return (
                           <View key={`${attachmentUri}-${attachmentIndex}`} style={styles.attachmentCard}>
                             {isImageAttachment ? (
-                              <Image source={{ uri: attachmentUri }} style={styles.attachmentPreviewImage} />
+                              <TouchableOpacity
+                                onPress={() => void handleOpenProposalAttachment(attachmentUri, attachmentIndex)}
+                                activeOpacity={0.85}
+                              >
+                                <Image source={{ uri: attachmentUri }} style={styles.attachmentPreviewImage} />
+                              </TouchableOpacity>
                             ) : (
                               <View style={styles.attachmentPreviewFile}>
                                 <MaterialIcons name="description" size={28} color="#166534" />
@@ -5433,6 +5427,8 @@ const styles = StyleSheet.create({
 
   messageRow: { maxWidth: '85%', gap: 4 },
 
+  proposalMessageRow: { maxWidth: '92%', width: '92%' },
+
   messageRowOwn: { alignSelf: 'flex-end', alignItems: 'flex-end' },
 
   messageRowOther: { alignSelf: 'flex-start' },
@@ -5879,7 +5875,7 @@ const styles = StyleSheet.create({
 
     width: '100%',
 
-    height: 180,
+    height: 120,
 
     backgroundColor: '#e2e8f0',
 
@@ -6619,6 +6615,12 @@ const styles = StyleSheet.create({
 
     width: '100%',
 
+    height: 200,
+
+    minHeight: 200,
+
+    maxHeight: 200,
+
     borderWidth: 1,
 
     borderColor: '#e2e8f0',
@@ -6641,11 +6643,11 @@ const styles = StyleSheet.create({
 
     flexDirection: 'row',
 
-    alignItems: 'center',
+    alignItems: 'flex-start',
 
     gap: 10,
 
-    padding: 10,
+    padding: 12,
 
     borderBottomWidth: 1,
 
@@ -6657,9 +6659,9 @@ const styles = StyleSheet.create({
 
   propCardIconBox: {
 
-    width: 32,
+    width: 40,
 
-    height: 32,
+    height: 40,
 
     borderRadius: 8,
 
@@ -6668,6 +6670,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
 
     justifyContent: 'center',
+
+    flexShrink: 0,
 
   },
 
@@ -6687,17 +6691,19 @@ const styles = StyleSheet.create({
 
   propCardTitle: {
 
-    fontSize: 14,
+    fontSize: 15,
 
     fontWeight: '700',
 
     color: '#92400e',
 
+    lineHeight: 20,
+
   },
 
   propCardSubtitle: {
 
-    fontSize: 10,
+    fontSize: 12,
 
     fontWeight: '600',
 
@@ -6705,7 +6711,7 @@ const styles = StyleSheet.create({
 
     textTransform: 'uppercase',
 
-    marginTop: 1,
+    marginTop: 2,
 
   },
 
@@ -6733,7 +6739,7 @@ const styles = StyleSheet.create({
 
   propApprovedText: {
 
-    fontSize: 10,
+    fontSize: 12,
 
     fontWeight: '800',
 
@@ -6743,19 +6749,23 @@ const styles = StyleSheet.create({
 
   propCardBody: {
 
-    padding: 10,
+    padding: 12,
+
+    flex: 1,
 
   },
 
   propCardDesc: {
 
-    fontSize: 12,
+    fontSize: 13,
 
     color: '#475569',
 
-    lineHeight: 18,
+    lineHeight: 19,
 
-    marginBottom: 10,
+    marginBottom: 12,
+
+    height: 38,
 
   },
 
@@ -6763,13 +6773,17 @@ const styles = StyleSheet.create({
 
     flexDirection: 'row',
 
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
 
     gap: 8,
+
+    height: 32,
 
   },
 
   propCardMetaItem: {
+
+    flex: 1,
 
     flexDirection: 'row',
 
@@ -6781,19 +6795,23 @@ const styles = StyleSheet.create({
 
     paddingHorizontal: 8,
 
-    paddingVertical: 4,
+    paddingVertical: 6,
 
-    borderRadius: 6,
+    borderRadius: 8,
+
+    minWidth: 0,
 
   },
 
   propCardMetaText: {
 
-    fontSize: 11,
+    fontSize: 12,
 
     fontWeight: '600',
 
     color: '#64748b',
+
+    flex: 1,
 
   },
 
@@ -6801,7 +6819,7 @@ const styles = StyleSheet.create({
 
     flexDirection: 'row',
 
-    padding: 12,
+    padding: 16,
 
     gap: 10,
 
@@ -6999,13 +7017,15 @@ const styles = StyleSheet.create({
 
   propTapHint: {
 
-    fontSize: 10,
+    fontSize: 11,
 
     color: '#94a3b8',
 
     textAlign: 'center',
 
-    marginTop: 6,
+    paddingVertical: 8,
+
+    paddingHorizontal: 12,
 
     fontStyle: 'italic',
 

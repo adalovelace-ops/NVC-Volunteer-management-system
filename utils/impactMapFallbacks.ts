@@ -38,8 +38,8 @@ const LEGACY_SAMPLE_PROJECTS: Record<
     startDate: '2026-05-14T08:00:00.000Z',
     endDate: '2026-05-14T12:00:00.000Z',
     location: {
-      latitude: 10.5449,
-      longitude: 123.1901,
+      latitude: 10.7373,
+      longitude: 122.9673,
       address: 'Baybay, Talisay City, Negros Occidental',
     },
     volunteersNeeded: 8,
@@ -58,8 +58,8 @@ const LEGACY_SAMPLE_PROJECTS: Record<
     startDate: '2026-06-05T08:00:00.000Z',
     endDate: '2026-06-05T12:00:00.000Z',
     location: {
-      latitude: 10.6692,
-      longitude: 122.9515,
+      latitude: 9.9867,
+      longitude: 122.8073,
       address: 'Kabankalan City, Negros Occidental',
     },
     volunteersNeeded: 10,
@@ -77,8 +77,8 @@ const LEGACY_SAMPLE_PROJECTS: Record<
     startDate: '2026-04-25T16:00:00.000Z',
     endDate: '2026-04-26T15:59:59.000Z',
     location: {
-      latitude: 10.5933,
-      longitude: 123.0243,
+      latitude: 10.6765,
+      longitude: 122.9509,
       address: 'Bacolod City, Negros Occidental',
     },
     volunteersNeeded: 5,
@@ -96,8 +96,8 @@ const LEGACY_SAMPLE_PROJECTS: Record<
     startDate: '2026-04-25T16:00:00.000Z',
     endDate: '2026-04-26T15:59:59.000Z',
     location: {
-      latitude: 10.5933,
-      longitude: 123.0243,
+      latitude: 10.6765,
+      longitude: 122.9509,
       address: 'Bacolod City, Negros Occidental',
     },
     volunteersNeeded: 5,

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ModernTheme from '../utils/modernTheme';
 import {
   ActivityIndicator,
   Alert,

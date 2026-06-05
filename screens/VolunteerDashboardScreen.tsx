@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import ProjectTimelineCalendarCard from '../components/ProjectTimelineCalendarCard';
 import { useAuth } from '../contexts/AuthContext';
+import ModernTheme from '../utils/modernTheme';
 import {
   getDashboardTimelineSnapshot,
   getMessagesForUser,
@@ -92,6 +93,55 @@ function getUpcomingProject(projects: Project[]): Project | null {
 function isVolunteerOpportunityOpen(project: Project): boolean {
   const status = getProjectDisplayStatus(project);
   return status !== 'Completed' && status !== 'Cancelled';
+}
+
+// Normalizes text into searchable word tokens for skill matching
+const normalizeWords = (value?: string) =>
+  (value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length > 2);
+
+// Removes duplicate terms while preserving display order
+const unique = (values: string[]) => Array.from(new Set(values));
+
+// Category-specific keywords for better matching
+const CATEGORY_KEYWORDS: Record<Project['category'], string[]> = {
+  Nutrition: ['nutrition', 'food', 'feeding', 'meal', 'health', 'diet'],
+  Education: ['education', 'school', 'teaching', 'learning', 'student', 'training'],
+  Livelihood: ['livelihood', 'income', 'business', 'employment', 'skills', 'work'],
+  Disaster: ['disaster', 'relief', 'emergency', 'response', 'rescue', 'recovery'],
+};
+
+// Checks if event matches volunteer skills
+function checkEventSkillMatch(project: Project, volunteer: Volunteer | null): {
+  hasMatch: boolean;
+  matchedSkills: string[];
+} {
+  if (!volunteer || !project.isEvent) {
+    return { hasMatch: false, matchedSkills: [] };
+  }
+
+  const skillTerms = unique([
+    ...((volunteer.skills || []).flatMap(normalizeWords)),
+    ...normalizeWords(volunteer.skillsDescription),
+    ...normalizeWords(volunteer.specialSkills),
+  ]);
+
+  const projectTerms = unique([
+    ...normalizeWords(project.title),
+    ...normalizeWords(project.description),
+    ...((project.skillsNeeded || []).flatMap(normalizeWords)),
+    ...CATEGORY_KEYWORDS[project.category],
+  ]);
+
+  const matchedTerms = skillTerms.filter((term) => projectTerms.includes(term)).slice(0, 3);
+  
+  return {
+    hasMatch: matchedTerms.length > 0,
+    matchedSkills: matchedTerms,
+  };
 }
 
 function inferProgramTrackFocus(track: ProgramTrack): Project['category'] | null {
@@ -188,6 +238,11 @@ type DashboardCardPreview = {
   targetProjectId?: string;
   targetProgramId?: string;
   ctaLabel: string;
+  skillMatch?: {
+    hasMatch: boolean;
+    matchedSkills: string[];
+  };
+
 };
 
 type DashboardSectionPreview = {
@@ -291,11 +346,12 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
         void loadDashboardData(true);
         isLoaded.current = true;
       }
-      
+
       return subscribeToStorageChanges(
         [
           'projects',
           'events',
+          'programs',
           'volunteerProjectJoins',
           'volunteerMatches',
           'volunteerTimeLogs',
@@ -340,19 +396,19 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
             (volunteerProfile ? project.volunteers.includes(volunteerProfile.id) : false) ||
             (volunteerProfile
               ? volunteerMatches.some(
-                  match =>
-                    match.projectId === project.id &&
-                    match.volunteerId === volunteerProfile.id &&
-                    (match.status === 'Matched' || match.status === 'Completed')
-                )
+                match =>
+                  match.projectId === project.id &&
+                  match.volunteerId === volunteerProfile.id &&
+                  (match.status === 'Matched' || match.status === 'Completed')
+              )
               : false) ||
             (volunteerProfile
               ? volunteerJoinRecords.some(
-                  record =>
-                    record.projectId === project.id &&
-                    record.volunteerId === volunteerProfile.id &&
-                    (record.participationStatus || 'Active') === 'Active'
-                )
+                record =>
+                  record.projectId === project.id &&
+                  record.volunteerId === volunteerProfile.id &&
+                  (record.participationStatus || 'Active') === 'Active'
+              )
               : false) ||
             (volunteerProfile ? (project.internalTasks || []).some(task => isVolunteerAssignedToTask(task, volunteerProfile.id)) : false)
           )
@@ -382,19 +438,19 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
             (volunteerProfile ? project.volunteers.includes(volunteerProfile.id) : false) ||
             (volunteerProfile
               ? volunteerMatches.some(
-                  match =>
-                    match.projectId === project.id &&
-                    match.volunteerId === volunteerProfile.id &&
-                    (match.status === 'Matched' || match.status === 'Completed' || match.status === 'Requested')
-                )
+                match =>
+                  match.projectId === project.id &&
+                  match.volunteerId === volunteerProfile.id &&
+                  (match.status === 'Matched' || match.status === 'Completed' || match.status === 'Requested')
+              )
               : false) ||
             (volunteerProfile
               ? volunteerJoinRecords.some(
-                  record =>
-                    record.projectId === project.id &&
-                    record.volunteerId === volunteerProfile.id &&
-                    (record.participationStatus || 'Active') === 'Active'
-                )
+                record =>
+                  record.projectId === project.id &&
+                  record.volunteerId === volunteerProfile.id &&
+                  (record.participationStatus || 'Active') === 'Active'
+              )
               : false) ||
             (volunteerProfile ? (project.internalTasks || []).some(task => isVolunteerAssignedToTask(task, volunteerProfile.id)) : false)
           )
@@ -434,7 +490,7 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
     () => {
       // Only show programs that exist in the database (no hardcoded defaults)
       const activeTracks = programTracks.filter(track => track.isActive !== false);
-      
+
       return activeTracks.map(track => {
         // Count only actual projects that belong to this program.
         const moduleProjectCount = projects.filter(
@@ -541,25 +597,25 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
     () =>
       featuredEvent
         ? {
-            id: `featured-${featuredEvent.id}`,
-            kind: 'event',
-            eyebrow: featuredEventIsAssigned ? 'Your Next Event' : 'Suggested Event',
-            title: featuredEvent.title,
-            description: featuredEvent.description || 'View the event summary, schedule, and location.',
-            badgeLabel: getProjectDisplayStatus(featuredEvent),
-            badgeColor: getProjectStatusColor(featuredEvent),
-            details: [
-              { label: 'Campaign', value: featuredEvent.programModule || featuredEvent.category },
-              { label: 'Schedule', value: featuredEventDateRange },
-              { label: 'Venue', value: formatProjectLocation(featuredEvent) },
-              {
-                label: 'Volunteer Slots',
-                value: `${featuredEvent.volunteers.length}/${featuredEvent.volunteersNeeded}`,
-              },
-            ],
-            targetProjectId: featuredEvent.id,
-            ctaLabel: 'Open Event Details',
-          }
+          id: `featured-${featuredEvent.id}`,
+          kind: 'event',
+          eyebrow: featuredEventIsAssigned ? 'Your Next Event' : 'Suggested Event',
+          title: featuredEvent.title,
+          description: featuredEvent.description || 'View the event summary, schedule, and location.',
+          badgeLabel: getProjectDisplayStatus(featuredEvent),
+          badgeColor: getProjectStatusColor(featuredEvent),
+          details: [
+            { label: 'Campaign', value: featuredEvent.programModule || featuredEvent.category },
+            { label: 'Schedule', value: featuredEventDateRange },
+            { label: 'Venue', value: formatProjectLocation(featuredEvent) },
+            {
+              label: 'Volunteer Slots',
+              value: `${featuredEvent.volunteers.length}/${featuredEvent.volunteersNeeded}`,
+            },
+          ],
+          targetProjectId: featuredEvent.id,
+          ctaLabel: 'Open Event Details',
+        }
         : null,
     [featuredEvent, featuredEventDateRange, featuredEventIsAssigned]
   );
@@ -587,23 +643,27 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
 
   const availableEventCards = useMemo<DashboardCardPreview[]>(
     () =>
-      availableEvents.map(project => ({
-        id: `available-event-${project.id}`,
-        kind: 'event',
-        eyebrow: 'Available Event',
-        title: project.title,
-        description: project.description || 'Open the full event details.',
-        badgeLabel: getProjectDisplayStatus(project),
-        badgeColor: getProjectStatusColor(project),
-        details: [
-          { label: 'Campaign', value: project.programModule || project.category },
-          { label: 'Schedule', value: formatDateRangeLabel(project.startDate, project.endDate) },
-          { label: 'Location', value: project.location?.address || 'Location TBA' },
-        ],
-        targetProjectId: project.id,
-        ctaLabel: 'Open Event Details',
-      })),
-    [availableEvents]
+      availableEvents.map(project => {
+        const skillMatch = checkEventSkillMatch(project, volunteerProfile);
+        return {
+          id: `available-event-${project.id}`,
+          kind: 'event',
+          eyebrow: 'Available Event',
+          title: project.title,
+          description: project.description || 'Open the full event details.',
+          badgeLabel: getProjectDisplayStatus(project),
+          badgeColor: getProjectStatusColor(project),
+          details: [
+            { label: 'Campaign', value: project.programModule || project.category },
+            { label: 'Schedule', value: formatDateRangeLabel(project.startDate, project.endDate) },
+            { label: 'Location', value: project.location?.address || 'Location TBA' },
+          ],
+          targetProjectId: project.id,
+          ctaLabel: 'Open Event Details',
+          skillMatch,
+        };
+      }),
+    [availableEvents, volunteerProfile]
   );
 
   const joinedProjectCards = useMemo<DashboardCardPreview[]>(
@@ -783,6 +843,13 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
   );
 
   const handleLogout = async () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm('Are you sure you want to logout?')) {
+        await logout();
+      }
+      return;
+    }
+
     Alert.alert('Logout', 'Are you sure you want to logout?', [
       { text: 'Cancel' },
       { text: 'Logout', onPress: async () => await logout() },
@@ -804,352 +871,355 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
   return (
     <>
       <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <View style={styles.headerCard}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{user?.name?.charAt(0) || 'V'}</Text>
-        </View>
-        <View style={styles.headerCopy}>
-          <Text style={styles.role}>Volunteer Workspace</Text>
-          <Text style={styles.greeting}>Hello, {user?.name || 'Volunteer'}</Text>
-          <Text style={styles.headerHint}>Track your service, schedule, tasks, and messages in one place.</Text>
-        </View>
-        <TouchableOpacity onPress={handleLogout} style={styles.iconButton}>
-          <MaterialIcons name="logout" size={22} color="#166534" />
-        </TouchableOpacity>
-      </View>
-
-      {loadError ? (
-        <View style={styles.errorCard}>
-          <MaterialIcons name="error-outline" size={20} color="#b91c1c" />
-          <View style={styles.errorCopy}>
-            <Text style={styles.errorTitle}>{loadError.title}</Text>
-            <Text style={styles.errorText}>{loadError.message}</Text>
+        <View style={styles.headerCard}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{user?.name?.charAt(0) || 'V'}</Text>
           </View>
-          <TouchableOpacity onPress={() => void loadDashboardData(true)}>
-            <Text style={styles.errorAction}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
-
-      <View style={styles.heroCard}>
-        <View style={styles.heroAccentCircle} />
-        <View style={styles.heroAccentCircleSmall} />
-        <View style={styles.heroTopRow}>
-          <View style={styles.heroChip}>
-            <MaterialIcons name="verified" size={14} color="#14532d" />
-            <Text style={styles.heroChipText}>Account Status</Text>
+          <View style={styles.headerCopy}>
+            <Text style={styles.role}>Volunteer Workspace</Text>
+            <Text style={styles.greeting}>Hello, {user?.name || 'Volunteer'}</Text>
+            <Text style={styles.headerHint}>Track your service, schedule, tasks, and messages in one place.</Text>
           </View>
-          <View style={[styles.statusBadge, { backgroundColor: volunteerTone.badge }]}>
-            <Text style={[styles.statusBadgeText, { color: volunteerTone.text }]}>
-              {volunteerProfile?.registrationStatus || 'Pending'}
-            </Text>
-          </View>
-        </View>
-
-        <Text style={styles.heroTitle}>Your service dashboard is ready.</Text>
-        <Text style={styles.heroSubtitle}>
-          See what needs attention first, review your next event, and jump straight into projects, tasks, or messages.
-        </Text>
-
-        <View style={styles.metricRow}>
-          <View style={styles.metricCard}>
-            <MaterialIcons name="event-available" size={16} color="#bbf7d0" />
-            <Text style={styles.metricValue}>{joinedEvents.length}</Text>
-            <Text style={styles.metricLabel}>Joined Events</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <MaterialIcons name="timer" size={16} color="#bbf7d0" />
-            <Text style={styles.metricValue}>{totalHours.toFixed(1)}</Text>
-            <Text style={styles.metricLabel}>Beneficiary Served</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <MaterialIcons name="mark-email-unread" size={16} color="#bbf7d0" />
-            <Text style={styles.metricValue}>{unreadMessages}</Text>
-            <Text style={styles.metricLabel}>Unread Messages</Text>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.quickActionRow}>
-        <TouchableOpacity style={[styles.quickActionCard, styles.quickActionPrimary]} onPress={() => openProjects()}>
-          <View style={styles.quickActionIcon}>
-            <MaterialIcons name="work-outline" size={20} color="#166534" />
-          </View>
-          <View style={styles.quickActionCopy}>
-            <Text style={styles.quickActionTitle}>Find Projects</Text>
-            <Text style={styles.quickActionText}>Browse events and service opportunities.</Text>
-          </View>
-          <MaterialIcons name="chevron-right" size={20} color="#166534" />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.quickActionCard} onPress={openTasks}>
-          <View style={styles.quickActionIcon}>
-            <MaterialIcons name="task-alt" size={20} color="#166534" />
-          </View>
-          <View style={styles.quickActionCopy}>
-            <Text style={styles.quickActionTitle}>My Tasks</Text>
-            <Text style={styles.quickActionText}>Check assignments and field responsibilities.</Text>
-          </View>
-          <MaterialIcons name="chevron-right" size={20} color="#94a3b8" />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.quickActionCard} onPress={openMessages}>
-          <View style={styles.quickActionIcon}>
-            <MaterialIcons name="chat-bubble-outline" size={20} color="#166534" />
-          </View>
-          <View style={styles.quickActionCopy}>
-            <Text style={styles.quickActionTitle}>Messages</Text>
-            <Text style={styles.quickActionText}>Read admin and project updates.</Text>
-          </View>
-          {unreadMessages > 0 ? (
-            <View style={styles.messageCountBadge}>
-              <Text style={styles.messageCountText}>{unreadMessages > 99 ? '99+' : unreadMessages}</Text>
-            </View>
-          ) : (
-            <MaterialIcons name="chevron-right" size={20} color="#94a3b8" />
-          )}
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.section}>
-        <View style={styles.detailCard}>
-          <View style={styles.sectionHeader}>
-            <View>
-              <Text style={styles.sectionEyebrow}>Next Priority</Text>
-              <Text style={styles.sectionTitle}>Event Details</Text>
-            </View>
-            <TouchableOpacity onPress={() => openDashboardSection(featuredEventSection)}>
-              <Text style={styles.linkText}>{featuredEventSection.items.length ? 'Open list' : 'View status'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {renderSectionCard(featuredEventSection)}
-        </View>
-
-      </View>
-
-      <ProjectTimelineCalendarCard
-        title="Volunteer Event Calendar"
-        subtitle={
-          assignedEventIds.length
-            ? 'Your assigned events are shown with the admin planning timeline below.'
-            : 'Review the shared project schedule and upcoming admin timeline in one view.'
-        }
-        projects={projects}
-        planningCalendars={planningCalendars}
-        planningItems={planningItems}
-        projectFilterIds={assignedEventIds.length ? assignedEventIds : undefined}
-        accentColor="#166534"
-        emptyText="No volunteer timeline items yet."
-        onOpenProject={projectId => openProjects(projectId)}
-      />
-
-      {joinedEvents.length > 0 && (
-        <View style={styles.detailCard}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Your Joined Events</Text>
-            <TouchableOpacity onPress={() => openDashboardSection(joinedEventsSection)}>
-              <Text style={styles.linkText}>Open list</Text>
-            </TouchableOpacity>
-          </View>
-
-          {renderSectionCard(joinedEventsSection)}
-        </View>
-      )}
-
-      {availableEvents.length > 0 && (
-        <View style={styles.detailCard}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Available Events</Text>
-            <TouchableOpacity onPress={() => openDashboardSection(availableEventsSection)}>
-              <Text style={styles.linkText}>Open list</Text>
-            </TouchableOpacity>
-          </View>
-
-          <Text style={styles.sectionSubtitle}>Events you can join and contribute to</Text>
-
-          {renderSectionCard(availableEventsSection)}
-        </View>
-      )}
-
-      <View style={styles.detailCard}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Programs</Text>
-          <TouchableOpacity onPress={() => openDashboardSection(programsSection)}>
-            <Text style={styles.linkText}>Open list</Text>
+          <TouchableOpacity onPress={handleLogout} style={styles.iconButton}>
+            <MaterialIcons name="logout" size={22} color="#166534" />
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.sectionSubtitle}>The three core program areas currently available in the system</Text>
-
-        {renderSectionCard(programsSection)}
-      </View>
-
-      {joinedProjects.length > 0 && (
-        <View style={styles.detailCard}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Your Joined Programs</Text>
-            <TouchableOpacity onPress={() => openDashboardSection(joinedProjectsSection)}>
-              <Text style={styles.linkText}>Open list</Text>
-            </TouchableOpacity>
-          </View>
-
-          {renderSectionCard(joinedProjectsSection)}
-        </View>
-      )}
-
-      {availableProjects.length > 0 && (
-        <View style={styles.detailCard}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Available Projects</Text>
-            <TouchableOpacity onPress={() => openDashboardSection(availableProjectsSection)}>
-              <Text style={styles.linkText}>Open list</Text>
-            </TouchableOpacity>
-          </View>
-
-          <Text style={styles.sectionSubtitle}>Projects you can join and contribute to</Text>
-
-          {renderSectionCard(availableProjectsSection)}
-        </View>
-      )}
-    </ScrollView>
-    <Modal
-      visible={Boolean(selectedDashboardSection)}
-      transparent
-      animationType="fade"
-      onRequestClose={() => setSelectedDashboardSection(null)}
-    >
-      <View style={styles.previewModalBackdrop}>
-        <View style={styles.previewModalCard}>
-          <View style={styles.previewModalHeader}>
-            <View style={styles.previewModalHeaderCopy}>
-              <Text style={styles.previewModalEyebrow}>{selectedDashboardSection?.eyebrow || 'Dashboard List'}</Text>
-              <Text style={styles.previewModalTitle}>{selectedDashboardSection?.title || 'Items'}</Text>
+        {loadError ? (
+          <View style={styles.errorCard}>
+            <MaterialIcons name="error-outline" size={20} color="#b91c1c" />
+            <View style={styles.errorCopy}>
+              <Text style={styles.errorTitle}>{loadError.title}</Text>
+              <Text style={styles.errorText}>{loadError.message}</Text>
             </View>
-            <TouchableOpacity
-              style={styles.previewModalClose}
-              onPress={() => setSelectedDashboardSection(null)}
-              activeOpacity={0.85}
-            >
-              <MaterialIcons name="close" size={20} color="#475569" />
+            <TouchableOpacity onPress={() => void loadDashboardData(true)}>
+              <Text style={styles.errorAction}>Retry</Text>
             </TouchableOpacity>
           </View>
+        ) : null}
 
-          <Text style={styles.previewModalDescription}>
-            {selectedDashboardSection?.items.length
-              ? selectedDashboardSection?.subtitle
-              : selectedDashboardSection?.emptyText || 'No items available.'}
+        <View style={styles.heroCard}>
+          <View style={styles.heroAccentCircle} />
+          <View style={styles.heroAccentCircleSmall} />
+          <View style={styles.heroTopRow}>
+            <View style={styles.heroChip}>
+              <MaterialIcons name="verified" size={14} color="#14532d" />
+              <Text style={styles.heroChipText}>Account Status</Text>
+            </View>
+            <View style={[styles.statusBadge, { backgroundColor: volunteerTone.badge }]}>
+              <Text style={[styles.statusBadgeText, { color: volunteerTone.text }]}>
+                {volunteerProfile?.registrationStatus || 'Pending'}
+              </Text>
+            </View>
+          </View>
+
+          <Text style={styles.heroTitle}>Your service dashboard is ready.</Text>
+          <Text style={styles.heroSubtitle}>
+            See what needs attention first, review your next event, and jump straight into projects, tasks, or messages.
           </Text>
 
-          <ScrollView style={styles.sectionListModalScroll} contentContainerStyle={styles.sectionListModalContent}>
-            {selectedDashboardSection?.items.length ? (
-              selectedDashboardSection.items.map(item => (
-                <TouchableOpacity
-                  key={item.id}
-                  style={styles.sectionListItem}
-                  onPress={() => openDashboardCardFromList(item)}
-                  activeOpacity={0.88}
-                >
-                  <View style={styles.sectionListItemHeader}>
-                    <View style={styles.sectionListItemHeaderCopy}>
-                      <Text style={styles.sectionListItemEyebrow}>{item.eyebrow}</Text>
-                      <Text style={styles.sectionListItemTitle} numberOfLines={2}>
-                        {item.title}
-                      </Text>
-                    </View>
-                    {item.badgeLabel ? (
-                      <View
-                        style={[
-                          styles.previewCardBadge,
-                          item.badgeColor ? { backgroundColor: `${item.badgeColor}1F`, borderColor: item.badgeColor } : null,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.previewCardBadgeText,
-                            item.badgeColor ? { color: item.badgeColor } : null,
-                          ]}
-                        >
-                          {item.badgeLabel}
-                        </Text>
-                      </View>
-                    ) : (
-                      <MaterialIcons name="chevron-right" size={18} color="#94a3b8" />
-                    )}
-                  </View>
-
-                  <Text style={styles.sectionListItemDescription} numberOfLines={2}>
-                    {item.description}
-                  </Text>
-
-                  <View style={styles.sectionListItemFooter}>
-                    <Text style={styles.sectionListItemFooterText}>Tap to open</Text>
-                    <MaterialIcons name="north-east" size={16} color="#166534" />
-                  </View>
-                </TouchableOpacity>
-              ))
-            ) : (
-              <View style={styles.emptyStateCard}>
-                <MaterialIcons name="inbox" size={28} color="#94a3b8" />
-                <Text style={styles.emptyStateTitle}>{selectedDashboardSection?.emptyTitle || 'Nothing here yet'}</Text>
-                <Text style={styles.emptySectionText}>{selectedDashboardSection?.emptyText || 'No items available.'}</Text>
-              </View>
-            )}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-    <Modal
-      visible={Boolean(selectedDashboardCard)}
-      transparent
-      animationType="fade"
-      onRequestClose={() => setSelectedDashboardCard(null)}
-    >
-      <View style={styles.previewModalBackdrop}>
-        <View style={styles.previewModalCard}>
-          <View style={styles.previewModalHeader}>
-            <View style={styles.previewModalHeaderCopy}>
-              <Text style={styles.previewModalEyebrow}>{selectedDashboardCard?.eyebrow || 'Details'}</Text>
-              <Text style={styles.previewModalTitle}>{selectedDashboardCard?.title || 'Details'}</Text>
+          <View style={styles.metricRow}>
+            <View style={styles.metricCard}>
+              <MaterialIcons name="event-available" size={16} color="#bbf7d0" />
+              <Text style={styles.metricValue}>{joinedEvents.length}</Text>
+              <Text style={styles.metricLabel}>Joined Events</Text>
             </View>
-            <TouchableOpacity
-              style={styles.previewModalClose}
-              onPress={() => setSelectedDashboardCard(null)}
-              activeOpacity={0.85}
-            >
-              <MaterialIcons name="close" size={20} color="#475569" />
+            <View style={styles.metricCard}>
+              <MaterialIcons name="mark-email-unread" size={16} color="#bbf7d0" />
+              <Text style={styles.metricValue}>{unreadMessages}</Text>
+              <Text style={styles.metricLabel}>Unread Messages</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.quickActionRow}>
+          <TouchableOpacity style={[styles.quickActionCard, styles.quickActionPrimary]} onPress={() => openProjects()}>
+            <View style={styles.quickActionIcon}>
+              <MaterialIcons name="work-outline" size={20} color="#166534" />
+            </View>
+            <View style={styles.quickActionCopy}>
+              <Text style={styles.quickActionTitle}>Find Projects</Text>
+              <Text style={styles.quickActionText}>Browse events and service opportunities.</Text>
+            </View>
+            <MaterialIcons name="chevron-right" size={20} color="#166534" />
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.quickActionCard} onPress={openTasks}>
+            <View style={styles.quickActionIcon}>
+              <MaterialIcons name="task-alt" size={20} color="#166534" />
+            </View>
+            <View style={styles.quickActionCopy}>
+              <Text style={styles.quickActionTitle}>My Tasks</Text>
+              <Text style={styles.quickActionText}>Check assignments and field responsibilities.</Text>
+            </View>
+            <MaterialIcons name="chevron-right" size={20} color="#94a3b8" />
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.quickActionCard} onPress={openMessages}>
+            <View style={styles.quickActionIcon}>
+              <MaterialIcons name="chat-bubble-outline" size={20} color="#166534" />
+            </View>
+            <View style={styles.quickActionCopy}>
+              <Text style={styles.quickActionTitle}>Messages</Text>
+              <Text style={styles.quickActionText}>Read admin and project updates.</Text>
+            </View>
+            {unreadMessages > 0 ? (
+              <View style={styles.messageCountBadge}>
+                <Text style={styles.messageCountText}>{unreadMessages > 99 ? '99+' : unreadMessages}</Text>
+              </View>
+            ) : (
+              <MaterialIcons name="chevron-right" size={20} color="#94a3b8" />
+            )}
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.detailCard}>
+            <View style={styles.sectionHeader}>
+              <View>
+                <Text style={styles.sectionEyebrow}>Next Priority</Text>
+                <Text style={styles.sectionTitle}>Event Details</Text>
+              </View>
+              <TouchableOpacity onPress={() => openDashboardSection(featuredEventSection)}>
+                <Text style={styles.linkText}>{featuredEventSection.items.length ? 'Open list' : 'View status'}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {renderSectionCard(featuredEventSection)}
+          </View>
+
+        </View>
+
+        <ProjectTimelineCalendarCard
+          title="Volunteer Event Calendar"
+          subtitle={
+            assignedEventIds.length
+              ? 'Your assigned events are shown with the admin planning timeline below.'
+              : 'Review the shared project schedule and upcoming admin timeline in one view.'
+          }
+          projects={projects}
+          planningCalendars={planningCalendars}
+          planningItems={planningItems}
+          projectFilterIds={assignedEventIds.length ? assignedEventIds : undefined}
+          accentColor="#166534"
+          emptyText="No volunteer timeline items yet."
+          onOpenProject={projectId => openProjects(projectId)}
+        />
+
+        {joinedEvents.length > 0 && (
+          <View style={styles.detailCard}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Your Joined Events</Text>
+              <TouchableOpacity onPress={() => openDashboardSection(joinedEventsSection)}>
+                <Text style={styles.linkText}>Open list</Text>
+              </TouchableOpacity>
+            </View>
+
+            {renderSectionCard(joinedEventsSection)}
+          </View>
+        )}
+
+        {availableEvents.length > 0 && (
+          <View style={styles.detailCard}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Available Events</Text>
+              <TouchableOpacity onPress={() => openDashboardSection(availableEventsSection)}>
+                <Text style={styles.linkText}>Open list</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.sectionSubtitle}>Events you can join and contribute to</Text>
+
+            {renderSectionCard(availableEventsSection)}
+          </View>
+        )}
+
+        <View style={styles.detailCard}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Programs</Text>
+            <TouchableOpacity onPress={() => openDashboardSection(programsSection)}>
+              <Text style={styles.linkText}>Open list</Text>
             </TouchableOpacity>
           </View>
 
-          {selectedDashboardCard?.description ? (
-            <Text style={styles.previewModalDescription}>{selectedDashboardCard.description}</Text>
-          ) : null}
+          <Text style={styles.sectionSubtitle}>The three core program areas currently available in the system</Text>
 
-          <View style={styles.previewModalDetails}>
-            {(selectedDashboardCard?.details || []).map(detail => (
-              <View key={`${selectedDashboardCard?.id}-${detail.label}`} style={styles.previewModalDetailRow}>
-                <Text style={styles.previewModalDetailLabel}>{detail.label}</Text>
-                <Text style={styles.previewModalDetailValue}>{detail.value}</Text>
-              </View>
-            ))}
-          </View>
-
-          <TouchableOpacity
-            style={styles.previewModalAction}
-            onPress={() => {
-              if (selectedDashboardCard) {
-                navigateFromDashboardCard(selectedDashboardCard);
-              }
-            }}
-            activeOpacity={0.88}
-          >
-            <Text style={styles.previewModalActionText}>
-              {selectedDashboardCard?.ctaLabel || 'Open Details'}
-            </Text>
-            <MaterialIcons name="north-east" size={18} color="#ffffff" />
-          </TouchableOpacity>
+          {renderSectionCard(programsSection)}
         </View>
-      </View>
+
+        {joinedProjects.length > 0 && (
+          <View style={styles.detailCard}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Your Joined Programs</Text>
+              <TouchableOpacity onPress={() => openDashboardSection(joinedProjectsSection)}>
+                <Text style={styles.linkText}>Open list</Text>
+              </TouchableOpacity>
+            </View>
+
+            {renderSectionCard(joinedProjectsSection)}
+          </View>
+        )}
+
+        {availableProjects.length > 0 && (
+          <View style={styles.detailCard}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Available Projects</Text>
+              <TouchableOpacity onPress={() => openDashboardSection(availableProjectsSection)}>
+                <Text style={styles.linkText}>Open list</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.sectionSubtitle}>Projects you can join and contribute to</Text>
+
+            {renderSectionCard(availableProjectsSection)}
+          </View>
+        )}
+      </ScrollView>
+      <Modal
+        visible={Boolean(selectedDashboardSection)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedDashboardSection(null)}
+      >
+        <View style={styles.previewModalBackdrop}>
+          <View style={styles.previewModalCard}>
+            <View style={styles.previewModalHeader}>
+              <View style={styles.previewModalHeaderCopy}>
+                <Text style={styles.previewModalEyebrow}>{selectedDashboardSection?.eyebrow || 'Dashboard List'}</Text>
+                <Text style={styles.previewModalTitle}>{selectedDashboardSection?.title || 'Items'}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.previewModalClose}
+                onPress={() => setSelectedDashboardSection(null)}
+                activeOpacity={0.85}
+              >
+                <MaterialIcons name="close" size={20} color="#475569" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.previewModalDescription}>
+              {selectedDashboardSection?.items.length
+                ? selectedDashboardSection?.subtitle
+                : selectedDashboardSection?.emptyText || 'No items available.'}
+            </Text>
+
+            <ScrollView style={styles.sectionListModalScroll} contentContainerStyle={styles.sectionListModalContent}>
+              {selectedDashboardSection?.items.length ? (
+                selectedDashboardSection.items.map(item => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.sectionListItem}
+                    onPress={() => openDashboardCardFromList(item)}
+                    activeOpacity={0.88}
+                  >
+                    <View style={styles.sectionListItemHeader}>
+                      <View style={styles.sectionListItemHeaderCopy}>
+                        <Text style={styles.sectionListItemEyebrow}>{item.eyebrow}</Text>
+                        <Text style={styles.sectionListItemTitle} numberOfLines={2}>
+                          {item.title}
+                        </Text>
+                        {item.skillMatch?.hasMatch && (
+                          <View style={styles.skillMatchBadge}>
+                            <MaterialIcons name="stars" size={14} color="#16a34a" />
+                            <Text style={styles.skillMatchText}>
+                              Skills Match: {item.skillMatch.matchedSkills.join(', ')}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      {item.badgeLabel ? (
+                        <View
+                          style={[
+                            styles.previewCardBadge,
+                            item.badgeColor ? { backgroundColor: `${item.badgeColor}1F`, borderColor: item.badgeColor } : null,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.previewCardBadgeText,
+                              item.badgeColor ? { color: item.badgeColor } : null,
+                            ]}
+                          >
+                            {item.badgeLabel}
+                          </Text>
+                        </View>
+                      ) : (
+                        <MaterialIcons name="chevron-right" size={18} color="#94a3b8" />
+                      )}
+                    </View>
+
+                    <Text style={styles.sectionListItemDescription} numberOfLines={2}>
+                      {item.description}
+                    </Text>
+
+                    <View style={styles.sectionListItemFooter}>
+                      <Text style={styles.sectionListItemFooterText}>Tap to open</Text>
+                      <MaterialIcons name="north-east" size={16} color="#166534" />
+                    </View>
+                  </TouchableOpacity>
+                ))
+              ) : (
+                <View style={styles.emptyStateCard}>
+                  <MaterialIcons name="inbox" size={28} color="#94a3b8" />
+                  <Text style={styles.emptyStateTitle}>{selectedDashboardSection?.emptyTitle || 'Nothing here yet'}</Text>
+                  <Text style={styles.emptySectionText}>{selectedDashboardSection?.emptyText || 'No items available.'}</Text>
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        visible={Boolean(selectedDashboardCard)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedDashboardCard(null)}
+      >
+        <View style={styles.previewModalBackdrop}>
+          <View style={styles.previewModalCard}>
+            <View style={styles.previewModalHeader}>
+              <View style={styles.previewModalHeaderCopy}>
+                <Text style={styles.previewModalEyebrow}>{selectedDashboardCard?.eyebrow || 'Details'}</Text>
+                <Text style={styles.previewModalTitle}>{selectedDashboardCard?.title || 'Details'}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.previewModalClose}
+                onPress={() => setSelectedDashboardCard(null)}
+                activeOpacity={0.85}
+              >
+                <MaterialIcons name="close" size={20} color="#475569" />
+              </TouchableOpacity>
+            </View>
+
+            {selectedDashboardCard?.description ? (
+              <Text style={styles.previewModalDescription}>{selectedDashboardCard.description}</Text>
+            ) : null}
+
+            <View style={styles.previewModalDetails}>
+              {(selectedDashboardCard?.details || []).map(detail => (
+                <View key={`${selectedDashboardCard?.id}-${detail.label}`} style={styles.previewModalDetailRow}>
+                  <Text style={styles.previewModalDetailLabel}>{detail.label}</Text>
+                  <Text style={styles.previewModalDetailValue}>{detail.value}</Text>
+                </View>
+              ))}
+            </View>
+
+            <TouchableOpacity
+              style={styles.previewModalAction}
+              onPress={() => {
+                if (selectedDashboardCard) {
+                  navigateFromDashboardCard(selectedDashboardCard);
+                }
+              }}
+              activeOpacity={0.88}
+            >
+              <Text style={styles.previewModalActionText}>
+                {selectedDashboardCard?.ctaLabel || 'Open Details'}
+              </Text>
+              <MaterialIcons name="north-east" size={18} color="#ffffff" />
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
     </>
   );
@@ -1158,86 +1228,84 @@ export default function VolunteerDashboardScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#eef5ee',
+    backgroundColor: ModernTheme.colors.background.secondary,
   },
   content: {
-    padding: 14,
-    paddingBottom: 32,
-    gap: 14,
+    padding: ModernTheme.spacing[3.5],
+    paddingBottom: ModernTheme.spacing[8],
+    gap: ModernTheme.spacing[3.5],
   },
   loadingContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#f3f7f2',
-    padding: 24,
+    backgroundColor: ModernTheme.colors.background.primary,
+    padding: ModernTheme.spacing[6],
   },
   loadingCard: {
     width: '100%',
     maxWidth: 360,
-    borderRadius: 20,
-    backgroundColor: '#ffffff',
+    borderRadius: ModernTheme.borderRadius.xl,
+    backgroundColor: ModernTheme.colors.background.card,
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 22,
-    borderWidth: 1,
-    borderColor: '#dbe7df',
-    gap: 10,
+    paddingHorizontal: ModernTheme.spacing[5],
+    paddingVertical: ModernTheme.spacing[5.5],
+    borderWidth: 0,
+    borderColor: 'transparent',
+    gap: ModernTheme.spacing[2.5],
+    ...ModernTheme.shadows.lg,
   },
   loadingTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#0f172a',
+    fontSize: ModernTheme.typography.fontSize.lg,
+    fontWeight: ModernTheme.typography.fontWeight.bold,
+    color: ModernTheme.colors.text.primary,
   },
   loadingText: {
     textAlign: 'center',
-    fontSize: 12,
+    fontSize: ModernTheme.typography.fontSize.sm,
     lineHeight: 18,
-    color: '#64748b',
+    color: ModernTheme.colors.text.secondary,
   },
   headerCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    borderRadius: 22,
-    backgroundColor: '#ffffff',
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderWidth: 1,
-    borderColor: '#d8e7dc',
-    shadowColor: '#14532d',
-    shadowOpacity: 0.08,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 2,
+    gap: ModernTheme.spacing[3],
+    borderRadius: ModernTheme.borderRadius['2xl'],
+    backgroundColor: ModernTheme.colors.background.card,
+    paddingHorizontal: ModernTheme.spacing[3.5],
+    paddingVertical: ModernTheme.spacing[3],
+    borderWidth: 0,
+    borderColor: 'transparent',
+    ...ModernTheme.shadows.md,
   },
   avatar: {
     width: 48,
     height: 48,
-    borderRadius: 16,
-    backgroundColor: '#14532d',
+    borderRadius: ModernTheme.borderRadius.lg,
+    backgroundColor: ModernTheme.colors.primary[900],
     alignItems: 'center',
     justifyContent: 'center',
+    ...ModernTheme.shadows.sm,
   },
   avatarText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '800',
+    color: ModernTheme.colors.text.inverse,
+    fontSize: ModernTheme.typography.fontSize.lg,
+    fontWeight: ModernTheme.typography.fontWeight.bold,
   },
   headerCopy: {
     flex: 1,
   },
   greeting: {
-    marginTop: 3,
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#0f172a',
+    marginTop: ModernTheme.spacing[0.5],
+    fontSize: ModernTheme.typography.fontSize.xl,
+    fontWeight: ModernTheme.typography.fontWeight.bold,
+    color: ModernTheme.colors.text.primary,
   },
   role: {
-    fontSize: 11,
-    color: '#166534',
-    fontWeight: '800',
-    letterSpacing: 0.7,
+    fontSize: ModernTheme.typography.fontSize.xs,
+    color: ModernTheme.colors.primary[700],
+    fontWeight: ModernTheme.typography.fontWeight.bold,
+    letterSpacing: ModernTheme.typography.letterSpacing.wide,
     textTransform: 'uppercase',
   },
   headerHint: {
@@ -1877,6 +1945,22 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     fontWeight: '800',
     color: '#0f172a',
+  },
+  skillMatchBadge: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#dcfce7',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    gap: 4,
+    alignSelf: 'flex-start',
+  },
+  skillMatchText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#166534',
   },
   sectionListItemDescription: {
     fontSize: 11,

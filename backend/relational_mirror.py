@@ -562,7 +562,7 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
     "users": {
         "table": "users",
         "columns": [
-            ("id", False),
+            ("users_id", False),
             ("email", False),
             ("password", False),
             ("role", False),

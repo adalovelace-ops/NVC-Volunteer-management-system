@@ -19,6 +19,7 @@ import type {
 } from '../screens/ReportsScreen';
 import type { Project, VolunteerProjectJoinRecord, VolunteerTimeLog } from '../models/types';
 import { isImageMediaUri, pickImageFromDevice } from '../utils/media';
+import { useAuth } from '../contexts/AuthContext';
 
 type MaterialIconName = keyof typeof MaterialIcons.glyphMap;
 
@@ -56,6 +57,7 @@ export default function ReportUploadModal({
   partnerProjectSummaries = [],
   volunteerProfileId,
 }: ReportUploadModalProps) {
+  const { user } = useAuth();
   const [reportType, setReportType] =
     useState<SubmittedReport['reportType']>('volunteer_engagement');
   const [title, setTitle] = useState('');
@@ -429,7 +431,9 @@ export default function ReportUploadModal({
         metrics: selectedPartnerProjectSummary.metrics,
         attachments: [],
         mediaFile: undefined,
-        status: 'Submitted',
+        status: 'Approved',
+        approvedAt: new Date().toISOString(),
+        approvedBy: user?.name || 'System',
         collaborationFeedback: collaborationFeedback.trim() || undefined,
         volunteerPraise: volunteerPraise.trim() || undefined,
         gratitudeNote: gratitudeNote.trim() || undefined,
@@ -496,7 +500,9 @@ export default function ReportUploadModal({
       mediaFile: isVolunteer
         ? selectedReportPhoto || volunteerMetrics.latestAttendancePhoto || undefined
         : undefined,
-      status: 'Submitted',
+      status: 'Approved',
+      approvedAt: new Date().toISOString(),
+      approvedBy: user?.name || 'System',
     };
 
     Keyboard.dismiss();

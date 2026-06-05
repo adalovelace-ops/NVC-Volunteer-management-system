@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ModernTheme from '../utils/modernTheme';
 import {
   View,
   Text,
@@ -9,6 +10,7 @@ import {
   Platform,
   Image,
   ScrollView,
+  type ImageStyle,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import MapView, { Callout, Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
@@ -461,7 +463,7 @@ export default function MappingScreen({ navigation }: any) {
                   return (
                     <Image
                       source={projectImageSource}
-                      style={styles.projectPhoto}
+                      style={styles.projectPhoto as ImageStyle}
                       resizeMode="cover"
                     />
                   );
@@ -550,7 +552,7 @@ export default function MappingScreen({ navigation }: any) {
                   return (
                     <Image
                       source={{ uri: reportMediaUri }}
-                      style={styles.reportPhoto}
+                      style={styles.reportPhoto as ImageStyle}
                       resizeMode="cover"
                     />
                   );
@@ -573,43 +575,44 @@ export default function MappingScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: ModernTheme.colors.background.secondary,
   },
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: ModernTheme.colors.background.secondary,
   },
   loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#666',
+    marginTop: ModernTheme.spacing[4],
+    fontSize: ModernTheme.typography.fontSize.lg,
+    color: ModernTheme.colors.text.secondary,
   },
   header: {
-    backgroundColor: '#fff',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    backgroundColor: ModernTheme.colors.background.card,
+    paddingHorizontal: ModernTheme.spacing[4],
+    paddingVertical: ModernTheme.spacing[3],
+    borderBottomWidth: 0,
+    borderBottomColor: 'transparent',
+    ...ModernTheme.shadows.sm,
   },
   inlineErrorWrap: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingHorizontal: ModernTheme.spacing[4],
+    paddingTop: ModernTheme.spacing[3],
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
+    fontSize: ModernTheme.typography.fontSize.xl,
+    fontWeight: ModernTheme.typography.fontWeight.bold,
+    color: ModernTheme.colors.text.primary,
   },
   headerSubtitle: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 4,
+    fontSize: ModernTheme.typography.fontSize.sm,
+    color: ModernTheme.colors.text.tertiary,
+    marginTop: ModernTheme.spacing[1],
   },
   mapContainer: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: ModernTheme.colors.background.card,
     position: 'relative',
   },
   mapView: {
@@ -617,36 +620,37 @@ const styles = StyleSheet.create({
   },
   calloutCard: {
     width: 240,
-    backgroundColor: '#ffffff',
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
+    backgroundColor: ModernTheme.colors.background.card,
+    borderRadius: ModernTheme.borderRadius.lg,
+    padding: ModernTheme.spacing[3],
+    borderWidth: 0,
+    borderColor: 'transparent',
+    ...ModernTheme.shadows.md,
   },
   calloutTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#0f172a',
-    marginBottom: 4,
+    fontSize: ModernTheme.typography.fontSize.sm,
+    fontWeight: ModernTheme.typography.fontWeight.bold,
+    color: ModernTheme.colors.text.primary,
+    marginBottom: ModernTheme.spacing[1],
   },
   calloutMetaLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#475569',
-    marginBottom: 8,
+    fontSize: ModernTheme.typography.fontSize.xs,
+    fontWeight: ModernTheme.typography.fontWeight.semibold,
+    color: ModernTheme.colors.text.secondary,
+    marginBottom: ModernTheme.spacing[2],
   },
   calloutSectionLabel: {
-    marginTop: 8,
-    marginBottom: 4,
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#166534',
+    marginTop: ModernTheme.spacing[2],
+    marginBottom: ModernTheme.spacing[1],
+    fontSize: ModernTheme.typography.fontSize.sm,
+    fontWeight: ModernTheme.typography.fontWeight.semibold,
+    color: ModernTheme.colors.primary[700],
   },
   calloutRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 5,
+    gap: ModernTheme.spacing[2],
+    paddingVertical: ModernTheme.spacing[1],
   },
   calloutRowText: {
     flex: 1,

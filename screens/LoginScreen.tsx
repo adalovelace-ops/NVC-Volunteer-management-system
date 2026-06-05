@@ -13,6 +13,7 @@ import {
   useWindowDimensions,
   Image,
 } from "react-native";
+import ModernTheme from "../utils/modernTheme";
 
 // Safe Platform accessor for web environments
 function getPlatformOS(): string {
@@ -152,22 +153,6 @@ const VOLUNTEER_DEMO_ACCOUNT: DemoLoginAccount = {
 };
 
 const PARTNER_DEMO_ACCOUNTS: DemoLoginAccount[] = [
-  {
-    id: "demo-partner-pbsp",
-    name: "PBSP",
-    identifier: "partnerships@pbsp.org.ph",
-    password: "partner123",
-    badge: "PARTNER",
-    mobileRole: "partner",
-  },
-  {
-    id: "demo-partner-jollibee",
-    name: "Jollibee Foundation",
-    identifier: "partnerships@jollibeefoundation.org",
-    password: "partner123",
-    badge: "PARTNER",
-    mobileRole: "partner",
-  },
   {
     id: "demo-partner-kabankalan",
     name: "Kabankalan LGU",
@@ -617,8 +602,8 @@ export default function LoginScreen() {
         ) {
           throw new Error(
             payload?.detail ||
-              payload?.error ||
-              `Database backend is unavailable at ${getApiBaseUrl()}.`,
+            payload?.error ||
+            `Database backend is unavailable at ${getApiBaseUrl()}.`,
           );
         }
 
@@ -1035,7 +1020,7 @@ export default function LoginScreen() {
       Alert.alert(
         "Certificate Upload Failed",
         error?.message ||
-          "Unable to open the photo library for certificate upload.",
+        "Unable to open the photo library for certificate upload.",
       );
     }
   };
@@ -1140,30 +1125,6 @@ export default function LoginScreen() {
         return;
       }
 
-      // Validate DSWD accreditation number against database
-      const dswdValidation = await validateDswdAccreditationNo(
-        signupPartnerApplication.dswdAccreditationNo,
-      );
-      if (!dswdValidation.valid) {
-        let errorMessage = "Enter a valid DSWD accreditation number.";
-        if (
-          dswdValidation.reason === "Accreditation number not found in database"
-        ) {
-          errorMessage =
-            "This DSWD accreditation number is not recognized. Please use one of the unassigned accreditation numbers provided by the system.";
-        } else if (
-          dswdValidation.reason === "Accreditation number already assigned"
-        ) {
-          errorMessage =
-            "This DSWD accreditation number is already assigned to another partner. Please use an unassigned number.";
-        } else if (dswdValidation.reason === "Invalid format") {
-          errorMessage =
-            "Invalid DSWD accreditation number format. Please check the format and try again.";
-        }
-        Alert.alert("Validation Error", errorMessage);
-        return;
-      }
-
       if (signupPartnerApplication.advocacyFocus.length === 0) {
         Alert.alert("Validation Error", "Select at least one advocacy focus.");
         return;
@@ -1210,53 +1171,53 @@ export default function LoginScreen() {
         pillarsOfInterest:
           signupRole === "partner"
             ? signupPartnerApplication.advocacyFocus.filter(
-                (focus): focus is NVCSector => focus !== "Disaster",
-              )
+              (focus): focus is NVCSector => focus !== "Disaster",
+            )
             : signupPillars,
         partnerRegistration:
           signupRole === "partner"
             ? {
-                organizationName:
-                  signupPartnerApplication.organizationName.trim(),
-                sectorType: signupPartnerApplication.sectorType,
-                dswdAccreditationNo:
-                  signupPartnerApplication.dswdAccreditationNo.trim(),
-                secRegistrationNo:
-                  signupPartnerApplication.secRegistrationNo.trim(),
-                advocacyFocus: signupPartnerApplication.advocacyFocus,
-              }
+              organizationName:
+                signupPartnerApplication.organizationName.trim(),
+              sectorType: signupPartnerApplication.sectorType,
+              dswdAccreditationNo:
+                signupPartnerApplication.dswdAccreditationNo.trim(),
+              secRegistrationNo:
+                signupPartnerApplication.secRegistrationNo.trim(),
+              advocacyFocus: signupPartnerApplication.advocacyFocus,
+            }
             : undefined,
         volunteerMembershipSheet:
           signupRole === "volunteer"
             ? {
-                gender: signupVolunteerSheet.gender.trim(),
-                dateOfBirth: signupVolunteerSheet.dateOfBirth.trim(),
-                civilStatus: signupVolunteerSheet.civilStatus.trim(),
-                homeAddress: signupVolunteerSheet.homeAddress.trim(),
-                homeAddressRegion:
-                  signupVolunteerSheet.homeAddressRegion.trim(),
-                homeAddressCityMunicipality:
-                  signupVolunteerSheet.homeAddressCityMunicipality.trim(),
-                homeAddressBarangay:
-                  signupVolunteerSheet.homeAddressBarangay.trim(),
-                occupation: signupVolunteerSheet.occupation.trim(),
-                workplaceOrSchool:
-                  signupVolunteerSheet.workplaceOrSchool.trim(),
-                collegeCourse: signupVolunteerSheet.collegeCourse.trim(),
-                certificationsOrTrainings:
-                  signupVolunteerSheet.certificationsOrTrainings.trim(),
-                specialSkills: signupVolunteerSheet.specialSkills.trim(),
-                skills: signupVolunteerSheet.skills,
-                affiliations: [
-                  {
-                    organization: signupVolunteerSheet.affiliationOrg1.trim(),
-                    position: signupVolunteerSheet.affiliationPos1.trim(),
-                  },
-                ].filter(
-                  (affiliation) =>
-                    affiliation.organization || affiliation.position,
-                ),
-              }
+              gender: signupVolunteerSheet.gender.trim(),
+              dateOfBirth: signupVolunteerSheet.dateOfBirth.trim(),
+              civilStatus: signupVolunteerSheet.civilStatus.trim(),
+              homeAddress: signupVolunteerSheet.homeAddress.trim(),
+              homeAddressRegion:
+                signupVolunteerSheet.homeAddressRegion.trim(),
+              homeAddressCityMunicipality:
+                signupVolunteerSheet.homeAddressCityMunicipality.trim(),
+              homeAddressBarangay:
+                signupVolunteerSheet.homeAddressBarangay.trim(),
+              occupation: signupVolunteerSheet.occupation.trim(),
+              workplaceOrSchool:
+                signupVolunteerSheet.workplaceOrSchool.trim(),
+              collegeCourse: signupVolunteerSheet.collegeCourse.trim(),
+              certificationsOrTrainings:
+                signupVolunteerSheet.certificationsOrTrainings.trim(),
+              specialSkills: '',
+              skills: signupVolunteerSheet.skills,
+              affiliations: [
+                {
+                  organization: signupVolunteerSheet.affiliationOrg1.trim(),
+                  position: signupVolunteerSheet.affiliationPos1.trim(),
+                },
+              ].filter(
+                (affiliation) =>
+                  affiliation.organization || affiliation.position,
+              ),
+            }
             : undefined,
       });
 
@@ -1402,7 +1363,6 @@ export default function LoginScreen() {
             <View style={styles.webHeroPane}>
               <View style={styles.leftBrandHeader}>
                 <AppLogo width={72} />
-                <Text style={styles.leftBrandTitle}>NVC CONNECT</Text>
               </View>
               <View style={styles.pillBadge}>
                 <Text style={styles.pillBadgeText}>NVC FOUNDATION</Text>
@@ -1867,7 +1827,7 @@ export default function LoginScreen() {
                               style={[
                                 styles.roleChip,
                                 signupUserType === userType &&
-                                  styles.roleChipActive,
+                                styles.roleChipActive,
                               ]}
                               onPress={() => {
                                 setSignupUserType(userType);
@@ -1879,7 +1839,7 @@ export default function LoginScreen() {
                                 style={[
                                   styles.roleChipText,
                                   signupUserType === userType &&
-                                    styles.roleChipTextActive,
+                                  styles.roleChipTextActive,
                                 ]}
                               >
                                 {userType}
@@ -1889,41 +1849,6 @@ export default function LoginScreen() {
                         )}
                       </View>
 
-                      <Text style={styles.modalSectionLabel}>Preferences</Text>
-                      <View style={styles.pillarGrid}>
-                        {(
-                          ["Nutrition", "Education", "Livelihood"] as const
-                        ).map((pillar) => {
-                          const selected = signupPillars.includes(pillar);
-                          return (
-                            <TouchableOpacity
-                              key={pillar}
-                              style={[
-                                styles.pillarChip,
-                                selected && styles.pillarChipActive,
-                              ]}
-                              onPress={() => {
-                                setSignupPillars((current) =>
-                                  current.includes(pillar)
-                                    ? current.filter((item) => item !== pillar)
-                                    : [...current, pillar],
-                                );
-                              }}
-                              disabled={signupLoading}
-                              hitSlop={8}
-                            >
-                              <Text
-                                style={[
-                                  styles.pillarChipText,
-                                  selected && styles.pillarChipTextActive,
-                                ]}
-                              >
-                                {pillar}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
                     </>
                   ) : signupRole === "partner" ? (
                     <>
@@ -1985,12 +1910,11 @@ export default function LoginScreen() {
                         DSWD Accreditation Number
                       </Text>
                       <Text style={styles.fieldHelpText}>
-                        Enter one of the unassigned DSWD accreditation numbers.
-                        Contact admin if you need an assigned number.
+                        Enter your DSWD accreditation number (optional).
                       </Text>
                       <TextInput
                         style={styles.input}
-                        placeholder="DSWD Accreditation No. (must be unassigned)"
+                        placeholder="DSWD Accreditation No. (optional)"
                         placeholderTextColor="#999"
                         value={signupPartnerApplication.dswdAccreditationNo}
                         onChangeText={(value) =>
@@ -2005,7 +1929,7 @@ export default function LoginScreen() {
 
                       <TextInput
                         style={styles.input}
-                        placeholder="SEC Registration No. e.g. CN201234567"
+                        placeholder="SEC Registration No. (optional)"
                         placeholderTextColor="#999"
                         value={signupPartnerApplication.secRegistrationNo}
                         onChangeText={(value) =>
@@ -2046,12 +1970,12 @@ export default function LoginScreen() {
                                   "advocacyFocus",
                                   selected
                                     ? signupPartnerApplication.advocacyFocus.filter(
-                                        (item) => item !== focus,
-                                      )
+                                      (item) => item !== focus,
+                                    )
                                     : [
-                                        ...signupPartnerApplication.advocacyFocus,
-                                        focus,
-                                      ],
+                                      ...signupPartnerApplication.advocacyFocus,
+                                      focus,
+                                    ],
                                 )
                               }
                               disabled={signupLoading}
@@ -2076,9 +2000,8 @@ export default function LoginScreen() {
                           color="#92400e"
                         />
                         <Text style={styles.partnerLockNoticeText}>
-                          Admin will review your DSWD accreditation number,
-                          verify the application, and unlock partner login after
-                          approval.
+                          Admin will review your application and unlock partner
+                          login after approval.
                         </Text>
                       </View>
                     </>
@@ -2098,7 +2021,7 @@ export default function LoginScreen() {
                             style={[
                               styles.genderChip,
                               signupVolunteerSheet.gender === gender &&
-                                styles.genderChipActive,
+                              styles.genderChipActive,
                             ]}
                             onPress={() => {
                               updateSignupVolunteerSheet("gender", gender);
@@ -2110,7 +2033,7 @@ export default function LoginScreen() {
                               style={[
                                 styles.genderChipText,
                                 signupVolunteerSheet.gender === gender &&
-                                  styles.genderChipTextActive,
+                                styles.genderChipTextActive,
                               ]}
                             >
                               {gender}
@@ -2167,12 +2090,12 @@ export default function LoginScreen() {
                           <Text style={styles.datePickerButtonText}>
                             {signupVolunteerSheet.dateOfBirth
                               ? new Date(
-                                  signupVolunteerSheet.dateOfBirth,
-                                ).toLocaleDateString("en-US", {
-                                  year: "numeric",
-                                  month: "long",
-                                  day: "numeric",
-                                })
+                                signupVolunteerSheet.dateOfBirth,
+                              ).toLocaleDateString("en-US", {
+                                year: "numeric",
+                                month: "long",
+                                day: "numeric",
+                              })
                               : "Select Date of Birth"}
                           </Text>
                         </TouchableOpacity>
@@ -2334,7 +2257,7 @@ export default function LoginScreen() {
                             style={[
                               styles.dropdownTriggerText,
                               signupVolunteerSheet.skills.length === 0 &&
-                                styles.dropdownPlaceholder,
+                              styles.dropdownPlaceholder,
                             ]}
                             numberOfLines={2}
                           >
@@ -2384,7 +2307,7 @@ export default function LoginScreen() {
                                     style={[
                                       styles.dropdownOptionText,
                                       isSelected &&
-                                        styles.dropdownOptionTextSelected,
+                                      styles.dropdownOptionTextSelected,
                                     ]}
                                   >
                                     {skill}
@@ -2690,7 +2613,7 @@ export default function LoginScreen() {
                         style={[
                           styles.yearPickerItem,
                           selectedYear === year &&
-                            styles.yearPickerItemSelected,
+                          styles.yearPickerItemSelected,
                         ]}
                         onPress={() => {
                           setSelectedYear(year);
@@ -2705,7 +2628,7 @@ export default function LoginScreen() {
                           style={[
                             styles.yearPickerItemText,
                             selectedYear === year &&
-                              styles.yearPickerItemTextSelected,
+                            styles.yearPickerItemTextSelected,
                           ]}
                         >
                           {year}
@@ -2767,7 +2690,7 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
+    backgroundColor: ModernTheme.colors.neutral[100],
   },
   webBackgroundImage: {
     position: "absolute",
@@ -2787,18 +2710,18 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     flexGrow: 1,
-    padding: 20,
+    padding: ModernTheme.spacing[5],
     justifyContent: "flex-start",
   },
   webContentContainer: {
     minHeight: "100vh" as any,
-    paddingVertical: 40,
-    paddingHorizontal: 60,
+    paddingVertical: ModernTheme.spacing[10],
+    paddingHorizontal: ModernTheme.spacing[14],
     justifyContent: "center",
   },
   compactContentContainer: {
-    paddingHorizontal: 14,
-    paddingVertical: 16,
+    paddingHorizontal: ModernTheme.spacing[3.5],
+    paddingVertical: ModernTheme.spacing[4],
   },
   contentShell: {
     width: "100%",
@@ -2861,17 +2784,13 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 520,
     minWidth: 360,
-    borderRadius: 28,
+    borderRadius: ModernTheme.borderRadius['3xl'],
     backgroundColor: "rgba(255, 255, 255, 0.22)",
-    padding: 28,
+    padding: ModernTheme.spacing[7],
     alignSelf: "center",
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.4)",
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 5,
+    ...ModernTheme.shadows.lg,
     // @ts-ignore React Native Web glass effect
     backdropFilter: "blur(24px)",
     // @ts-ignore React Native Web glass effect

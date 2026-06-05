@@ -48,7 +48,6 @@ export type AdminTabParamList = {
   Messages: { projectId?: string } | undefined;
   Reports: { projectId?: string } | undefined;
   Users: undefined;
-  Settings: undefined;
   Profile: undefined;
 };
 
@@ -71,7 +70,6 @@ const VolunteerManagementScreen = lazyScreen(() => require('../screens/Volunteer
 const PartnerManagementScreen = lazyScreen(() => require('../screens/PartnerManagementScreen'));
 const AdminReportsScreen = lazyScreen(() => require('../screens/AdminReportsScreen'));
 const ProfileScreen = lazyScreen(() => require('../screens/ProfileScreen'));
-const SystemSettingsScreen = lazyScreen(() => require('../screens/SystemSettingsScreen'));
 
 const SIDEBAR_WIDTH = 200;
 const SIDEBAR_WIDTH_COLLAPSED = 60;
@@ -89,7 +87,6 @@ const getIconName = (routeName: keyof AdminTabParamList) => {
     case 'Messages': return 'mail';
     case 'Reports': return 'insert-chart';
     case 'Users': return 'manage-accounts';
-    case 'Settings': return 'settings';
     case 'Profile': return 'person';
     default: return 'help-outline';
   }
@@ -115,10 +112,10 @@ function SidebarTabBar({ state, descriptors, navigation, collapsed, onToggle }: 
   );
 
   const systemsRoutes = state.routes.filter(
-    route => !['Partners', 'Volunteers', 'Users', 'Settings', 'Profile'].includes(route.name)
+    route => !['Partners', 'Volunteers', 'Users', 'Profile'].includes(route.name)
   );
   const settingsRoutes = state.routes.filter(
-    route => ['Partners', 'Volunteers', 'Users', 'Settings', 'Profile'].includes(route.name)
+    route => ['Partners', 'Volunteers', 'Users', 'Profile'].includes(route.name)
   );
 
   // Close menu when sidebar expands
@@ -517,7 +514,6 @@ export default function AdminNavigator() {
       <Tab.Screen name="Analytics" component={AdminAnalyticsScreen} options={{ title: 'Analytics' }} />
       <Tab.Screen name="Users" component={UserManagementScreen} options={{ title: 'User Management', tabBarBadge: pendingUserApprovalCount > 0 ? pendingUserApprovalCount : undefined }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ title: 'Admin Profile' }} />
-      <Tab.Screen name="Settings" component={SystemSettingsScreen} options={{ title: 'System Settings' }} />
     </Tab.Navigator>
   );
 

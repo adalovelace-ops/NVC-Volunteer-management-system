@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import ModernTheme from '../utils/modernTheme';
 import {
   View,
   Text,
@@ -448,6 +449,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
   const [showFieldOfficerBoard, setShowFieldOfficerBoard] = useState(false);
   const [showManagedAttendanceDateDropdown, setShowManagedAttendanceDateDropdown] = useState(false);
   const [selectedManagedAttendanceDateKey, setSelectedManagedAttendanceDateKey] = useState<string | null>(null);
+  const [expandedAttendancePhotos, setExpandedAttendancePhotos] = useState<Set<string>>(new Set());
   const [expandedManagedTaskId, setExpandedManagedTaskId] = useState<string | null>(null);
   const [showManagedTaskAssignments, setShowManagedTaskAssignments] = useState(false);
   const [filterStatus, setFilterStatus] = useState<'All' | 'Assigned' | 'In Progress' | 'Completed'>('All');
@@ -2223,84 +2225,111 @@ export default function VolunteerTasksScreen({ navigation }: any) {
                   </View>
 
                   {managedEventAttendanceEntries.length ? (
-                    managedEventAttendanceEntries.map(entry => (
-                      <View key={`attendance-${entry.volunteer.id}`} style={styles.attendanceReviewCard}>
-                        <View style={styles.assignmentHeader}>
-                          <View style={styles.assignmentCopy}>
-                            <Text style={styles.assignmentTitle}>{entry.volunteer.name}</Text>
-                            <Text style={styles.assignmentMeta}>
-                              {entry.volunteer.email || 'No email on file'}
-                            </Text>
-                            <Text style={styles.assignmentMeta}>
-                              Selected day records: {entry.logs.length}
-                            </Text>
-                          </View>
-                          <View style={styles.attendanceReviewStatusBadge}>
-                            <MaterialIcons name="verified-user" size={16} color="#166534" />
-                            <Text style={styles.attendanceReviewStatusBadgeText}>
-                              {entry.logs.some(log => Boolean(log.attendanceCheckedAt))
-                                ? 'Marked'
-                                : entry.logs.length
-                                ? 'Needs Review'
-                                : 'No Upload'}
-                            </Text>
-                          </View>
-                        </View>
-
-                        {entry.logs.length ? (
-                          entry.logs.map(log => (
-                            <View key={log.id} style={styles.attendanceReviewLogCard}>
-                              <Text style={styles.attendanceReviewLabel}>Confirmed At</Text>
-                              <Text style={styles.attendanceReviewValue}>
-                                {formatTimestamp(log.attendanceConfirmedAt || log.timeIn)}
-                              </Text>
-                              <Text style={styles.attendanceReviewLabel}>Marked Status</Text>
-                              <Text style={styles.attendanceReviewValue}>
-                                {log.attendanceCheckedAt
-                                  ? `Marked by ${log.attendanceCheckedByName || 'Field Officer'} on ${formatTimestamp(
-                                      log.attendanceCheckedAt
-                                    )}`
-                                  : 'Not marked yet'}
-                              </Text>
-
-                              {(log.attendancePhoto || log.completionPhoto) &&
-                              isImageMediaUri(log.attendancePhoto || log.completionPhoto) ? (
-                                <Image
-                                  source={{ uri: log.attendancePhoto || log.completionPhoto || '' }}
-                                  style={styles.attendanceReviewImage}
-                                  resizeMode="cover"
-                                />
-                              ) : (
-                                <Text style={styles.attendanceReviewEmptyPhoto}>No photo available</Text>
-                              )}
-
-                              <TouchableOpacity
-                                style={[
-                                  styles.attendanceReviewButton,
-                                  log.attendanceCheckedAt && styles.attendanceReviewButtonActive,
-                                ]}
-                                onPress={() =>
-                                  void handleToggleAttendanceCheck(log, !Boolean(log.attendanceCheckedAt))
+                    managedEventAttendanceEntries.map(entry => {
+                      const isExpanded = expandedAttendancePhotos.has(entry.volunteer.id);
+                      
+                      return (
+                        <View key={`attendance-${entry.volunteer.id}`} style={styles.attendanceReviewCard}>
+                          <TouchableOpacity
+                            style={styles.assignmentHeader}
+                            onPress={() => {
+                              setExpandedAttendancePhotos(prev => {
+                                const newSet = new Set(prev);
+                                if (newSet.has(entry.volunteer.id)) {
+                                  newSet.delete(entry.volunteer.id);
+                                } else {
+                                  newSet.add(entry.volunteer.id);
                                 }
-                                activeOpacity={0.85}
-                              >
-                                {actionLoadingKey === `attendance-check-${log.id}` ? (
-                                  <ActivityIndicator size="small" color="#ffffff" />
-                                ) : (
-                                  <Text style={styles.attendanceReviewButtonText}>
-                                    {log.attendanceCheckedAt ? 'Remove Mark' : 'Mark Attendance'}
-                                  </Text>
-                                )}
-                              </TouchableOpacity>
+                                return newSet;
+                              });
+                            }}
+                            activeOpacity={0.7}
+                          >
+                            <View style={styles.assignmentCopy}>
+                              <Text style={styles.assignmentTitle}>{entry.volunteer.name}</Text>
+                              <Text style={styles.assignmentMeta}>
+                                {entry.volunteer.email || 'No email on file'}
+                              </Text>
+                              <Text style={styles.assignmentMeta}>
+                                Selected day records: {entry.logs.length}
+                              </Text>
                             </View>
-                          ))
-                        ) : (
-                          <Text style={styles.fieldOfficerHintText}>
-                            No attendance upload yet for this volunteer.
-                          </Text>
-                        )}
-                      </View>
-                    ))
+                            <View style={styles.attendanceReviewStatusBadge}>
+                              <MaterialIcons name="verified-user" size={16} color="#166534" />
+                              <Text style={styles.attendanceReviewStatusBadgeText}>
+                                {entry.logs.some(log => Boolean(log.attendanceCheckedAt))
+                                  ? 'Marked'
+                                  : entry.logs.length
+                                  ? 'Needs Review'
+                                  : 'No Upload'}
+                              </Text>
+                            </View>
+                            <MaterialIcons 
+                              name={isExpanded ? "keyboard-arrow-up" : "keyboard-arrow-down"} 
+                              size={24} 
+                              color="#64748b" 
+                            />
+                          </TouchableOpacity>
+
+                          {entry.logs.length ? (
+                            entry.logs.map(log => (
+                              <View key={log.id} style={styles.attendanceReviewLogCard}>
+                                <Text style={styles.attendanceReviewLabel}>Confirmed At</Text>
+                                <Text style={styles.attendanceReviewValue}>
+                                  {formatTimestamp(log.attendanceConfirmedAt || log.timeIn)}
+                                </Text>
+                                <Text style={styles.attendanceReviewLabel}>Marked Status</Text>
+                                <Text style={styles.attendanceReviewValue}>
+                                  {log.attendanceCheckedAt
+                                    ? `Marked by ${log.attendanceCheckedByName || 'Field Officer'} on ${formatTimestamp(
+                                        log.attendanceCheckedAt
+                                      )}`
+                                    : 'Not marked yet'}
+                                </Text>
+
+                                {isExpanded && (
+                                  <>
+                                    {(log.attendancePhoto || log.completionPhoto) &&
+                                    isImageMediaUri(log.attendancePhoto || log.completionPhoto) ? (
+                                      <Image
+                                        source={{ uri: log.attendancePhoto || log.completionPhoto || '' }}
+                                        style={styles.attendanceReviewImage}
+                                        resizeMode="cover"
+                                      />
+                                    ) : (
+                                      <Text style={styles.attendanceReviewEmptyPhoto}>No photo available</Text>
+                                    )}
+                                  </>
+                                )}
+
+                                <TouchableOpacity
+                                  style={[
+                                    styles.attendanceReviewButton,
+                                    log.attendanceCheckedAt && styles.attendanceReviewButtonActive,
+                                  ]}
+                                  onPress={() =>
+                                    void handleToggleAttendanceCheck(log, !Boolean(log.attendanceCheckedAt))
+                                  }
+                                  activeOpacity={0.85}
+                                >
+                                  {actionLoadingKey === `attendance-check-${log.id}` ? (
+                                    <ActivityIndicator size="small" color="#ffffff" />
+                                  ) : (
+                                    <Text style={styles.attendanceReviewButtonText}>
+                                      {log.attendanceCheckedAt ? 'Remove Mark' : 'Mark Attendance'}
+                                    </Text>
+                                  )}
+                                </TouchableOpacity>
+                              </View>
+                            ))
+                          ) : (
+                            <Text style={styles.fieldOfficerHintText}>
+                              No attendance upload yet for this volunteer.
+                            </Text>
+                          )}
+                        </View>
+                      );
+                    })
                   ) : (
                     <Text style={styles.fieldOfficerHintText}>
                       No joined volunteers are available for attendance marking yet.

@@ -486,7 +486,7 @@ class ConnectionManager:
         stale: list[WebSocket] = []
         for socket in sockets:
             try:
-                await asyncio.wait_for(socket.send_json(payload), timeout=1)
+                await asyncio.wait_for(socket.send_json(payload), timeout=5)
             except Exception:
                 stale.append(socket)
         for socket in stale:
@@ -521,7 +521,7 @@ class ConnectionManager:
 
         for socket in sockets:
             try:
-                await asyncio.wait_for(socket.send_json(payload), timeout=1)
+                await asyncio.wait_for(socket.send_json(payload), timeout=5)
             except Exception:
                 stale.append(socket)
 
@@ -2012,17 +2012,6 @@ def startup() -> None:
     threading.Thread(target=_warm_projects_snapshot_cache, daemon=True).start()
     print("[INFO] Cache warming enabled - warming projects snapshot in the background")
 
-    # Always auto-seed demo data if database is empty (prevents "all zeros" after restart)
-    # This uses direct SQL instead of the Python seed function which has connection pool issues
-    def auto_seed_demo_data():
-        try:
-            from .auto_seed import auto_seed_if_empty
-            auto_seed_if_empty()
-        except Exception as error:
-            print(f"[WARN] Auto-seed skipped: {type(error).__name__}: {error}")
-    
-    threading.Thread(target=auto_seed_demo_data, daemon=True).start()
-
     if not is_demo_seed_enabled():
         print("[OK] Backend started; demo seed disabled but auto-seeding empty database")
         return
@@ -2305,16 +2294,6 @@ DEMO_ACCOUNTS = [
         "role": "partner",
         "name": "PBSP",
         "phone": "09188188678",
-        "created_at": "2026-01-01T00:00:00Z",
-        "approvalStatus": "approved"
-    },
-    {
-        "id": "user-partnerships-1780189738",
-        "email": "partnerships@jollibeefoundation.org",
-        "password": "partner123",
-        "role": "partner",
-        "name": "Jollibee Foundation",
-        "phone": "09186341111",
         "created_at": "2026-01-01T00:00:00Z",
         "approvalStatus": "approved"
     },
@@ -3143,6 +3122,52 @@ async def request_partner_project_join(payload: PartnerProjectJoinRequestPayload
                 _postgres_upsert_hot_item(connection, "partnerProjectApplications", refreshed_application)
                 connection.commit()
                 asyncio.create_task(connection_manager.broadcast_storage_event(["partnerProjectApplications"]))
+                
+                # Create a proposal message card for the resubmission
+                try:
+                    admin_id = "user-admin-1780189738"  # Admin user ID
+                    proposal_message_id = f"msg-proposal-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+                    proposal_content = f'___PROPOSAL_CARD___:{json.dumps(refreshed_application)}'
+                    
+                    from .db import get_connection as db_get_connection
+                    with db_get_connection() as msg_connection:
+                        with msg_connection.cursor() as cursor:
+                            cursor.execute(
+                                """
+                                INSERT INTO public.messages (
+                                  id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
+                                )
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                """,
+                                (
+                                    proposal_message_id,
+                                    payload.partnerUserId,
+                                    admin_id,
+                                    None,
+                                    proposal_content,
+                                    datetime.now(timezone.utc).isoformat(),
+                                    False,
+                                    json.dumps([]),
+                                ),
+                            )
+                        msg_connection.commit()
+                    
+                    # Broadcast the new message
+                    message_data = {
+                        "id": proposal_message_id,
+                        "senderId": payload.partnerUserId,
+                        "recipientId": admin_id,
+                        "projectId": None,
+                        "content": proposal_content,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "read": False,
+                        "attachments": [],
+                    }
+                    asyncio.create_task(connection_manager.broadcast_message_event(message_data))
+                except Exception as e:
+                    print(f"Error creating proposal resubmission message: {e}")
+                    pass
+                
                 return {"application": refreshed_application}
 
             return {"application": existing_application}
@@ -3163,7 +3188,56 @@ async def request_partner_project_join(payload: PartnerProjectJoinRequestPayload
         }
         _postgres_upsert_hot_item(connection, "partnerProjectApplications", application)
         connection.commit()
+    
+    # Create a proposal message card to send to admin's direct message thread
     asyncio.create_task(connection_manager.broadcast_storage_event(["partnerProjectApplications"]))
+    
+    # Send proposal card message to admin
+    try:
+        admin_id = "user-admin-1780189738"  # Admin user ID
+        proposal_message_id = f"msg-proposal-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+        proposal_content = f'___PROPOSAL_CARD___:{json.dumps(application)}'
+        
+        from .db import get_connection as db_get_connection
+        with db_get_connection() as msg_connection:
+            with msg_connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO public.messages (
+                      id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        proposal_message_id,
+                        payload.partnerUserId,
+                        admin_id,
+                        None,
+                        proposal_content,
+                        datetime.now(timezone.utc).isoformat(),
+                        False,
+                        json.dumps([]),
+                    ),
+                )
+            msg_connection.commit()
+        
+        # Broadcast the new message
+        message_data = {
+            "id": proposal_message_id,
+            "senderId": payload.partnerUserId,
+            "recipientId": admin_id,
+            "projectId": None,
+            "content": proposal_content,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "read": False,
+            "attachments": [],
+        }
+        asyncio.create_task(connection_manager.broadcast_message_event(message_data))
+    except Exception as e:
+        print(f"Error creating proposal message: {e}")
+        # Don't fail the entire request if message creation fails
+        pass
+    
     return {"application": application}
 
 
@@ -3580,12 +3654,16 @@ async def remove_volunteer_from_project(project_id: str, volunteer_id: str) -> d
 @app.get("/messages")
 # API endpoint that returns all direct messages for one user.
 def get_messages(user_id: str, limit: int = 500) -> dict[str, list[dict[str, Any]]]:
+    import time
+    request_start = time.time()
     ensure_message_storage()
     from psycopg.rows import dict_row
 
     with get_connection() as connection:
         current_user = _get_user_by_id(user_id, connection)
         current_role = str(current_user.get("role") or "") if current_user else ""
+        
+        query_start = time.time()
         with connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute(
                 """
@@ -3598,9 +3676,11 @@ def get_messages(user_id: str, limit: int = 500) -> dict[str, list[dict[str, Any
                 (user_id, user_id, limit),
             )
             rows = cursor.fetchall()
+        query_time = time.time() - query_start
 
         if current_role and rows:
             # Batch-fetch all other-user IDs in one query instead of N+1 lookups
+            batch_start = time.time()
             other_user_ids = list({
                 (row["recipient_id"] if row["sender_id"] == user_id else row["sender_id"])
                 for row in rows
@@ -3611,7 +3691,9 @@ def get_messages(user_id: str, limit: int = 500) -> dict[str, list[dict[str, Any
                     (other_user_ids,),
                 )
                 role_by_id = {r["id"]: str(r["role"] or "") for r in cursor.fetchall()}
+            batch_time = time.time() - batch_start
 
+            filter_start = time.time()
             rows = [
                 row for row in rows
                 if _is_direct_message_pair_allowed(
@@ -3622,17 +3704,30 @@ def get_messages(user_id: str, limit: int = 500) -> dict[str, list[dict[str, Any
                     )
                 )
             ]
+            filter_time = time.time() - filter_start
+            
+            total_time = time.time() - request_start
+            if total_time > 2.0:
+                print(f"[PERF] /messages for {user_id}: query={query_time:.1f}s, batch={batch_time:.1f}s, filter={filter_time:.1f}s, total={total_time:.1f}s, found {len(rows)} messages")
+        else:
+            total_time = time.time() - request_start
+            if total_time > 2.0:
+                print(f"[PERF] /messages for {user_id}: query={query_time:.1f}s, total={total_time:.1f}s, found {len(rows)} messages")
+                
     return {"messages": [serialize_message_row(row) for row in rows]}
 
 
 @app.get("/messages/conversation")
 # API endpoint that returns the direct-message history between two users.
 def get_conversation(user1: str, user2: str, limit: int = 200) -> dict[str, list[dict[str, Any]]]:
+    import time
+    request_start = time.time()
     ensure_message_storage()
     from psycopg.rows import dict_row
 
     with get_connection() as connection:
         _assert_direct_message_access(connection, user1, user2)
+        query_start = time.time()
         with connection.cursor(row_factory=dict_row) as cursor:
             # Limit must be an integer literal, not parameterized
             limit = max(1, min(limit, 10000))  # Clamp to reasonable range
@@ -3648,6 +3743,11 @@ def get_conversation(user1: str, user2: str, limit: int = 200) -> dict[str, list
                 (user1, user2, user2, user1),
             )
             rows = cursor.fetchall()
+        query_time = time.time() - query_start
+        total_time = time.time() - request_start
+        if total_time > 2.0:
+            print(f"[PERF] /messages/conversation between {user1} and {user2}: query={query_time:.1f}s, total={total_time:.1f}s, found {len(rows)} messages")
+            
     return {"messages": [serialize_message_row(row) for row in rows]}
 
 @app.get("/projects/{project_id}/group-messages")
@@ -4084,6 +4184,8 @@ async def delete_program_track(track_id: str) -> dict[str, Any]:
 # API endpoint that reads multiple storage keys in a single request.
 # OPTIMIZED: Fetch keys in parallel using separate connections to avoid sequential DB queries.
 def get_storage_items_batch(payload: StorageBatchPayload) -> dict[str, dict[str, Any]]:
+    import time
+    request_start = time.time()
     try:
         keys = [key for key in payload.keys if key]
         items: dict[str, Any] = {key: None for key in keys}
@@ -4094,8 +4196,13 @@ def get_storage_items_batch(payload: StorageBatchPayload) -> dict[str, dict[str,
         # Fetch keys in parallel using thread pool
         def _fetch_collection(key: str) -> tuple[str, Any]:
             try:
+                fetch_start = time.time()
                 with get_connection() as connection:
+                    conn_time = time.time() - fetch_start
                     value = _get_cached_collection(connection, key)
+                    query_time = time.time() - fetch_start - conn_time
+                    if conn_time > 1.0 or query_time > 1.0:
+                        print(f"[PERF] Key '{key}': connection={conn_time:.1f}s, query={query_time:.1f}s")
                 return key, value
             except Exception as e:
                 print(f"[WARN] Failed to fetch key '{key}': {type(e).__name__}: {e}")
@@ -4115,6 +4222,10 @@ def get_storage_items_batch(payload: StorageBatchPayload) -> dict[str, dict[str,
                     print(f"[WARN] Exception fetching key '{key}': {type(e).__name__}: {e}")
                     items[key] = [] if key in COLLECTION_KEYS else {}
 
+        total_time = time.time() - request_start
+        if total_time > 5.0:
+            print(f"[PERF] /storage/batch completed in {total_time:.1f}s for {len(keys)} keys")
+        
         return {"items": items}
     except Exception as error:
         print(f"[ERROR] Batch storage request failed: {type(error).__name__}: {error}")

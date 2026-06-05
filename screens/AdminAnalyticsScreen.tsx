@@ -16,9 +16,12 @@ import {
   getAllVolunteers,
   getAllVolunteerProjectJoinRecords,
   getAllVolunteerTimeLogs,
+  getAllPartners,
+  getAllPartnerProjectApplications,
   subscribeToStorageChanges,
 } from '../models/storage';
-import type { PartnerReport, Project, Volunteer, VolunteerProjectJoinRecord, VolunteerTimeLog } from '../models/types';
+import type { Partner, PartnerProjectApplication, PartnerReport, Project, Volunteer, VolunteerProjectJoinRecord, VolunteerTimeLog } from '../models/types';
+import ModernTheme from '../utils/modernTheme';
 
 type MonthPoint = {
   key: string;
@@ -369,6 +372,8 @@ export default function AdminAnalyticsScreen() {
   const [timeLogs, setTimeLogs] = useState<VolunteerTimeLog[]>([]);
   const [volunteerJoinRecords, setVolunteerJoinRecords] = useState<VolunteerProjectJoinRecord[]>([]);
   const [reports, setReports] = useState<PartnerReport[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [partnerApplications, setPartnerApplications] = useState<PartnerProjectApplication[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -378,18 +383,22 @@ export default function AdminAnalyticsScreen() {
     }
 
     try {
-      const [nextProjects, nextVolunteers, nextTimeLogs, nextJoinRecords, nextReports] = await Promise.all([
+      const [nextProjects, nextVolunteers, nextTimeLogs, nextJoinRecords, nextReports, nextPartners, nextApplications] = await Promise.all([
         getAllProjects(),
         getAllVolunteers(),
         getAllVolunteerTimeLogs(),
         getAllVolunteerProjectJoinRecords(),
         getAllPartnerReports(),
+        getAllPartners(),
+        getAllPartnerProjectApplications(),
       ]);
       setProjects(nextProjects);
       setVolunteers(nextVolunteers);
       setTimeLogs(nextTimeLogs);
       setVolunteerJoinRecords(nextJoinRecords);
       setReports(nextReports);
+      setPartners(nextPartners);
+      setPartnerApplications(nextApplications);
     } catch (error) {
       console.error('Failed to load admin analytics:', error);
     } finally {
@@ -405,7 +414,7 @@ export default function AdminAnalyticsScreen() {
 
   useEffect(() => {
     return subscribeToStorageChanges(
-      ['projects', 'volunteers', 'volunteerTimeLogs', 'partnerReports', 'volunteerProjectJoins'],
+      ['projects', 'volunteers', 'volunteerTimeLogs', 'partnerReports', 'volunteerProjectJoins', 'partners', 'partnerProjectApplications'],
       () => {
         void loadAnalytics();
       }
@@ -785,6 +794,146 @@ export default function AdminAnalyticsScreen() {
           </View>
         </View>
 
+        {/* PROJECT STATUS OVERVIEW */}
+        <View style={styles.statusOverviewCard}>
+          <View style={styles.cardHeader}>
+            <View>
+              <Text style={styles.cardTitle}>PROJECT STATUS OVERVIEW</Text>
+              <Text style={styles.cardSubtitle}>Engage projects are sorted by current status</Text>
+            </View>
+          </View>
+
+          <View style={styles.statusList}>
+            {(['Planning', 'In Progress', 'On Hold', 'Completed', 'Cancelled'] as const).map(status => {
+              const count = projects.filter(p => p.status === status).length;
+              const statusColor = 
+                status === 'Planning' ? ModernTheme.colors.status.planning :
+                status === 'In Progress' ? ModernTheme.colors.status.inProgress :
+                status === 'On Hold' ? ModernTheme.colors.status.onHold :
+                status === 'Completed' ? ModernTheme.colors.status.completed :
+                ModernTheme.colors.status.cancelled;
+              
+              return (
+                <View key={status} style={styles.statusRow}>
+                  <View style={styles.statusLeft}>
+                    <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+                    <Text style={styles.statusLabel}>{status}</Text>
+                  </View>
+                  <Text style={styles.statusCount}>{count}</Text>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* PROJECTS TRACKING */}
+        <View style={styles.trackingCard}>
+          <View style={styles.trackingHeader}>
+            <View>
+              <Text style={styles.cardTitle}>PROJECTS TRACKING</Text>
+              <Text style={styles.cardSubtitle}>Partner organization projects with their counts and current status</Text>
+            </View>
+            <View style={styles.trackingFilters}>
+              {(() => {
+                const partnerProjects = projects.filter(p => {
+                  // Check if project has an approved partner application
+                  return partnerApplications.some(
+                    app => app.projectId === p.id && app.status === 'Approved'
+                  );
+                });
+                
+                return (
+                  <>
+                    <View style={[styles.filterChip, styles.filterChipActive]}>
+                      <Text style={[styles.filterChipText, styles.filterChipTextActive]}>All ({partnerProjects.length})</Text>
+                    </View>
+                    {(['Planning', 'In Progress', 'On Hold', 'Completed', 'Cancelled'] as const).map(status => {
+                      const count = partnerProjects.filter(p => p.status === status).length;
+                      return (
+                        <View key={status} style={styles.filterChip}>
+                          <Text style={styles.filterChipText}>{status} ({count})</Text>
+                        </View>
+                      );
+                    })}
+                  </>
+                );
+              })()}
+            </View>
+          </View>
+
+          {(() => {
+            // Filter for partner projects only
+            const partnerProjects = projects.filter(p => {
+              return partnerApplications.some(
+                app => app.projectId === p.id && app.status === 'Approved'
+              );
+            }).slice(0, 10);
+
+            if (partnerProjects.length === 0) {
+              return (
+                <View style={styles.emptyTrackingState}>
+                  <MaterialIcons name="folder-open" size={48} color={ModernTheme.colors.neutral[300]} />
+                  <Text style={styles.emptyText}>No partner projects yet</Text>
+                </View>
+              );
+            }
+
+            return (
+              <View style={styles.projectTrackingList}>
+                {partnerProjects.map(project => {
+                  const statusColor = 
+                    project.status === 'Planning' ? ModernTheme.colors.status.planning :
+                    project.status === 'In Progress' ? ModernTheme.colors.status.inProgress :
+                    project.status === 'On Hold' ? ModernTheme.colors.status.onHold :
+                    project.status === 'Completed' ? ModernTheme.colors.status.completed :
+                    ModernTheme.colors.status.cancelled;
+
+                  // Find the partner organization for this project
+                  const application = partnerApplications.find(
+                    app => app.projectId === project.id && app.status === 'Approved'
+                  );
+                  const partner = partners.find(p => p.ownerUserId === application?.partnerUserId);
+                  const partnerName = partner?.name || application?.partnerName || 'Unknown Partner';
+
+                  return (
+                    <View key={project.id} style={styles.projectTrackingItem}>
+                      <View style={styles.projectTrackingMain}>
+                        <View style={[styles.projectStatusIndicator, { backgroundColor: statusColor }]} />
+                        <View style={styles.projectTrackingInfo}>
+                          <Text style={styles.projectTrackingTitle} numberOfLines={1}>
+                            {project.title}
+                          </Text>
+                          <Text style={styles.projectTrackingMeta}>
+                            {project.isEvent ? 'Event' : 'Project'} • {project.programModule || project.category}
+                          </Text>
+                          <View style={styles.partnerOrgBadge}>
+                            <MaterialIcons name="business" size={12} color={ModernTheme.colors.accent[700]} />
+                            <Text style={styles.partnerOrgText} numberOfLines={1}>{partnerName}</Text>
+                          </View>
+                        </View>
+                      </View>
+                      <View style={styles.projectTrackingStats}>
+                        <View style={styles.projectStatBadge}>
+                          <MaterialIcons name="people" size={14} color={ModernTheme.colors.primary[700]} />
+                          <Text style={styles.projectStatText}>{project.volunteers?.length || 0}</Text>
+                        </View>
+                        <View style={[styles.projectStatusBadge, { backgroundColor: `${statusColor}15`, borderColor: statusColor }]}>
+                          <Text style={[styles.projectStatusText, { color: statusColor }]}>{project.status}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+                {projects.filter(p => partnerApplications.some(app => app.projectId === p.id && app.status === 'Approved')).length > 10 && (
+                  <Text style={styles.trackingFooterHint}>
+                    Showing 10 of {projects.filter(p => partnerApplications.some(app => app.projectId === p.id && app.status === 'Approved')).length} partner projects • View full list in Projects screen
+                  </Text>
+                )}
+              </View>
+            );
+          })()}
+        </View>
+
         <View style={styles.footerStats}>
           <Text style={styles.footerStat}>Event reports: {reports.length}</Text>
           <Text style={styles.footerStat}>Completed volunteer hours: {completedHours}</Text>
@@ -798,126 +947,129 @@ export default function AdminAnalyticsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#eef3e8',
+    backgroundColor: ModernTheme.colors.background.secondary,
   },
   loadingContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eef3e8',
+    backgroundColor: ModernTheme.colors.background.secondary,
   },
   scrollContent: {
-    padding: 18,
-    gap: 14,
+    padding: ModernTheme.spacing[5],
+    gap: ModernTheme.spacing[4],
   },
   chartCard: {
-    borderRadius: 8,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#d5e2c9',
-    padding: 16,
+    borderRadius: ModernTheme.borderRadius.lg,
+    backgroundColor: ModernTheme.colors.background.card,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    padding: ModernTheme.spacing[5],
+    ...ModernTheme.shadows.base,
   },
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: 12,
+    gap: ModernTheme.spacing[3],
     flexWrap: 'wrap',
   },
   cardTitle: {
-    fontSize: 17,
-    fontWeight: '900',
-    color: '#223a23',
-    letterSpacing: 0,
+    fontSize: ModernTheme.typography.fontSize.xl,
+    fontWeight: ModernTheme.typography.fontWeight.bold,
+    color: ModernTheme.colors.text.primary,
+    letterSpacing: ModernTheme.typography.letterSpacing.tight,
   },
   cardSubtitle: {
-    marginTop: 4,
-    fontSize: 12,
-    color: '#718168',
-    fontWeight: '600',
+    marginTop: ModernTheme.spacing[1],
+    fontSize: ModernTheme.typography.fontSize.sm,
+    color: ModernTheme.colors.text.secondary,
+    fontWeight: ModernTheme.typography.fontWeight.medium,
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingTop: 10,
+    gap: ModernTheme.spacing[2],
+    paddingTop: ModernTheme.spacing[2.5],
   },
   legendDot: {
     width: 12,
     height: 12,
-    borderRadius: 999,
-    backgroundColor: '#4b7d3c',
+    borderRadius: ModernTheme.borderRadius.full,
+    backgroundColor: ModernTheme.colors.primary[600],
   },
   legendText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#596074',
+    fontSize: ModernTheme.typography.fontSize.sm,
+    fontWeight: ModernTheme.typography.fontWeight.semibold,
+    color: ModernTheme.colors.text.secondary,
   },
   metricStrip: {
-    marginTop: 14,
+    marginTop: ModernTheme.spacing[3.5],
     minHeight: 42,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#dae8cf',
-    backgroundColor: '#f3f8ef',
+    borderRadius: ModernTheme.borderRadius.md,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: ModernTheme.colors.background.tertiary,
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    gap: ModernTheme.spacing[2.5],
+    paddingHorizontal: ModernTheme.spacing[3],
+    paddingVertical: ModernTheme.spacing[2],
   },
   livePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    borderRadius: 999,
-    backgroundColor: '#ffffff',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+    gap: ModernTheme.spacing[1.5],
+    borderRadius: ModernTheme.borderRadius.full,
+    backgroundColor: ModernTheme.colors.background.card,
+    paddingHorizontal: ModernTheme.spacing[2.5],
+    paddingVertical: ModernTheme.spacing[1.5],
+    ...ModernTheme.shadows.sm,
   },
   liveDot: {
     width: 8,
     height: 8,
-    borderRadius: 999,
-    backgroundColor: '#65c9a6',
+    borderRadius: ModernTheme.borderRadius.full,
+    backgroundColor: ModernTheme.colors.accent[400],
   },
   liveText: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: '#344051',
+    fontSize: ModernTheme.typography.fontSize.sm,
+    fontWeight: ModernTheme.typography.fontWeight.bold,
+    color: ModernTheme.colors.text.primary,
   },
   totalPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    borderRadius: 999,
-    backgroundColor: '#4b7d3c',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    gap: ModernTheme.spacing[1.5],
+    borderRadius: ModernTheme.borderRadius.full,
+    backgroundColor: ModernTheme.colors.primary[600],
+    paddingHorizontal: ModernTheme.spacing[3],
+    paddingVertical: ModernTheme.spacing[1.5],
+    ...ModernTheme.shadows.sm,
   },
   totalPillText: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: '#ffffff',
+    fontSize: ModernTheme.typography.fontSize.sm,
+    fontWeight: ModernTheme.typography.fontWeight.bold,
+    color: ModernTheme.colors.text.inverse,
   },
   deltaPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    borderRadius: 999,
-    backgroundColor: '#dcefd2',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    gap: ModernTheme.spacing[1.5],
+    borderRadius: ModernTheme.borderRadius.full,
+    backgroundColor: ModernTheme.colors.primary[100],
+    paddingHorizontal: ModernTheme.spacing[3],
+    paddingVertical: ModernTheme.spacing[1.5],
   },
   deltaPillText: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: '#2d6f35',
+    fontSize: ModernTheme.typography.fontSize.sm,
+    fontWeight: ModernTheme.typography.fontWeight.bold,
+    color: ModernTheme.colors.primary[800],
   },
   inspectHint: {
-    fontSize: 12,
-    color: '#8a99a7',
+    fontSize: ModernTheme.typography.fontSize.sm,
+    color: ModernTheme.colors.text.tertiary,
     fontStyle: 'italic',
   },
   lineChart: {
@@ -941,29 +1093,29 @@ const styles = StyleSheet.create({
   lineSegment: {
     position: 'absolute',
     height: 3,
-    borderRadius: 999,
-    backgroundColor: '#4b7d3c',
+    borderRadius: ModernTheme.borderRadius.full,
+    backgroundColor: ModernTheme.colors.primary[600],
   },
   chartPoint: {
     position: 'absolute',
     width: 11,
     height: 11,
-    borderRadius: 999,
-    backgroundColor: '#ffffff',
+    borderRadius: ModernTheme.borderRadius.full,
+    backgroundColor: ModernTheme.colors.background.card,
     borderWidth: 3,
-    borderColor: '#4b7d3c',
+    borderColor: ModernTheme.colors.primary[600],
   },
   monthLabel: {
     position: 'absolute',
     width: 36,
     textAlign: 'center',
-    fontSize: 11,
-    color: '#657083',
-    fontWeight: '700',
+    fontSize: ModernTheme.typography.fontSize.xs,
+    color: ModernTheme.colors.text.secondary,
+    fontWeight: ModernTheme.typography.fontWeight.semibold,
   },
   lowerGrid: {
     flexDirection: 'row',
-    gap: 14,
+    gap: ModernTheme.spacing[3.5],
     alignItems: 'stretch',
   },
   lowerGridStacked: {
@@ -971,19 +1123,21 @@ const styles = StyleSheet.create({
   },
   heatmapCard: {
     flex: 2,
-    borderRadius: 8,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#d5e2c9',
-    padding: 16,
+    borderRadius: ModernTheme.borderRadius.lg,
+    backgroundColor: ModernTheme.colors.background.card,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    padding: ModernTheme.spacing[5],
+    ...ModernTheme.shadows.base,
   },
   skillsCard: {
     flex: 0.95,
-    borderRadius: 8,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#d5e2c9',
-    padding: 16,
+    borderRadius: ModernTheme.borderRadius.lg,
+    backgroundColor: ModernTheme.colors.background.card,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    padding: ModernTheme.spacing[5],
+    ...ModernTheme.shadows.base,
   },
   fullWidthCard: {
     width: '100%',
@@ -1022,9 +1176,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   emptyText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#718168',
+    fontSize: ModernTheme.typography.fontSize.sm,
+    fontWeight: ModernTheme.typography.fontWeight.semibold,
+    color: ModernTheme.colors.text.secondary,
   },
   heatmapTableWrapper: {
     position: 'relative',
@@ -1216,18 +1370,204 @@ const styles = StyleSheet.create({
   footerStats: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    paddingBottom: 4,
+    gap: ModernTheme.spacing[2.5],
+    paddingBottom: ModernTheme.spacing[1],
   },
   footerStat: {
-    borderRadius: 999,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#d5e2c9',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    fontSize: 12,
-    color: '#526347',
-    fontWeight: '800',
+    borderRadius: ModernTheme.borderRadius.full,
+    backgroundColor: ModernTheme.colors.background.card,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    paddingHorizontal: ModernTheme.spacing[3],
+    paddingVertical: ModernTheme.spacing[1.5],
+    fontSize: ModernTheme.typography.fontSize.sm,
+    color: ModernTheme.colors.text.secondary,
+    fontWeight: ModernTheme.typography.fontWeight.semibold,
+    ...ModernTheme.shadows.sm,
+  },
+  // Project Status Overview styles
+  statusOverviewCard: {
+    borderRadius: ModernTheme.borderRadius.lg,
+    backgroundColor: ModernTheme.colors.background.card,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    padding: ModernTheme.spacing[5],
+    ...ModernTheme.shadows.base,
+  },
+  statusList: {
+    marginTop: ModernTheme.spacing[3],
+    gap: ModernTheme.spacing[2],
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: ModernTheme.spacing[3],
+    paddingHorizontal: ModernTheme.spacing[4],
+    backgroundColor: ModernTheme.colors.background.tertiary,
+    borderRadius: ModernTheme.borderRadius.md,
+    marginBottom: 0,
+    ...ModernTheme.shadows.xs,
+  },
+  statusLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: ModernTheme.spacing[3],
+  },
+  statusDot: {
+    width: 12,
+    height: 12,
+    borderRadius: ModernTheme.borderRadius.full,
+    ...ModernTheme.shadows.sm,
+  },
+  statusLabel: {
+    fontSize: ModernTheme.typography.fontSize.md,
+    fontWeight: ModernTheme.typography.fontWeight.semibold,
+    color: ModernTheme.colors.text.primary,
+  },
+  statusCount: {
+    fontSize: ModernTheme.typography.fontSize.lg,
+    fontWeight: ModernTheme.typography.fontWeight.bold,
+    color: ModernTheme.colors.text.primary,
+  },
+  // Projects Tracking styles
+  trackingCard: {
+    borderRadius: ModernTheme.borderRadius.lg,
+    backgroundColor: ModernTheme.colors.background.card,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    padding: ModernTheme.spacing[5],
+    ...ModernTheme.shadows.base,
+  },
+  trackingHeader: {
+    gap: ModernTheme.spacing[3],
+  },
+  trackingFilters: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: ModernTheme.spacing[2],
+    marginTop: ModernTheme.spacing[2],
+  },
+  filterChip: {
+    paddingHorizontal: ModernTheme.spacing[3],
+    paddingVertical: ModernTheme.spacing[1.5],
+    borderRadius: ModernTheme.borderRadius.full,
+    backgroundColor: ModernTheme.colors.neutral[100],
+    borderWidth: 0,
+    borderColor: 'transparent',
+    ...ModernTheme.shadows.xs,
+  },
+  filterChipActive: {
+    backgroundColor: ModernTheme.colors.primary[600],
+    borderColor: ModernTheme.colors.primary[600],
+    ...ModernTheme.shadows.sm,
+  },
+  filterChipText: {
+    fontSize: ModernTheme.typography.fontSize.sm,
+    fontWeight: ModernTheme.typography.fontWeight.semibold,
+    color: ModernTheme.colors.text.secondary,
+  },
+  filterChipTextActive: {
+    color: ModernTheme.colors.text.inverse,
+  },
+  emptyTrackingState: {
+    alignItems: 'center',
+    paddingVertical: ModernTheme.spacing[12],
+    gap: ModernTheme.spacing[3],
+  },
+  projectTrackingList: {
+    marginTop: ModernTheme.spacing[4],
+    gap: ModernTheme.spacing[2],
+  },
+  projectTrackingItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: ModernTheme.spacing[3],
+    paddingHorizontal: ModernTheme.spacing[4],
+    backgroundColor: ModernTheme.colors.background.tertiary,
+    borderRadius: ModernTheme.borderRadius.md,
+    gap: ModernTheme.spacing[3],
+    ...ModernTheme.shadows.xs,
+  },
+  projectTrackingMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: ModernTheme.spacing[3],
+  },
+  projectStatusIndicator: {
+    width: 4,
+    height: 40,
+    borderRadius: ModernTheme.borderRadius.sm,
+  },
+  projectTrackingInfo: {
+    flex: 1,
+  },
+  projectTrackingTitle: {
+    fontSize: ModernTheme.typography.fontSize.md,
+    fontWeight: ModernTheme.typography.fontWeight.semibold,
+    color: ModernTheme.colors.text.primary,
+    marginBottom: ModernTheme.spacing[1],
+  },
+  projectTrackingMeta: {
+    fontSize: ModernTheme.typography.fontSize.sm,
+    color: ModernTheme.colors.text.secondary,
+    fontWeight: ModernTheme.typography.fontWeight.medium,
+  },
+  partnerOrgBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: ModernTheme.spacing[1],
+    marginTop: ModernTheme.spacing[1],
+    paddingHorizontal: ModernTheme.spacing[2],
+    paddingVertical: ModernTheme.spacing[0.5],
+    backgroundColor: ModernTheme.colors.accent[50],
+    borderRadius: ModernTheme.borderRadius.sm,
+    alignSelf: 'flex-start',
+  },
+  partnerOrgText: {
+    fontSize: ModernTheme.typography.fontSize.xs,
+    color: ModernTheme.colors.accent[700],
+    fontWeight: ModernTheme.typography.fontWeight.semibold,
+    maxWidth: 200,
+  },
+  projectTrackingStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: ModernTheme.spacing[2],
+  },
+  projectStatBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: ModernTheme.spacing[1],
+    paddingHorizontal: ModernTheme.spacing[2],
+    paddingVertical: ModernTheme.spacing[1],
+    backgroundColor: ModernTheme.colors.primary[50],
+    borderRadius: ModernTheme.borderRadius.sm,
+  },
+  projectStatText: {
+    fontSize: ModernTheme.typography.fontSize.sm,
+    fontWeight: ModernTheme.typography.fontWeight.semibold,
+    color: ModernTheme.colors.primary[700],
+  },
+  projectStatusBadge: {
+    paddingHorizontal: ModernTheme.spacing[2.5],
+    paddingVertical: ModernTheme.spacing[1],
+    borderRadius: ModernTheme.borderRadius.full,
+    borderWidth: 1.5,
+  },
+  projectStatusText: {
+    fontSize: ModernTheme.typography.fontSize.xs,
+    fontWeight: ModernTheme.typography.fontWeight.bold,
+    textTransform: 'uppercase',
+    letterSpacing: ModernTheme.typography.letterSpacing.wide,
+  },
+  trackingFooterHint: {
+    marginTop: ModernTheme.spacing[3],
+    fontSize: ModernTheme.typography.fontSize.sm,
+    color: ModernTheme.colors.text.secondary,
+    fontWeight: ModernTheme.typography.fontWeight.medium,
+    textAlign: 'center',
   },
 });

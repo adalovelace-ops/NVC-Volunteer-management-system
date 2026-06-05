@@ -5155,6 +5155,9 @@ export async function reviewPartnerProjectApplication(
     await updateApprovedProposalProjectCache(payload.project);
   }
 
+  // Send notification card back to partner with review result
+  void notifyPartnerAboutProjectJoinReview(payload.application, reviewedBy);
+
   return payload.application;
 }
 

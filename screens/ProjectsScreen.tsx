@@ -1,4 +1,5 @@
 import React, { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import ModernTheme from '../utils/modernTheme';
 import { View, FlatList, StyleSheet, Text, TouchableOpacity, Alert, Pressable, Image, ImageSourcePropType, Modal, Platform, TextInput, ScrollView, useWindowDimensions } from 'react-native';
 
 // Safe Platform accessor for web environments
@@ -31,7 +32,7 @@ import {
   subscribeToStorageChanges,
 } from '../models/storage';
 import { PartnerProjectApplication, PartnerProjectProposalDetails, PartnerReport, Project, Volunteer, VolunteerProjectJoinRecord, VolunteerProjectMatch, VolunteerTimeLog } from '../models/types';
-import { isImageMediaUri, pickImageFromDevice } from '../utils/media';
+import { isImageMediaUri, pickImageFromDevice, pickDocumentFromDevice } from '../utils/media';
 import { navigateToAvailableRoute } from '../utils/navigation';
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
@@ -157,11 +158,11 @@ type PartnerProposalDraft = {
   proposedStartDate: string;
   proposedEndDate: string;
   proposedLocation: string;
-  proposedVolunteersNeeded: string;
   skillsNeeded: string;
   communityNeed: string;
   expectedDeliverables: string;
   proposalPhoto: string;
+  proposalDocument: string;
 };
 
 function formatProjectDateRange(startValue?: string, endValue?: string): string {
@@ -253,11 +254,11 @@ function createPartnerProposalDraft(project: Project): PartnerProposalDraft {
     proposedStartDate: project.startDate.slice(0, 10),
     proposedEndDate: project.endDate.slice(0, 10),
     proposedLocation: project.location.address,
-    proposedVolunteersNeeded: String(project.volunteersNeeded || 1),
     skillsNeeded: (project.skillsNeeded || []).join(', '),
     communityNeed: '',
     expectedDeliverables: '',
     proposalPhoto: '',
+    proposalDocument: '',
   };
 }
 
@@ -265,6 +266,16 @@ function buildPartnerProposalDetails(
   project: Project,
   draft: PartnerProposalDraft
 ): PartnerProjectProposalDetails {
+  const attachments: Array<{ url: string; type: 'image' | 'document' }> = [];
+  
+  if (draft.proposalPhoto) {
+    attachments.push({ url: draft.proposalPhoto, type: 'image' });
+  }
+  
+  if (draft.proposalDocument) {
+    attachments.push({ url: draft.proposalDocument, type: 'document' });
+  }
+  
   return {
     targetProjectId: project.id,
     targetProjectTitle: project.title,
@@ -276,13 +287,11 @@ function buildPartnerProposalDetails(
     proposedStartDate: draft.proposedStartDate.trim(),
     proposedEndDate: draft.proposedEndDate.trim(),
     proposedLocation: draft.proposedLocation.trim(),
-    proposedVolunteersNeeded: Number(draft.proposedVolunteersNeeded),
+    proposedVolunteersNeeded: 0,
     skillsNeeded: draft.skillsNeeded.split(',').map(s => s.trim()).filter(s => s.length > 0),
     communityNeed: draft.communityNeed.trim(),
     expectedDeliverables: draft.expectedDeliverables.trim(),
-    attachments: draft.proposalPhoto
-      ? [{ url: draft.proposalPhoto, type: 'image' as const }]
-      : [],
+    attachments,
   };
 }
 
@@ -683,11 +692,34 @@ export default function ProjectsScreen({ navigation, route }: any) {
   const handleJoinProject = async (projectId: string) => {
     if (!user?.id) return;
     try {
-      if (user.role === 'partner') {
-        const selectedProject = projects.find(project => project.id === projectId);
-        if (!selectedProject) {
-          throw new Error('Selected project was not found.');
+      const selectedProject = projects.find(project => project.id === projectId);
+      if (!selectedProject) {
+        throw new Error('Selected project was not found.');
+      }
+      
+      // Check if event is full before allowing join
+      if (selectedProject.isEvent) {
+        const volunteersNeeded = selectedProject.volunteersNeeded || 0;
+        const currentVolunteers = selectedProject.volunteers?.length || 0;
+        const pendingJoinRequests = volunteerMatches.filter(
+          match => match.projectId === projectId && match.status === 'Requested'
+        ).length;
+        const approvedJoinRequests = volunteerJoinRecords.filter(
+          record => record.projectId === projectId
+        ).length;
+        
+        const totalSlotsTaken = currentVolunteers + pendingJoinRequests + approvedJoinRequests;
+        
+        if (totalSlotsTaken >= volunteersNeeded && volunteersNeeded > 0) {
+          Alert.alert(
+            'Event Full',
+            'This event has reached its volunteer capacity. All slots are filled.'
+          );
+          return;
         }
+      }
+      
+      if (user.role === 'partner') {
         setProposalProjectId(projectId);
         setPartnerProposalDraft(createPartnerProposalDraft(selectedProject));
         return;
@@ -753,12 +785,27 @@ export default function ProjectsScreen({ navigation, route }: any) {
     handlePartnerProposalDraftChange('proposalPhoto', '');
   };
 
+  const handlePickProposalDocument = async () => {
+    try {
+      const pickedDocument = await pickDocumentFromDevice();
+      if (!pickedDocument) {
+        return;
+      }
+      handlePartnerProposalDraftChange('proposalDocument', pickedDocument);
+    } catch (error: any) {
+      Alert.alert('Document Access Needed', error?.message || 'Unable to open document picker.');
+    }
+  };
+
+  const handleRemoveProposalDocument = () => {
+    handlePartnerProposalDraftChange('proposalDocument', '');
+  };
+
   const submitPartnerProposal = useCallback(async () => {
     if (!user || user.role !== 'partner' || !activeProposalProject || !partnerProposalDraft) {
       return;
     }
 
-    const volunteersNeeded = Number(partnerProposalDraft.proposedVolunteersNeeded);
     if (
       !partnerProposalDraft.proposedTitle.trim() ||
       !partnerProposalDraft.proposedDescription.trim() ||
@@ -766,13 +813,11 @@ export default function ProjectsScreen({ navigation, route }: any) {
       !partnerProposalDraft.proposedEndDate.trim() ||
       !partnerProposalDraft.proposedLocation.trim() ||
       !partnerProposalDraft.communityNeed.trim() ||
-      !partnerProposalDraft.expectedDeliverables.trim() ||
-      Number.isNaN(volunteersNeeded) ||
-      volunteersNeeded < 1
+      !partnerProposalDraft.expectedDeliverables.trim()
     ) {
       Alert.alert(
         'Incomplete Proposal',
-        'Fill in the proposal title, description, dates, location, volunteers needed, community need, and expected deliverables.'
+        'Fill in the proposal title, description, dates, location, community need, and expected deliverables.'
       );
       return;
     }
@@ -993,10 +1038,19 @@ export default function ProjectsScreen({ navigation, route }: any) {
         const current = map.get(parentId) || [];
         current.push(event);
         map.set(parentId, current);
+        
+        // Also add this event to the grandparent program (if the parent is a project with a parent program)
+        const parentProject = projects.find(p => p.id === parentId);
+        if (parentProject && parentProject.parentProjectId) {
+          const grandparentId = parentProject.parentProjectId;
+          const grandparentEvents = map.get(grandparentId) || [];
+          grandparentEvents.push(event);
+          map.set(grandparentId, grandparentEvents);
+        }
       });
 
     return map;
-  }, [visibleProjects]);
+  }, [visibleProjects, projects]);
 
   // Groups projects by category
   const projectsByCategory = useMemo<ProjectCategoryGroup[]>(() => {
@@ -1020,12 +1074,14 @@ export default function ProjectsScreen({ navigation, route }: any) {
 
         const programMatches = visibleProjects.some(visibleProject => visibleProject.id === project.id);
         const hasVisibleEvents = (linkedEventsByProgramId.get(project.id) || []).length > 0;
+        const isProposalProject = String(project.id || '').startsWith('project-proposal-');
+        
         const shouldInclude =
           contentFilter === 'Programs'
             ? programMatches
             : contentFilter === 'Events'
-            ? hasVisibleEvents
-            : programMatches || hasVisibleEvents;
+            ? (hasVisibleEvents || (isProposalProject && hasVisibleEvents))
+            : (programMatches || hasVisibleEvents);
 
         if (shouldInclude) {
           categoryProjects.push(project);
@@ -1384,6 +1440,18 @@ export default function ProjectsScreen({ navigation, route }: any) {
       ? 'refresh'
       : 'add-circle-outline';
 
+    // Check if event has reached capacity
+    const volunteersNeeded = project.volunteersNeeded || 0;
+    const currentVolunteers = project.volunteers?.length || 0;
+    const pendingJoinRequests = volunteerMatches.filter(
+      match => match.projectId === project.id && match.status === 'Requested'
+    ).length;
+    const approvedJoinRequests = volunteerJoinRecords.filter(
+      record => record.projectId === project.id
+    ).length;
+    const totalSlotsTaken = currentVolunteers + pendingJoinRequests + approvedJoinRequests;
+    const isEventFull = project.isEvent && volunteersNeeded > 0 && totalSlotsTaken >= volunteersNeeded;
+
     const statusMessage = completedParticipation
       ? 'You already completed this event.'
       : joined
@@ -1402,10 +1470,12 @@ export default function ProjectsScreen({ navigation, route }: any) {
       ? 'This event is currently on hold.'
       : wasRejected
       ? 'Your last request was rejected. You can submit again.'
+      : isEventFull
+      ? 'This event has reached volunteer capacity.'
       : 'Open for volunteer requests.';
 
     const isJoinDisabled =
-      joined || completedParticipation || isPendingApproval || isClosedStatus || isOnHold;
+      joined || completedParticipation || isPendingApproval || isClosedStatus || isOnHold || isEventFull;
 
     return {
       joined,
@@ -3111,6 +3181,38 @@ export default function ProjectsScreen({ navigation, route }: any) {
                 </View>
               ) : null}
 
+              <Text style={styles.proposalFieldLabel}>Supporting Document (Optional)</Text>
+              <TouchableOpacity
+                style={styles.documentPickerButton}
+                onPress={handlePickProposalDocument}
+                disabled={loadingProjectId === activeProposalProject?.id}
+              >
+                <MaterialIcons name="attach-file" size={18} color="#fff" />
+                <Text style={styles.documentPickerButtonText}>
+                  {partnerProposalDraft?.proposalDocument ? 'Replace Document' : 'Upload Document'}
+                </Text>
+              </TouchableOpacity>
+
+              {partnerProposalDraft?.proposalDocument ? (
+                <View>
+                  <TouchableOpacity
+                    style={styles.documentRemoveButton}
+                    onPress={handleRemoveProposalDocument}
+                    disabled={loadingProjectId === activeProposalProject?.id}
+                  >
+                    <MaterialIcons name="close" size={16} color="#dc2626" />
+                    <Text style={styles.documentRemoveButtonText}>Remove Document</Text>
+                  </TouchableOpacity>
+
+                  <View style={styles.documentPreviewCard}>
+                    <MaterialIcons name="insert-drive-file" size={32} color="#10b981" />
+                    <Text style={styles.documentPreviewText} numberOfLines={1}>
+                      {partnerProposalDraft.proposalDocument.split('/').pop() || 'Document attached'}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+
               <Text style={styles.proposalFieldLabel}>Proposal Title</Text>
               <TextInput
                 style={styles.proposalInput}
@@ -3165,17 +3267,6 @@ export default function ProjectsScreen({ navigation, route }: any) {
                 value={partnerProposalDraft?.proposedLocation || ''}
                 onChangeText={value => handlePartnerProposalDraftChange('proposedLocation', value)}
                 placeholder="City, municipality, or venue"
-                placeholderTextColor="#94a3b8"
-                editable={loadingProjectId !== activeProposalProject?.id}
-              />
-
-              <Text style={styles.proposalFieldLabel}>Volunteers Needed</Text>
-              <TextInput
-                style={styles.proposalInput}
-                value={partnerProposalDraft?.proposedVolunteersNeeded || ''}
-                onChangeText={value => handlePartnerProposalDraftChange('proposedVolunteersNeeded', value)}
-                placeholder="Number of volunteers needed"
-                keyboardType={getPlatformOS() === 'ios' ? 'number-pad' : 'numeric'}
                 placeholderTextColor="#94a3b8"
                 editable={loadingProjectId !== activeProposalProject?.id}
               />
@@ -3380,91 +3471,90 @@ export default function ProjectsScreen({ navigation, route }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: Platform.select({ web: 6, default: 10 }),
-    backgroundColor: '#eef4ef',
+    padding: Platform.select({ web: ModernTheme.spacing[1.5], default: ModernTheme.spacing[2.5] }),
+    backgroundColor: ModernTheme.colors.background.secondary,
   },
   attendanceNoticeOverlay: {
     position: 'absolute',
-    top: Platform.select({ web: 14, default: 18 }),
-    left: 12,
-    right: 12,
+    top: Platform.select({ web: ModernTheme.spacing[3.5], default: ModernTheme.spacing[4.5] }),
+    left: ModernTheme.spacing[3],
+    right: ModernTheme.spacing[3],
     zIndex: 60,
     alignItems: 'center',
   },
   attendanceNoticeCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#ecfdf5',
-    borderWidth: 1,
-    borderColor: '#86efac',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    shadowColor: '#166534',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 4,
+    gap: ModernTheme.spacing[2],
+    backgroundColor: ModernTheme.colors.primary[50],
+    borderWidth: 0,
+    borderColor: 'transparent',
+    borderRadius: ModernTheme.borderRadius.lg,
+    paddingHorizontal: ModernTheme.spacing[3.5],
+    paddingVertical: ModernTheme.spacing[2.5],
+    ...ModernTheme.shadows.md,
   },
   attendanceNoticeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#166534',
+    fontSize: ModernTheme.typography.fontSize.sm,
+    fontWeight: ModernTheme.typography.fontWeight.semibold,
+    color: ModernTheme.colors.primary[700],
   },
   topPanel: {
-    gap: 8,
-    marginBottom: 8,
+    gap: ModernTheme.spacing[2],
+    marginBottom: ModernTheme.spacing[2],
   },
   mobileFlow: {
     flex: 1,
   },
   mobileFlowContent: {
-    paddingHorizontal: 2,
-    paddingBottom: 16,
-    gap: 8,
+    paddingHorizontal: ModernTheme.spacing[0.5],
+    paddingBottom: ModernTheme.spacing[4],
+    gap: ModernTheme.spacing[2],
   },
   mobileHeaderCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: '#dbe7df',
-    gap: 6,
+    backgroundColor: ModernTheme.colors.background.card,
+    borderRadius: ModernTheme.borderRadius.lg,
+    paddingHorizontal: ModernTheme.spacing[3],
+    paddingVertical: ModernTheme.spacing[3],
+    borderWidth: 0,
+    borderColor: 'transparent',
+    gap: ModernTheme.spacing[1.5],
+    ...ModernTheme.shadows.base,
   },
   mobileGuideCard: {
-    backgroundColor: '#f7fff8',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#ccebd5',
-    padding: 10,
-    gap: 4,
+    backgroundColor: ModernTheme.colors.background.tertiary,
+    borderRadius: ModernTheme.borderRadius.md,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    padding: ModernTheme.spacing[2.5],
+    gap: ModernTheme.spacing[1],
+    ...ModernTheme.shadows.sm,
   },
   mobileGuideTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#166534',
+    fontSize: ModernTheme.typography.fontSize.sm,
+    fontWeight: ModernTheme.typography.fontWeight.bold,
+    color: ModernTheme.colors.primary[700],
   },
   mobileGuideText: {
-    fontSize: 12,
+    fontSize: ModernTheme.typography.fontSize.sm,
     lineHeight: 18,
-    color: '#475569',
+    color: ModernTheme.colors.text.secondary,
   },
   mobileBackButton: {
     alignSelf: 'flex-start',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    borderRadius: 999,
-    backgroundColor: '#ecfdf5',
-    borderWidth: 1,
-    borderColor: '#bbf7d0',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    gap: ModernTheme.spacing[1.5],
+    borderRadius: ModernTheme.borderRadius.full,
+    backgroundColor: ModernTheme.colors.primary[50],
+    borderWidth: 0,
+    borderColor: 'transparent',
+    paddingHorizontal: ModernTheme.spacing[2.5],
+    paddingVertical: ModernTheme.spacing[1.5],
+    ...ModernTheme.shadows.xs,
   },
   mobileBackButtonText: {
-    fontSize: 12,
+    fontSize: ModernTheme.typography.fontSize.sm,
     fontWeight: '700',
     color: '#166534',
   },
@@ -4756,6 +4846,54 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 200,
     backgroundColor: '#e2e8f0',
+  },
+  documentPickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#10b981',
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  documentPickerButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  documentRemoveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#fee2e2',
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  documentRemoveButtonText: {
+    color: '#dc2626',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  documentPreviewCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#d1fae5',
+    backgroundColor: '#f0fdf4',
+    padding: 16,
+  },
+  documentPreviewText: {
+    flex: 1,
+    color: '#0f172a',
+    fontSize: 14,
+    fontWeight: '600',
   },
   proposalFieldRow: {
     flexDirection: Platform.select({ web: 'row', default: 'column' }),

@@ -46,6 +46,7 @@ export default function ReportDetailsModal({
   const [approvalNotes, setApprovalNotes] = useState('');
   const [showApprovalForm, setShowApprovalForm] = useState(false);
   const [actionType, setActionType] = useState<'approve' | 'reject' | null>(null);
+  const [previewAttachmentUri, setPreviewAttachmentUri] = useState<string | null>(null);
   const { width } = useWindowDimensions();
 
   const canApprove =
@@ -96,12 +97,17 @@ export default function ReportDetailsModal({
   const statusPresentation = getStatusPresentation(report.status);
   const handleOpenAttachment = async (uri: string) => {
     try {
+      if (Platform.OS !== 'web' && uri.trim().startsWith('data:image/')) {
+        setPreviewAttachmentUri(uri.trim());
+        return;
+      }
       await openAttachmentUri(uri);
     } catch (error) {
       console.error('Unable to open report attachment:', error);
       Alert.alert('Attachment', 'Unable to open this attachment on this device.');
     }
   };
+  const closeAttachmentPreview = () => setPreviewAttachmentUri(null);
   const handleDownloadReport = () => {
     void downloadPdfFile(
       `${report.title}-${formatDateForFilename(report.submittedAt)}.pdf`,
@@ -281,96 +287,20 @@ export default function ReportDetailsModal({
               <View style={styles.sectionHeaderRow}>
                 <Text style={styles.sectionTitle}>Key Metrics</Text>
                 <Text style={styles.sectionCaption}>
-                  {Object.values(report.metrics).filter(value => Boolean(value)).length} captured
+                  {Object.values(report.metrics).filter(value => value !== undefined && value !== null && value !== '').length} captured
                 </Text>
               </View>
-              <View style={[styles.metricsDisplay, isWideLayout && styles.metricsDisplayWide]}>
-                {Object.entries(report.metrics).map(
-                  ([key, value]) =>
-                    value && (
-                      <View key={key} style={styles.metricCard}>
-                        <Text style={styles.metricCardLabel}>{formatMetricKey(key)}</Text>
-                        <Text style={styles.metricCardValue}>{value}</Text>
-                      </View>
-                    )
-                )}
+                <View style={[styles.metricsDisplay, isWideLayout && styles.metricsDisplayWide]}>
+                {Object.entries(report.metrics)
+                  .filter(([, value]) => value !== undefined && value !== null && value !== '')
+                  .map(([key, value]) => (
+                    <View key={key} style={styles.metricCard}>
+                      <Text style={styles.metricCardLabel}>{formatMetricKey(key)}</Text>
+                      <Text style={styles.metricCardValue}>{value}</Text>
+                    </View>
+                  ))}
               </View>
             </View>
-
-            {/* Approval Section (Admin Only) */}
-            {canApprove && !showApprovalForm && (
-              <View style={styles.sectionCard}>
-                <Text style={styles.sectionTitle}>Admin Actions</Text>
-                <View style={styles.adminActions}>
-                  <TouchableOpacity
-                    style={[styles.adminActionButton, styles.approveButton]}
-                    onPress={() => {
-                      setActionType('approve');
-                      setShowApprovalForm(true);
-                    }}
-                  >
-                    <MaterialIcons name="check-circle" size={16} color="#fff" />
-                    <Text style={styles.adminActionText}>Approve</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.adminActionButton, styles.rejectButton]}
-                    onPress={() => {
-                      setActionType('reject');
-                      setShowApprovalForm(true);
-                    }}
-                  >
-                    <MaterialIcons name="cancel" size={16} color="#fff" />
-                    <Text style={styles.adminActionText}>Reject</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-
-            {/* Approval Form */}
-            {canApprove && showApprovalForm && (
-              <View style={styles.sectionCard}>
-                <Text style={styles.sectionTitle}>
-                  {actionType === 'approve' ? 'Approve Report' : 'Reject Report'}
-                </Text>
-                <Text style={styles.formLabel}>Notes (Optional)</Text>
-                <TextInput
-                  style={styles.notesInput}
-                  placeholder={
-                    actionType === 'approve'
-                      ? 'Add approval notes...'
-                      : 'Explain why this report is being rejected...'
-                  }
-                  value={approvalNotes}
-                  onChangeText={setApprovalNotes}
-                  multiline
-                  numberOfLines={4}
-                  placeholderTextColor="#cbd5e1"
-                />
-                <View style={styles.formActions}>
-                  <TouchableOpacity
-                    style={styles.formCancelButton}
-                    onPress={() => {
-                      setShowApprovalForm(false);
-                      setApprovalNotes('');
-                      setActionType(null);
-                    }}
-                  >
-                    <Text style={styles.formCancelText}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.formSubmitButton,
-                      actionType === 'reject' && styles.formRejectButton,
-                    ]}
-                    onPress={actionType === 'approve' ? handleApprove : handleReject}
-                  >
-                    <Text style={styles.formSubmitText}>
-                      {actionType === 'approve' ? 'Approve' : 'Reject'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
 
             {/* Approval History */}
             {report.approvedBy && (
@@ -432,6 +362,28 @@ export default function ReportDetailsModal({
           </View>
         </View>
       </View>
+      <Modal
+        visible={Boolean(previewAttachmentUri)}
+        transparent
+        animationType="fade"
+        onRequestClose={closeAttachmentPreview}
+      >
+        <View style={styles.attachmentPreviewBackdrop}>
+          <View style={styles.attachmentPreviewCard}>
+            <View style={styles.attachmentPreviewHeader}>
+              <Text style={styles.attachmentPreviewTitle}>Preview Photo</Text>
+              <TouchableOpacity onPress={closeAttachmentPreview} style={styles.attachmentPreviewClose}>
+                <MaterialIcons name="close" size={20} color="#0f172a" />
+              </TouchableOpacity>
+            </View>
+            <Image
+              source={{ uri: previewAttachmentUri || '' }}
+              style={styles.attachmentPreviewImage}
+              resizeMode="contain"
+            />
+          </View>
+        </View>
+      </Modal>
     </Modal>
   );
 }
@@ -851,6 +803,41 @@ const styles = StyleSheet.create({
   attachmentFileText: {
     fontSize: 11,
     color: '#475569',
+  },
+  attachmentPreviewBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  attachmentPreviewCard: {
+    width: '100%',
+    maxWidth: 720,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  attachmentPreviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  attachmentPreviewTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  attachmentPreviewClose: {
+    padding: 8,
+  },
+  attachmentPreviewImage: {
+    width: '100%',
+    height: 420,
+    backgroundColor: '#f8fafc',
   },
   metricCard: {
     flex: Platform.select({ web: 0, default: 1 }),

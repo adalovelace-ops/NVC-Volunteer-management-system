@@ -24,7 +24,7 @@ interface AdminReportsDashboardProps {
   volunteers: Volunteer[];
   onUploadReport: () => void;
   onViewReport: (report: SubmittedReport) => void;
-  onViewAnalytics: () => void;
+  onViewAnalytics: (reportType?: 'all' | 'volunteer' | 'partner') => void;
   loading: boolean;
   onRefresh: () => void;
   refreshing: boolean;
@@ -803,9 +803,9 @@ export default function AdminReportsDashboard({
                           styles.viewAllButton,
                           { backgroundColor: column.card },
                         ]}
-                        onPress={onViewAnalytics}
+                        onPress={() => onViewAnalytics(column.key)}
                         activeOpacity={0.85}
-                        accessibilityLabel={`View all analytics for ${column.label}`}
+                        accessibilityLabel={`View all ${column.label}`}
                       >
                         <Text style={styles.viewAllText}>View all</Text>
                       </TouchableOpacity>

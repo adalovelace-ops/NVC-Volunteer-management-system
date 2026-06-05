@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
+import ModernTheme from '../utils/modernTheme';
 import {
   ActivityIndicator,
   Alert,
@@ -22,7 +23,7 @@ import {
   requestVolunteerProjectJoin,
   subscribeToStorageChanges,
 } from '../models/storage';
-import { ProgramTrack, Project, VolunteerProjectMatch } from '../models/types';
+import { ProgramTrack, Project, VolunteerProjectMatch, VolunteerProjectJoinRecord } from '../models/types';
 import { getRequestErrorMessage, isAbortLikeError } from '../utils/requestErrors';
 
 const PROGRAM_IMAGE_BY_CATEGORY: Record<Project['category'], ImageSourcePropType> = {
@@ -130,6 +131,7 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
   const [selectedProgramId, setSelectedProgramId] = useState<string | null>(null);
   const [selectedProgramDetailsId, setSelectedProgramDetailsId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [joinRecords, setJoinRecords] = useState<VolunteerProjectJoinRecord[]>([]);
   const hasLoadedOnceRef = useRef(false);
 
   const loadData = useCallback(async () => {
@@ -142,7 +144,7 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
 
       try {
         console.log('[VolunteerProjectsScreen] Starting data load for user:', user.id);
-        const snapshot = await getProjectsScreenSnapshot(user, ['projects', 'programTracks', 'volunteerProfile', 'volunteerMatches']);
+        const snapshot = await getProjectsScreenSnapshot(user, ['projects', 'programTracks', 'volunteerProfile', 'volunteerMatches', 'volunteerJoinRecords']);
         const snapshotRecords = snapshot.projects || [];
         const snapshotPrograms = snapshot.programTracks || [];
         const eventCount = snapshotRecords.filter(project => project.isEvent).length;
@@ -165,6 +167,11 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
         } else {
           setVolunteerMatches([]);
         }
+        if (Array.isArray(snapshot.volunteerJoinRecords)) {
+          setJoinRecords(snapshot.volunteerJoinRecords);
+        } else {
+          setJoinRecords([]);
+        }
       } finally {
         // Reserved for future request cancellation; the storage helper owns its timeout.
       }
@@ -179,6 +186,7 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
       setRecords([]);
       setPrograms([]);
       setVolunteerMatches([]);
+      setJoinRecords([]);
     } finally {
       if (shouldShowBlockingLoader) {
         setLoading(false);
@@ -198,6 +206,10 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
       if (project.isEvent) return false;
       if (project.parentProjectId) return true;
       if (programIds.has(String(project.id).trim())) return false;
+      
+      // Always include proposal projects
+      if (String(project.id || '').startsWith('project-proposal-')) return true;
+      
       return Boolean(getProjectProgramId(project, programs));
     });
   }, [programs, records]);
@@ -241,9 +253,19 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
         ? projectsOnly.find(project => project.id === event.parentProjectId)
         : null;
       
+      // If parent project not found, check if the parent is directly in records (might be a proposal)
+      const parentInRecords = !parentProject && event.parentProjectId
+        ? records.find(r => r.id === event.parentProjectId && !r.isEvent)
+        : null;
+      
       // If event has a parent project, use that project's parent program
       // Otherwise, use the event's parentProjectId directly (in case it points to a program)
-      const programId = parentProject ? getProjectProgramId(parentProject, programs) : event.parentProjectId;
+      const programId = parentProject 
+        ? getProjectProgramId(parentProject, programs) 
+        : parentInRecords
+        ? getProjectProgramId(parentInRecords, programs)
+        : event.parentProjectId;
+        
       if (!programId) {
         return;
       }
@@ -284,7 +306,12 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
     () =>
       selectedProgramDetailsId
         ? projectsOnly
-            .filter(project => !project.isEvent && getProjectProgramId(project, programs) === selectedProgramDetailsId)
+            .filter(project => {
+              if (project.isEvent) return false;
+              const programId = getProjectProgramId(project, programs);
+              // Include if it matches the program OR if it's a proposal with matching parentProjectId
+              return programId === selectedProgramDetailsId || project.parentProjectId === selectedProgramDetailsId;
+            })
             .sort(sortByDate)
         : [],
     [programs, projectsOnly, selectedProgramDetailsId]
@@ -339,6 +366,29 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
   const handleJoin = async (eventId: string) => {
     if (!user?.id) return;
     try {
+      // Find the event and check if it's full
+      const event = records.find(project => project.id === eventId);
+      if (event) {
+        const volunteersNeeded = event.volunteersNeeded || 0;
+        const currentVolunteers = event.volunteers?.length || 0;
+        const pendingJoinRequests = volunteerMatches.filter(
+          match => match.projectId === eventId && match.status === 'Requested'
+        ).length;
+        const approvedJoinRecords = joinRecords.filter(
+          record => record.projectId === eventId
+        ).length;
+        
+        const totalSlotsTaken = currentVolunteers + pendingJoinRequests + approvedJoinRecords;
+        
+        if (totalSlotsTaken >= volunteersNeeded && volunteersNeeded > 0) {
+          Alert.alert(
+            'Event Full',
+            'This event has reached its volunteer capacity. All slots are filled.'
+          );
+          return;
+        }
+      }
+      
       setLoadingProjectId(eventId);
       const match = await requestVolunteerProjectJoin(eventId, user.id);
       setVolunteerMatches(prev => [match, ...prev.filter(existing => existing.projectId !== eventId)]);
@@ -424,6 +474,12 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
     const isPending = match?.status === 'Requested';
     const visual = getProgramVisual(event.programModule || event.category);
     const statusLabel = getEventStatusLabel(match, joinedByUser);
+    
+    // Check if event is completed or cancelled
+    const eventStatus = event.status || 'Planning';
+    const isCompleted = eventStatus === 'Completed';
+    const isCancelled = eventStatus === 'Cancelled';
+    const isEnded = isCompleted || isCancelled;
 
     return (
       <TouchableOpacity
@@ -433,7 +489,10 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
         activeOpacity={0.88}
       >
         <View style={styles.eventImageWrap}>
-          <Image source={getProjectImageSource(event)} style={styles.cardImage} />
+          <Image 
+            source={getProjectImageSource(event)} 
+            style={[styles.cardImage, isEnded && styles.cardImageEnded]} 
+          />
           <View style={[styles.floatingBadge, { backgroundColor: visual.color }]}>
             <MaterialIcons name="event-available" size={15} color="#fff" />
             <Text style={styles.floatingBadgeText}>{statusLabel}</Text>
@@ -461,20 +520,24 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
             style={[
               styles.button,
               { backgroundColor: visual.color },
-              isJoined && styles.buttonDisabled,
+              (isJoined || isEnded) && styles.buttonDisabled,
             ]}
-            onPress={() => !isJoined && handleJoin(event.id)}
-            disabled={isJoined || loadingProjectId === event.id}
+            onPress={() => !isJoined && !isEnded && handleJoin(event.id)}
+            disabled={isJoined || isEnded || loadingProjectId === event.id}
             activeOpacity={0.85}
           >
             <MaterialIcons
-              name={isJoined ? 'check-circle' : 'send'}
+              name={isEnded ? 'event-busy' : isJoined ? 'check-circle' : 'send'}
               size={18}
               color="#fff"
             />
             <Text style={styles.buttonText}>
               {loadingProjectId === event.id
                 ? 'Sending...'
+                : isCancelled
+                ? 'Event Cancelled'
+                : isCompleted
+                ? 'Event Ended'
                 : isPending
                 ? 'Pending Approval'
                 : isJoined
@@ -776,16 +839,17 @@ export default function VolunteerProjectsScreen({ navigation }: { navigation: an
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#eef7ef' },
-  listContent: { padding: 14, paddingBottom: 30 },
-  centerContent: { alignItems: 'center', justifyContent: 'center', padding: 20 },
-  loadingText: { marginTop: 10, fontSize: 13, color: '#64748b', fontWeight: '700', textAlign: 'center' },
+  container: { flex: 1, backgroundColor: ModernTheme.colors.background.secondary },
+  listContent: { padding: ModernTheme.spacing[3.5], paddingBottom: ModernTheme.spacing[7] },
+  centerContent: { alignItems: 'center', justifyContent: 'center', padding: ModernTheme.spacing[5] },
+  loadingText: { marginTop: ModernTheme.spacing[2.5], fontSize: ModernTheme.typography.fontSize.sm, color: ModernTheme.colors.text.secondary, fontWeight: ModernTheme.typography.fontWeight.semibold, textAlign: 'center' },
   heroCard: {
-    backgroundColor: '#0f5132',
-    borderRadius: 24,
-    padding: 16,
-    marginBottom: 16,
+    backgroundColor: ModernTheme.colors.primary[900],
+    borderRadius: ModernTheme.borderRadius['2xl'],
+    padding: ModernTheme.spacing[4],
+    marginBottom: ModernTheme.spacing[4],
     overflow: 'hidden',
+    ...ModernTheme.shadows.lg,
   },
   heroTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 14 },
   heroTextWrap: { flex: 1 },
@@ -928,6 +992,7 @@ const styles = StyleSheet.create({
   },
   eventImageWrap: { position: 'relative' },
   cardImage: { width: '100%', height: 142, backgroundColor: '#e5e7eb' },
+  cardImageEnded: { opacity: 0.5 },
   floatingBadge: {
     position: 'absolute',
     left: 12,
