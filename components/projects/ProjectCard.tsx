@@ -59,7 +59,7 @@ export default function ProjectCard({ project, onPress }: ProjectCardProps) {
         <View style={styles.headerRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.categoryText}>
-              {project.isEvent ? 'Event' : 'Program'} | {project.programModule || project.category}
+              {project.isEvent ? 'Event' : 'Program'}
             </Text>
             <Text style={styles.titleText}>{project.title}</Text>
           </View>

@@ -1035,22 +1035,16 @@ def _get_project_chat_participant_user_ids(connection: Any, project_id: str) -> 
         if isinstance(volunteer_user_id, str) and volunteer_user_id:
             participant_user_ids.add(volunteer_user_id)
 
-    # OPTIMIZED: Batch fetch all volunteers instead of N+1 queries
+    # OPTIMIZED: Get volunteer user IDs (may already be user IDs in some cases)
     volunteer_ids = [
         volunteer_id for volunteer_id in project.get("volunteers") or []
         if isinstance(volunteer_id, str) and volunteer_id
     ]
-    if volunteer_ids:
-        # Batch query all volunteers at once using the relational table
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT user_id FROM volunteers WHERE id = ANY(%s)",
-                (volunteer_ids,)
-            )
-            for row in cursor.fetchall():
-                volunteer_user_id = row[0] if row else None
-                if isinstance(volunteer_user_id, str) and volunteer_user_id:
-                    participant_user_ids.add(volunteer_user_id)
+    # Volunteer IDs in the project.volunteers array are typically user IDs already
+    # Add them directly to participants
+    for volunteer_id in volunteer_ids:
+        if isinstance(volunteer_id, str) and volunteer_id:
+            participant_user_ids.add(volunteer_id)
 
     approved_project_ids = {project_id}
     parent_project_id = project.get("parentProjectId")
@@ -2284,16 +2278,6 @@ DEMO_ACCOUNTS = [
         "role": "partner",
         "name": "Kabankalan LGU",
         "phone": "09198765432",
-        "created_at": "2026-01-01T00:00:00Z",
-        "approvalStatus": "approved"
-    },
-    {
-        "id": "user-partnerships-1780189738",
-        "email": "partnerships@pbsp.org.ph",
-        "password": "partner123",
-        "role": "partner",
-        "name": "PBSP",
-        "phone": "09188188678",
         "created_at": "2026-01-01T00:00:00Z",
         "approvalStatus": "approved"
     },
@@ -3840,103 +3824,113 @@ async def create_message(payload: MessagePayload) -> dict[str, Any]:
 async def create_project_group_message(
     project_id: str, payload: ProjectGroupMessagePayload
 ) -> dict[str, Any]:
-    ensure_project_group_message_storage()
-    attachments = payload.attachments or []
-    message_kind = str(payload.kind or "message").strip() or "message"
-    if message_kind not in {"message", "need-post", "need-response", "scope-proposal"}:
-        raise HTTPException(status_code=400, detail="Unsupported project group message type.")
-    from psycopg.rows import dict_row
+    try:
+        ensure_project_group_message_storage()
+        attachments = payload.attachments or []
+        message_kind = str(payload.kind or "message").strip() or "message"
+        if message_kind not in {"message", "need-post", "need-response", "scope-proposal"}:
+            raise HTTPException(status_code=400, detail="Unsupported project group message type.")
+        from psycopg.rows import dict_row
 
-    if payload.projectId != project_id:
-        raise HTTPException(status_code=400, detail="Project message payload does not match route.")
+        if payload.projectId != project_id:
+            raise HTTPException(status_code=400, detail="Project message payload does not match route.")
 
-    with get_connection() as connection:
-        _assert_project_group_chat_access(connection, project_id, payload.senderId)
-        sender_user = _postgres_get_hot_item_by_id(connection, "users", payload.senderId)
-        sender_role = str(sender_user.get("role") or "") if sender_user else ""
-        if message_kind == "need-post":
-            if sender_role not in {"admin", "partner", "volunteer"}:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Only joined project participants can post structured needs in group chats.",
-                )
-            if payload.needPost is None:
+        with get_connection() as connection:
+            _assert_project_group_chat_access(connection, project_id, payload.senderId)
+            sender_user = _postgres_get_hot_item_by_id(connection, "users", payload.senderId)
+            sender_role = str(sender_user.get("role") or "") if sender_user else ""
+            if message_kind == "need-post":
+                if sender_role not in {"admin", "partner", "volunteer"}:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Only joined project participants can post structured needs in group chats.",
+                    )
+                if payload.needPost is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="A structured need post is required for need-post messages.",
+                    )
+            if message_kind == "need-response":
+                if not str(payload.responseToMessageId or "").strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="A linked need is required for need responses.",
+                    )
+                if not str(payload.responseAction or "").strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="A response action is required for need responses.",
+                    )
+            if message_kind == "scope-proposal" and payload.scopeProposal is None:
                 raise HTTPException(
                     status_code=400,
-                    detail="A structured need post is required for need-post messages.",
+                    detail="A structured scope proposal is required for scope-proposal messages.",
                 )
-        if message_kind == "need-response":
-            if not str(payload.responseToMessageId or "").strip():
-                raise HTTPException(
-                    status_code=400,
-                    detail="A linked need is required for need responses.",
+            if _get_user_by_id(payload.senderId, connection) is None:
+                raise HTTPException(status_code=404, detail="Sender not found.")
+            with connection.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    insert into project_group_messages (
+                      id,
+                      project_id,
+                      sender_id,
+                      content,
+                      timestamp,
+                      kind,
+                      need_post,
+                      scope_proposal,
+                      response_to_message_id,
+                      response_action,
+                      response_to_title,
+                      attachments
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    returning
+                      id as project_group_messages_id,
+                      project_id,
+                      sender_id,
+                      content,
+                      timestamp,
+                      kind,
+                      need_post,
+                      scope_proposal,
+                      response_to_message_id,
+                      response_action,
+                      response_to_title,
+                      attachments
+                    """,
+                    (
+                        payload.id,
+                        project_id,
+                        payload.senderId,
+                        payload.content,
+                        payload.timestamp,
+                        message_kind,
+                        json.dumps(payload.needPost) if payload.needPost is not None else None,
+                        json.dumps(payload.scopeProposal) if payload.scopeProposal is not None else None,
+                        payload.responseToMessageId,
+                        payload.responseAction,
+                        payload.responseToTitle,
+                        json.dumps(attachments),
+                    ),
                 )
-            if not str(payload.responseAction or "").strip():
-                raise HTTPException(
-                    status_code=400,
-                    detail="A response action is required for need responses.",
-                )
-        if message_kind == "scope-proposal" and payload.scopeProposal is None:
-            raise HTTPException(
-                status_code=400,
-                detail="A structured scope proposal is required for scope-proposal messages.",
-            )
-        if _get_user_by_id(payload.senderId, connection) is None:
-            raise HTTPException(status_code=404, detail="Sender not found.")
-        with connection.cursor(row_factory=dict_row) as cursor:
-            cursor.execute(
-                """
-                insert into project_group_messages (
-                  id,
-                  project_id,
-                  sender_id,
-                  content,
-                  timestamp,
-                  kind,
-                  need_post,
-                  scope_proposal,
-                  response_to_message_id,
-                  response_action,
-                  response_to_title,
-                  attachments
-                )
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                returning
-                  id as project_group_messages_id,
-                  project_id,
-                  sender_id,
-                  content,
-                  timestamp,
-                  kind,
-                  need_post,
-                  scope_proposal,
-                  response_to_message_id,
-                  response_action,
-                  response_to_title,
-                  attachments
-                """,
-                (
-                    payload.id,
-                    project_id,
-                    payload.senderId,
-                    payload.content,
-                    payload.timestamp,
-                    message_kind,
-                    json.dumps(payload.needPost) if payload.needPost is not None else None,
-                    json.dumps(payload.scopeProposal) if payload.scopeProposal is not None else None,
-                    payload.responseToMessageId,
-                    payload.responseAction,
-                    payload.responseToTitle,
-                    json.dumps(attachments),
-                ),
-            )
-            row = cursor.fetchone()
-        connection.commit()
+                row = cursor.fetchone()
+                if row is None:
+                    raise HTTPException(status_code=500, detail="Failed to create message - no row returned from insert.")
+            connection.commit()
 
-    _invalidate_collection_cache(["projectGroupMessages"])
-    message = serialize_project_group_message_row(row)
-    await connection_manager.broadcast_project_group_message_event(project_id, message)
-    return message
+        _invalidate_collection_cache(["projectGroupMessages"])
+        message = serialize_project_group_message_row(row)
+        await connection_manager.broadcast_project_group_message_event(project_id, message)
+        return message
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = f"Error creating project group message: {str(e)}"
+        print(error_msg)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @app.delete("/projects/{project_id}/group-messages")

@@ -189,10 +189,6 @@ export default function PartnerProgramManagementScreen() {
         const application = applicationByModule.get(card.module);
         const status = application?.status;
         const proposalProjectId = card.id;
-        const isApproved = status === 'Approved';
-        const isPending = status === 'Pending';
-        const isRejected = status === 'Rejected';
-        const badgeLabel = isApproved ? 'Approved' : isPending ? 'Pending' : isRejected ? 'Rejected' : 'Open';
         const buttonLabel = application ? 'Submit Another Proposal' : 'Submit Project Proposal';
 
         return (
@@ -205,10 +201,6 @@ export default function PartnerProgramManagementScreen() {
               <View style={styles.programCopy}>
                 <Text style={styles.programTitle}>{card.title}</Text>
                 <Text style={styles.programDescription}>{card.description}</Text>
-              </View>
-
-              <View style={[styles.statusPill, { backgroundColor: card.accent }]}>
-                <Text style={styles.statusPillText}>{badgeLabel}</Text>
               </View>
             </View>
 

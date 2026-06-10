@@ -1372,13 +1372,15 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
         await saveProjectGroupMessage(fullMsg);
 
-        setMessages(curr => [...curr, fullMsg]);
+        // Don't add optimistically - let WebSocket broadcast handle it to avoid duplicates
 
       }
 
     } catch (e) {
 
-      Alert.alert('Error', 'Failed to send proposal card');
+      const errorMsg = e instanceof Error ? e.message : 'Failed to send proposal card';
+
+      Alert.alert('Error', `Failed to send proposal card: ${errorMsg}`);
 
     } finally {
 
@@ -1548,6 +1550,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
 
+  const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+
   const handleOpenProposalAttachment = async (uri: string, attachmentIndex: number) => {
 
     const normalizedUri = String(uri || '').trim();
@@ -1558,33 +1562,31 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     }
 
-
+    // Check if it's an image
+    const isImage = isImageMediaUri(normalizedUri);
 
     try {
 
-      if (Platform.OS === 'web' && typeof document !== 'undefined') {
-
-        const link = document.createElement('a');
-
-        link.href = normalizedUri;
-
-        link.target = '_blank';
-
-        link.rel = 'noopener noreferrer';
-
-        link.download = getAttachmentName(normalizedUri, attachmentIndex);
-
-        document.body.appendChild(link);
-
-        link.click();
-
-        document.body.removeChild(link);
-
+      if (Platform.OS === 'web') {
+        if (isImage) {
+          // For images, show in preview modal
+          setPreviewImageUri(normalizedUri);
+          return;
+        }
+        
+        // For non-images, download as before
+        if (typeof document !== 'undefined') {
+          const link = document.createElement('a');
+          link.href = normalizedUri;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.download = getAttachmentName(normalizedUri, attachmentIndex);
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
         return;
-
       }
-
-
 
       await Linking.openURL(normalizedUri);
 
@@ -1876,7 +1878,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
         await saveProjectGroupMessage(fullMsg);
 
-        setMessages(curr => [...curr, fullMsg]);
+        // Don't add optimistically - let WebSocket broadcast handle it to avoid duplicates
 
       }
 
@@ -1886,7 +1888,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     } catch (e) {
 
-      Alert.alert('Error', 'Failed to send message');
+      const errorMsg = e instanceof Error ? e.message : 'Failed to send message';
+
+      Alert.alert('Error', `Failed to send message: ${errorMsg}`);
 
     } finally {
 
@@ -1998,6 +2002,15 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
     console.log('Notes:', notes);
     console.log('User ID:', user?.id);
 
+    // Check if this proposal has already been reviewed
+    if (app.status !== 'Pending') {
+      Alert.alert(
+        'Already Reviewed',
+        `This proposal has already been ${app.status.toLowerCase()}. Please refresh to see the latest status.`
+      );
+      return;
+    }
+
     const previousProposalChats = proposalChats;
 
     const previousSelectedProposalApplication = selectedProposalApplication;
@@ -2027,6 +2040,25 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
               }
             : item
         )
+      );
+      
+      // Update messages that contain this proposal to reflect new status
+      setMessages(current =>
+        current.map(msg => {
+          if (msg.content?.startsWith(PROPOSAL_PREFIX)) {
+            try {
+              const msgApp = JSON.parse(msg.content.replace(PROPOSAL_PREFIX, ''));
+              if (msgApp.id === reviewedApplication.id) {
+                // Update the proposal JSON in the message content
+                const updatedApp = { ...msgApp, status: reviewedApplication.status };
+                return { ...msg, content: PROPOSAL_PREFIX + JSON.stringify(updatedApp) };
+              }
+            } catch (e) {
+              // Invalid JSON, skip
+            }
+          }
+          return msg;
+        })
       );
 
       setReviewNotice(
@@ -2836,16 +2868,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
               <View style={styles.formGroup}>
-
-                <Text style={styles.formLabel}>Volunteers Needed</Text>
-
-                <TextInput style={styles.formInput} placeholder="Number of volunteers" keyboardType="numeric" value={proposalForm.proposedVolunteersNeeded} onChangeText={t => setProposalForm(f => ({ ...f, proposedVolunteersNeeded: t }))} />
-
-              </View>
-
-
-
-              <View style={styles.formGroup}>
                 <Text style={styles.formLabel}>Proposal Photo</Text>
                 <TouchableOpacity style={styles.photoUploadButton} onPress={handlePickProposalPhoto}>
                   <MaterialIcons name="photo-camera" size={18} color="#ffffff" />
@@ -3179,11 +3201,11 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                             >
 
-                              <MaterialIcons name="download" size={18} color="#166534" />
+                              <MaterialIcons name={isImageAttachment ? "visibility" : "download"} size={18} color="#166534" />
 
                               <Text style={styles.attachmentDownloadButtonText}>
 
-                                {isImageAttachment ? 'Open or Download Photo' : 'Open or Download File'}
+                                {isImageAttachment ? 'View Photo' : 'Open or Download File'}
 
                               </Text>
 
@@ -3597,7 +3619,13 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                 const isApproved = application.status === 'Approved';
 
-
+                // Debug logging
+                console.log('[PROPOSAL CARD DEBUG]', {
+                  applicationId: application.id,
+                  applicationStatus: application.status,
+                  proposedTitle: data.proposedTitle,
+                  isApproved
+                });
 
                 return (
 
@@ -3629,7 +3657,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                           <Text style={styles.propCardTitle} numberOfLines={2}>{data.proposedTitle}</Text>
 
-                          <Text style={styles.propCardSubtitle} numberOfLines={1}>Proposal ΓÇó {data.status}</Text>
+                          <Text style={styles.propCardSubtitle} numberOfLines={1}>Proposal ΓÇó {application.status}</Text>
 
                         </View>
 
@@ -4090,6 +4118,11 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         const pd = activeProposalCardData;
         const proposalDetails = pd.proposalDetails || {};
         
+        // Find the matching application from proposalChats FIRST (before using it)
+        const matchedApp = proposalChats.find(
+          item => item.application.id === pd.applicationId || item.application.id === pd.id
+        )?.application || null;
+        
         // Handle both nested and flat formats
         const extractedData = {
           proposedTitle: proposalDetails.proposedTitle || pd.proposedTitle || 'Project Proposal',
@@ -4104,17 +4137,16 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
           programModule: proposalDetails.requestedProgramModule || pd.programModule || pd.requestedProgramModule,
         };
         
-        const pdStatus: string = pd.status || 'Pending';
+        const pdStatus: string = pd.status || matchedApp?.status || 'Pending';
         const pdApproved = pdStatus === 'Approved';
         const pdRejected = pdStatus === 'Rejected';
         const pdPending = pdStatus === 'Pending';
         const pdStatusColor = pdApproved ? '#166534' : pdRejected ? '#dc2626' : '#d97706';
         const pdStatusBg = pdApproved ? '#dcfce7' : pdRejected ? '#fee2e2' : '#fef9c3';
-
-        // Find the matching application from proposalChats or allPartnerApplications
-        const matchedApp = proposalChats.find(
-          item => item.application.id === pd.applicationId || item.application.id === pd.id
-        )?.application || null;
+        
+        // Double-check: use matchedApp status if available (most up-to-date)
+        const actualStatus = matchedApp?.status || pdStatus;
+        const isActuallyPending = actualStatus === 'Pending';
 
         return (
           <View style={styles.modalOverlay}>
@@ -4248,7 +4280,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
               </ScrollView>
 
               {/* Admin actions — only for pending proposals where we have the application */}
-              {user?.role === 'admin' && pdPending && matchedApp ? (
+              {user?.role === 'admin' && isActuallyPending && matchedApp ? (
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
                   <TouchableOpacity
                     style={[styles.actionBtn, { flex: 1, backgroundColor: '#f3f4f6' }]}
@@ -4582,6 +4614,50 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
               )}
 
             </ScrollView>
+
+          </View>
+
+        </View>
+
+      </Modal>
+
+      <Modal
+
+        visible={Boolean(previewImageUri)}
+
+        transparent
+
+        animationType="fade"
+
+        onRequestClose={() => setPreviewImageUri(null)}
+
+      >
+
+        <View style={styles.imagePreviewBackdrop}>
+
+          <View style={styles.imagePreviewCard}>
+
+            <View style={styles.imagePreviewHeader}>
+
+              <Text style={styles.imagePreviewTitle}>Preview Photo</Text>
+
+              <TouchableOpacity onPress={() => setPreviewImageUri(null)} style={styles.imagePreviewClose}>
+
+                <MaterialIcons name="close" size={20} color="#0f172a" />
+
+              </TouchableOpacity>
+
+            </View>
+
+            <Image
+
+              source={{ uri: previewImageUri || '' }}
+
+              style={styles.imagePreviewImage}
+
+              resizeMode="contain"
+
+            />
 
           </View>
 
@@ -5416,6 +5492,78 @@ const styles = StyleSheet.create({
     color: '#64748b',
 
     textAlign: 'center',
+
+  },
+
+  
+
+  imagePreviewBackdrop: {
+
+    flex: 1,
+
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+
+    justifyContent: 'center',
+
+    alignItems: 'center',
+
+    padding: 20,
+
+  },
+
+  imagePreviewCard: {
+
+    width: '100%',
+
+    maxWidth: 720,
+
+    backgroundColor: '#fff',
+
+    borderRadius: 20,
+
+    overflow: 'hidden',
+
+  },
+
+  imagePreviewHeader: {
+
+    flexDirection: 'row',
+
+    alignItems: 'center',
+
+    justifyContent: 'space-between',
+
+    padding: 16,
+
+    borderBottomWidth: 1,
+
+    borderBottomColor: '#e2e8f0',
+
+  },
+
+  imagePreviewTitle: {
+
+    fontSize: 16,
+
+    fontWeight: '800',
+
+    color: '#0f172a',
+
+  },
+
+  imagePreviewClose: {
+
+    padding: 8,
+
+  },
+
+  imagePreviewImage: {
+
+    width: '100%',
+
+    height: 420,
+
+    backgroundColor: '#f8fafc',
 
   },
 

@@ -32,6 +32,54 @@ import { getProjectDisplayStatus } from '../utils/projectStatus';
 import VolunteerImpactMap from '../components/VolunteerImpactMap';
 import { getRequestErrorMessage } from '../utils/requestErrors';
 
+// Helper function to get parent or grandparent program name
+function getProjectProgramLabel(project: Project, allProjects: Project[]): string {
+  // Check parent project and return its title
+  if (project.parentProjectId) {
+    const parent = allProjects.find(p => p.id === project.parentProjectId);
+    if (parent && parent.title) {
+      return parent.title;
+    }
+  }
+
+  // Check program_id field (alternative parent reference)
+  const programId = (project as any).program_id;
+  if (programId) {
+    const programByProgramId = allProjects.find(p => p.id === programId);
+    if (programByProgramId && programByProgramId.title) {
+      return programByProgramId.title;
+    }
+  }
+
+  // For standalone projects/events without parent, try to find matching program by category
+  const category = String(project.category || project.programModule || '').trim();
+  if (category) {
+    // Look for a program that matches this category
+    const matchingProgram = allProjects.find(p => {
+      const pTitle = String(p.title || '').toLowerCase();
+      const pCategory = String(p.category || p.programModule || '').toLowerCase();
+      const catLower = category.toLowerCase();
+      
+      // Check if this is a program (not event, no parent)
+      if (p.isEvent || p.parentProjectId) {
+        return false;
+      }
+      
+      // Match by category or title containing the category
+      return pCategory === catLower || pTitle.includes(catLower);
+    });
+    
+    if (matchingProgram && matchingProgram.title) {
+      return matchingProgram.title;
+    }
+    
+    // If no matching program found, return the category itself
+    return category;
+  }
+
+  return 'General';
+}
+
 function formatShortDate(value?: string) {
   if (!value) {
     return 'TBD';
@@ -646,20 +694,41 @@ export default function DashboardScreen({ navigation }: any) {
 
         <View style={styles.calendarCard}>
           <View style={styles.upcomingPane}>
-            <Text style={styles.upcomingTitle}>Upcoming Projects</Text>
+            <Text style={styles.upcomingTitle}>Upcoming Activities</Text>
             {upcomingProjects.length ? (
-              upcomingProjects.map(project => (
-                <TouchableOpacity
-                  key={project.id}
-                  style={styles.upcomingRow}
-                  onPress={() => openProjects(project.id)}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.upcomingName} numberOfLines={1}>{project.title}</Text>
-                  <Text style={styles.upcomingCategory} numberOfLines={1}>{project.category}</Text>
-                  <Text style={styles.upcomingDate}>{formatShortDate(project.startDate)}</Text>
-                </TouchableOpacity>
-              ))
+              upcomingProjects.map(project => {
+                const programLabel = getProjectProgramLabel(project, projectsData);
+                
+                // Enhanced debug logging
+                const parent = project.parentProjectId 
+                  ? projectsData.find(p => p.id === project.parentProjectId)
+                  : null;
+                
+                console.log('[UPCOMING ACTIVITIES]', {
+                  title: project.title,
+                  category: project.category,
+                  programModule: project.programModule,
+                  parentProjectId: project.parentProjectId,
+                  program_id: (project as any).program_id,
+                  parentTitle: parent?.title,
+                  parentCategory: parent?.category,
+                  parentProgramModule: parent?.programModule,
+                  computedLabel: programLabel
+                });
+                
+                return (
+                  <TouchableOpacity
+                    key={project.id}
+                    style={styles.upcomingRow}
+                    onPress={() => openProjects(project.id)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.upcomingName} numberOfLines={1}>{project.title}</Text>
+                    <Text style={styles.upcomingCategory} numberOfLines={1}>{programLabel}</Text>
+                    <Text style={styles.upcomingDate}>{formatShortDate(project.startDate)}</Text>
+                  </TouchableOpacity>
+                );
+              })
             ) : (
               <Text style={styles.upcomingEmpty}>No upcoming projects yet.</Text>
             )}

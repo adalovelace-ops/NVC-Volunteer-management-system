@@ -87,6 +87,7 @@ export default function ProfileScreen() {
   const [showSkillsModal, setShowSkillsModal] = useState(false);
   const [isBusyDraft, setIsBusyDraft] = useState(false);
   const [profilePhotoDraft, setProfilePhotoDraft] = useState('');
+  const [photoTimestamp, setPhotoTimestamp] = useState(Date.now());
 
   // Loads the volunteer profile plus recognition details for volunteer accounts.
   const loadVolunteerProfile = useCallback(async () => {
@@ -220,6 +221,12 @@ export default function ProfileScreen() {
     populateDrafts();
   }, [populateDrafts]);
 
+  // Update photo timestamp when profile photo changes to bust cache
+  useEffect(() => {
+    console.log('[ProfileScreen] Profile photo changed, updating timestamp for cache bust');
+    setPhotoTimestamp(Date.now());
+  }, [user?.profilePhoto]);
+
   // Confirms logout before clearing the signed-in session.
   const handleLogout = () => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -296,9 +303,14 @@ export default function ProfileScreen() {
 
   // Waits for updated credentials to be readable from shared storage before closing save flow.
   const waitForCredentialSync = async (identifier: string, password: string, userId: string) => {
+    console.log('[ProfileScreen] Waiting for credential sync');
+    
     for (let attempt = 0; attempt < SAVE_SYNC_RETRY_COUNT; attempt += 1) {
       const syncedUser = await getUserByEmailOrPhone(identifier);
+      console.log(`[ProfileScreen] Sync attempt ${attempt + 1}, found user:`, !!syncedUser);
+      
       if (syncedUser && syncedUser.id === userId && syncedUser.password === password) {
+        console.log('[ProfileScreen] Credentials synced successfully!');
         return syncedUser;
       }
 
@@ -307,18 +319,24 @@ export default function ProfileScreen() {
       }
     }
 
-    throw new Error('Your new login details did not sync yet. Please try saving again.');
+    console.error('[ProfileScreen] Sync timeout - credentials did not sync');
+    throw new Error('Your profile updates did not sync yet. Please try saving again.');
   };
 
   // Saves the edited user and volunteer profile data.
   const handleSaveProfile = async () => {
+    console.log('[ProfileScreen] handleSaveProfile called');
+    
     if (!user) {
+      console.log('[ProfileScreen] No user, aborting save');
       return;
     }
 
     const normalizedName = nameDraft.trim();
     const normalizedEmail = emailDraft.trim().toLowerCase();
     const normalizedPhone = phoneDraft.trim();
+    
+    console.log('[ProfileScreen] Saving profile, photo draft:', profilePhotoDraft?.substring(0, 50));
     
     // Use new password if provided, otherwise keep current password
     let normalizedPassword = passwordDraft.trim();
@@ -387,6 +405,10 @@ export default function ProfileScreen() {
       };
 
       await saveUser(updatedUser);
+      console.log('[ProfileScreen] User saved with new profile photo');
+      
+      // Update context immediately with the saved user
+      await updateUserProfile(updatedUser);
 
       if (user.role === 'volunteer') {
         const updatedVolunteerProfile: Volunteer = {
@@ -437,13 +459,12 @@ export default function ProfileScreen() {
       }
 
       const loginIdentifier = normalizedEmail || normalizedPhone;
-      const syncedUser = await waitForCredentialSync(
+      await waitForCredentialSync(
         loginIdentifier,
         normalizedPassword,
         user.id
       );
 
-      await updateUserProfile(syncedUser);
       closeEditModal(false);
       
       const changedItems = [];
@@ -460,6 +481,7 @@ export default function ProfileScreen() {
         `Profile updated successfully.${changesText} Use ${loginIdentifier} to log in.`
       );
     } catch (error) {
+      console.error('[ProfileScreen] Save failed:', error);
       Alert.alert(
         getRequestErrorTitle(error),
         getRequestErrorMessage(error, 'Failed to update profile.')
@@ -480,6 +502,10 @@ export default function ProfileScreen() {
   const primaryPartnerProfile = partnerProfiles[0] || null;
   const profilePhotoUri = isImageMediaUri(user?.profilePhoto) ? user?.profilePhoto : null;
   const draftProfilePhotoUri = isImageMediaUri(profilePhotoDraft) ? profilePhotoDraft : null;
+  
+  // Use timestamp for cache busting - forces re-render when photo changes
+  const photoKey = profilePhotoUri ? `photo-${photoTimestamp}` : 'no-photo';
+  const draftPhotoKey = draftProfilePhotoUri ? `draft-${draftProfilePhotoUri.substring(0, 50)}` : 'no-draft-photo';
   const joinedEventProjects = projects.filter(project => {
     if (!project.isEvent) return false;
     
@@ -597,7 +623,11 @@ export default function ProfileScreen() {
           <View style={styles.profileHeroTop}>
             <View style={styles.profileHeroIdentity}>
               {profilePhotoUri ? (
-                <Image source={{ uri: profilePhotoUri }} style={styles.avatarImage as ImageStyle} />
+                <Image 
+                  key={photoKey}
+                  source={{ uri: profilePhotoUri }} 
+                  style={styles.avatarImage as ImageStyle} 
+                />
               ) : (
                 <View style={styles.avatar}>
                   <Text style={styles.avatarText}>{initials}</Text>
@@ -879,7 +909,11 @@ export default function ProfileScreen() {
 
             <View style={styles.photoSection}>
               {draftProfilePhotoUri ? (
-                <Image source={{ uri: draftProfilePhotoUri }} style={styles.modalAvatarImage as ImageStyle} />
+                <Image 
+                  key={draftPhotoKey}
+                  source={{ uri: draftProfilePhotoUri }} 
+                  style={styles.modalAvatarImage as ImageStyle} 
+                />
               ) : (
                 <View style={styles.modalAvatarFallback}>
                   <Text style={styles.modalAvatarFallbackText}>{initials}</Text>
@@ -980,27 +1014,6 @@ export default function ProfileScreen() {
                     ]}
                   >
                     {userType}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.fieldLabel}>Pillars of Interest</Text>
-            <View style={styles.optionRow}>
-              {PILLAR_OPTIONS.map(pillar => (
-                <TouchableOpacity
-                  key={pillar}
-                  style={[styles.optionChip, pillarsDraft.includes(pillar) && styles.optionChipActive]}
-                  onPress={() => togglePillar(pillar)}
-                  disabled={saveLoading}
-                >
-                  <Text
-                    style={[
-                      styles.optionChipText,
-                      pillarsDraft.includes(pillar) && styles.optionChipTextActive,
-                    ]}
-                  >
-                    {pillar}
                   </Text>
                 </TouchableOpacity>
               ))}

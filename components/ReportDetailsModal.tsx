@@ -181,12 +181,6 @@ export default function ReportDetailsModal({
                     <Text style={styles.metadataValue}>{report.projectTitle}</Text>
                   </View>
                 )}
-                {report.category && (
-                  <View style={[styles.metadataItem, isWideLayout && styles.metadataItemWide]}>
-                    <Text style={styles.metadataLabel}>Category</Text>
-                    <Text style={styles.metadataValue}>{report.category}</Text>
-                  </View>
-                )}
               </View>
             </View>
 
@@ -292,7 +286,11 @@ export default function ReportDetailsModal({
               </View>
                 <View style={[styles.metricsDisplay, isWideLayout && styles.metricsDisplayWide]}>
                 {Object.entries(report.metrics)
-                  .filter(([, value]) => value !== undefined && value !== null && value !== '')
+                  .filter(([key, value]) => {
+                    // Filter out volunteerHours metric and empty values
+                    if (key === 'volunteerHours') return false;
+                    return value !== undefined && value !== null && value !== '';
+                  })
                   .map(([key, value]) => (
                     <View key={key} style={styles.metricCard}>
                       <Text style={styles.metricCardLabel}>{formatMetricKey(key)}</Text>
@@ -369,16 +367,16 @@ export default function ReportDetailsModal({
         onRequestClose={closeAttachmentPreview}
       >
         <View style={styles.attachmentPreviewBackdrop}>
-          <View style={styles.attachmentPreviewCard}>
+          <View style={styles.attachmentPreviewModalCard}>
             <View style={styles.attachmentPreviewHeader}>
-              <Text style={styles.attachmentPreviewTitle}>Preview Photo</Text>
+              <Text style={styles.attachmentPreviewModalTitle}>Preview Photo</Text>
               <TouchableOpacity onPress={closeAttachmentPreview} style={styles.attachmentPreviewClose}>
                 <MaterialIcons name="close" size={20} color="#0f172a" />
               </TouchableOpacity>
             </View>
             <Image
               source={{ uri: previewAttachmentUri || '' }}
-              style={styles.attachmentPreviewImage}
+              style={styles.attachmentPreviewModalImage}
               resizeMode="contain"
             />
           </View>
@@ -390,7 +388,11 @@ export default function ReportDetailsModal({
 
 function buildReportDownloadContent(report: SubmittedReport): string {
   const metricLines = Object.entries(report.metrics)
-    .filter(([, value]) => value !== undefined && value !== null)
+    .filter(([key, value]) => {
+      // Filter out volunteerHours and empty values
+      if (key === 'volunteerHours') return false;
+      return value !== undefined && value !== null;
+    })
     .map(([key, value]) => `${formatMetricKey(key)}: ${value}`);
   const feedbackLines = [
     report.collaborationFeedback
@@ -410,7 +412,6 @@ function buildReportDownloadContent(report: SubmittedReport): string {
     report.projectTitle
       ? `${report.projectKind === 'event' ? 'Event' : 'Project'}: ${report.projectTitle}`
       : null,
-    report.category ? `Category: ${report.category}` : null,
     '',
     'Description',
     report.description || 'No description provided.',
@@ -811,7 +812,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
-  attachmentPreviewCard: {
+  attachmentPreviewModalCard: {
     width: '100%',
     maxWidth: 720,
     backgroundColor: '#fff',
@@ -826,7 +827,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
   },
-  attachmentPreviewTitle: {
+  attachmentPreviewModalTitle: {
     fontSize: 16,
     fontWeight: '800',
     color: '#0f172a',
@@ -834,7 +835,7 @@ const styles = StyleSheet.create({
   attachmentPreviewClose: {
     padding: 8,
   },
-  attachmentPreviewImage: {
+  attachmentPreviewModalImage: {
     width: '100%',
     height: 420,
     backgroundColor: '#f8fafc',

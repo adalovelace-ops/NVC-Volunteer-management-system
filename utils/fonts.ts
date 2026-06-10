@@ -10,6 +10,12 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
  * Handles both mobile (via expo-font) and web (via Google Fonts)
  */
 export function useNunitoFont() {
+  // On web, fonts are already injected via Google Fonts in App.tsx
+  // Skip the font loading hook to prevent blocking the UI
+  if (Platform.OS === 'web') {
+    return true;
+  }
+
   const [fontsLoaded] = useFonts({
     'Nunito-Regular': require('../assets/fonts/Nunito-Regular.ttf'),
     'Nunito-Bold': require('../assets/fonts/Nunito-Bold.ttf'),

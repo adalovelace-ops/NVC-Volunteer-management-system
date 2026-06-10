@@ -98,17 +98,6 @@ def build_demo_app_storage() -> dict[str, Any]:
             },
             {
                 "id": "partner-user-2",
-                "email": "partnerships@pbsp.org.ph",
-                "password": "partner123",
-                "role": "partner",
-                "name": "PBSP Account",
-                "phone": "09188188678",
-                "userType": "Adult",
-                "pillarsOfInterest": ["Education", "Livelihood", "Nutrition"],
-                "createdAt": now_iso,
-            },
-            {
-                "id": "partner-user-3",
                 "email": "partnerships@jollibeefoundation.org",
                 "password": "partner123",
                 "role": "partner",
@@ -120,7 +109,23 @@ def build_demo_app_storage() -> dict[str, Any]:
             },
         ],
         # All other data removed - only user accounts are seeded
-        "partners": [],
+        "partners": [
+            {
+                "id": "partner-1780189738",
+                "ownerUserId": "partner-user-1",
+                "name": "Kabankalan LGU",
+                "sectorType": "Institution",
+                "dswdAccreditationNo": "LGU-2026-001",
+                "secRegistrationNo": "LGU-KABANKALAN-001",
+                "advocacyFocus": ["Nutrition", "Livelihood"],
+                "contactEmail": "partner@livelihoods.org",
+                "contactPhone": "09198765432",
+                "address": "Kabankalan City Hall, Kabankalan City, Negros Occidental",
+                "status": "Approved",
+                "createdAt": now_iso,
+                "updatedAt": now_iso,
+            }
+        ],
         "programs": [],
         "projects": [],
         "events": [],
@@ -325,6 +330,16 @@ def _normalize_demo_project_examples(connection: Any, demo_storage: dict[str, An
             "project-sample-livelihood-event-1",
             "project-sample-education-event-1",
             "project-sample-education-event-2",
+        }
+    )
+
+    # Remove PBSP partner records
+    _upsert_demo_collection_items(
+        connection,
+        "partners",
+        [],
+        remove_ids={
+            "partner-1780188678",  # PBSP partner organization ID
         }
     )
 

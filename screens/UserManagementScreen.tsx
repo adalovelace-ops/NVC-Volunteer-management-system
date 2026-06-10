@@ -66,6 +66,7 @@ export default function UserManagementScreen() {
     | { type: 'user'; record: User }
     | null
   >(null);
+  const [viewImageUrl, setViewImageUrl] = useState<string | null>(null);
 
   // Loads and sorts all user accounts for the admin management table.
   const loadUsers = useCallback(async () => {
@@ -517,11 +518,6 @@ export default function UserManagementScreen() {
             <Text style={styles.userMeta}>
               Created {format(new Date(item.createdAt), 'MMM dd, yyyy hh:mm a')}
             </Text>
-            <Text style={styles.userMeta}>
-              {(item.pillarsOfInterest || []).length > 0
-                ? item.pillarsOfInterest?.join(', ')
-                : 'No pillar preferences'}
-            </Text>
             {item.role === 'partner' ? (
               linkedPartners.length > 0 ? (
                 linkedPartners.map(partner => (
@@ -839,27 +835,6 @@ export default function UserManagementScreen() {
                 </TouchableOpacity>
               ))}
             </View>
-
-            <Text style={styles.fieldLabel}>Pillars of Interest</Text>
-            <View style={styles.roleOptions}>
-              {(['Nutrition', 'Education', 'Livelihood'] as const).map(pillar => (
-                <TouchableOpacity
-                  key={pillar}
-                  style={[styles.roleOption, pillarsDraft.includes(pillar) && styles.roleOptionActive]}
-                  onPress={() =>
-                    setPillarsDraft(current =>
-                      current.includes(pillar)
-                        ? current.filter(item => item !== pillar)
-                        : [...current, pillar]
-                    )
-                  }
-                >
-                  <Text style={[styles.roleOptionText, pillarsDraft.includes(pillar) && styles.roleOptionTextActive]}>
-                    {pillar}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
           </View>
         </View>
       </Modal>
@@ -917,13 +892,6 @@ export default function UserManagementScreen() {
                     {renderReviewField('Phone', reviewTarget.record.phone || 'Not provided')}
                     {renderReviewField('Profile Type', reviewTarget.record.userType || 'Not provided')}
                     {renderReviewField('Approval Status', reviewTarget.record.approvalStatus || 'pending')}
-                    {renderReviewField(
-                      'Pillars of Interest',
-                      reviewTarget.record.pillarsOfInterest && reviewTarget.record.pillarsOfInterest.length > 0
-                        ? reviewTarget.record.pillarsOfInterest.join(', ')
-                        : 'No pillar preferences',
-                      { wide: true }
-                    )}
                     {renderReviewField(
                       'Submitted',
                       format(new Date(reviewTarget.record.createdAt), 'MMM dd, yyyy hh:mm a'),
@@ -994,10 +962,15 @@ export default function UserManagementScreen() {
                             'Certifications / Trainings',
                             linkedVolunteer.certificationsOrTrainings ? (
                               isImageMediaUri(linkedVolunteer.certificationsOrTrainings) ? (
-                                <Image
-                                  source={{ uri: linkedVolunteer.certificationsOrTrainings }}
-                                  style={styles.reviewCertificateImage}
-                                />
+                                <TouchableOpacity
+                                  onPress={() => setViewImageUrl(linkedVolunteer.certificationsOrTrainings)}
+                                  activeOpacity={0.8}
+                                >
+                                  <Image
+                                    source={{ uri: linkedVolunteer.certificationsOrTrainings }}
+                                    style={styles.reviewCertificateImage}
+                                  />
+                                </TouchableOpacity>
                               ) : (
                                 <Text style={styles.reviewRowValue}>{linkedVolunteer.certificationsOrTrainings}</Text>
                               )
@@ -1006,8 +979,6 @@ export default function UserManagementScreen() {
                             ),
                             { wide: true }
                           )}
-                          {renderReviewField('Hobbies and Interests', linkedVolunteer.hobbiesAndInterests || 'Not provided', { wide: true })}
-                          {renderReviewField('Special Skills', linkedVolunteer.specialSkills || 'Not provided', { wide: true })}
                           {renderReviewField('Video Briefing URL', linkedVolunteer.videoBriefingUrl || 'Not provided', { wide: true })}
                           {renderReviewField(
                             'Affiliations',
@@ -1058,6 +1029,30 @@ export default function UserManagementScreen() {
               ) : null}
             </View>
           ) : null}
+        </View>
+      </Modal>
+
+      {/* Image Viewer Modal */}
+      <Modal
+        visible={Boolean(viewImageUrl)}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setViewImageUrl(null)}
+      >
+        <View style={styles.imageViewerOverlay}>
+          <TouchableOpacity
+            style={styles.imageViewerCloseButton}
+            onPress={() => setViewImageUrl(null)}
+          >
+            <MaterialIcons name="close" size={28} color="#fff" />
+          </TouchableOpacity>
+          {viewImageUrl && (
+            <Image
+              source={{ uri: viewImageUrl }}
+              style={styles.imageViewerImage}
+              resizeMode="contain"
+            />
+          )}
         </View>
       </Modal>
     </View>
@@ -1869,5 +1864,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
+  },
+  imageViewerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerCloseButton: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    zIndex: 10,
+    padding: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderRadius: 20,
+  },
+  imageViewerImage: {
+    width: '90%',
+    height: '80%',
   },
 });

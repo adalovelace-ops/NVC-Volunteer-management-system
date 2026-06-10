@@ -77,13 +77,61 @@ if (-not $healthy) {
 # ── 4. Start Expo web (in foreground so QR code displays) ──────────────────
 Write-Host "  Starting Expo web on port 8081..."
 Write-Host ""
+
+# Start Expo in background to monitor readiness
+$expoProc = Start-Process -FilePath 'powershell.exe' `
+  -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', "Set-Location '$escapedRoot'; npx expo start --web --clear") `
+  -PassThru -WindowStyle Hidden
+
+# ── 5. Wait for Expo web to be ready, then open browsers (ONCE) ────────────
+Write-Host "  Waiting for Expo web to be ready before opening browsers..."
+
+Start-Sleep -Seconds 5  # Give Expo time to start
+
+# Wait for web to be ready (max 60 seconds)
+$webReady = $false
+$browsersOpened = $false
+for ($i = 0; $i -lt 60; $i++) {
+  try {
+    $resp = Invoke-WebRequest -Uri 'http://localhost:8081' -Method Get -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
+    if ($resp.StatusCode -eq 200 -and -not $browsersOpened) {
+      $webReady = $true
+      Write-Host "  Expo web is ready!" -ForegroundColor Green
+      Write-Host ""
+      Write-Host "  Opening browsers (1 desktop + 1 mobile view)..." -ForegroundColor Cyan
+      Write-Host "    - Desktop Web: http://localhost:8081" -ForegroundColor Gray
+      Write-Host "    - Mobile Web:  http://localhost:8081?mode=mobile" -ForegroundColor Gray
+      Write-Host ""
+      
+      # Open ONLY 1 desktop web view
+      Start-Process "http://localhost:8081"
+      Start-Sleep -Milliseconds 800
+      
+      # Open ONLY 1 mobile web view
+      Start-Process "http://localhost:8081?mode=mobile"
+      $browsersOpened = $true
+      break
+    }
+  } catch {
+    # still starting up
+  }
+  Start-Sleep -Seconds 1
+}
+
+if (-not $webReady) {
+  Write-Warning "  Expo web did not start in time. You may need to open browsers manually."
+}
+
+# Stop the background Expo process
+Stop-Process -Id $expoProc.Id -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+
+Write-Host ""
+Write-Host "  Restarting Expo in foreground for QR code display..."
 Write-Host "  Press Ctrl+C to stop the entire system."
 Write-Host ""
 
-# Save backend PID so stop script can clean it up
-Set-Content -Path (Join-Path $pidDir 'backend.pid') -Value $backendProc.Id
-
-# Run Expo directly in this terminal so QR code shows
+# Run Expo directly in this terminal so QR code shows (won't open more browsers)
 Set-Location $projectRoot
-npx expo start --web --clear
+npx expo start --web
 

@@ -80,8 +80,8 @@ const sharedStorageCacheTimestamps = new Map<string, number>();
 let mockDataInitializationPromise: Promise<void> | null = null;
 // Shared reads should fail fast enough to keep the UI responsive when the
 // backend is slow or unavailable.
-const REMOTE_STORAGE_TIMEOUT_MS = 10000; // Base timeout for requests
-const API_HEALTH_TIMEOUT_MS = 3000; // Base timeout for health checks
+const REMOTE_STORAGE_TIMEOUT_MS = 30000; // Increased for unstable connections
+const API_HEALTH_TIMEOUT_MS = 10000; // Increased for health checks
 
 // Detect mobile at runtime (not module load time) to avoid errors
 function getRequestTimeoutMs(): number {
@@ -89,7 +89,7 @@ function getRequestTimeoutMs(): number {
     if (typeof navigator !== 'undefined' && typeof navigator.userAgent === 'string') {
       const ua = navigator.userAgent.toLowerCase();
       if (/android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/.test(ua)) {
-        return 15000; // Increased timeout for mobile networks
+        return 45000; // Even longer timeout for mobile on unstable networks
       }
     }
   } catch {
@@ -100,7 +100,7 @@ function getRequestTimeoutMs(): number {
 const API_READY_RETRY_MS = 800; // Reduced from 1s
 const API_READY_MAX_ATTEMPTS = 2;
 const API_READY_CACHE_MS = 10000; // Increased from 5s to 10s
-const API_REQUEST_MAX_ATTEMPTS = 3; // Reduced from 4 to 3
+const API_REQUEST_MAX_ATTEMPTS = 5; // Increased from 3 to 5 for unstable connections
 const API_REQUEST_RETRY_BASE_MS = 800; // Reduced from 1s
 const API_REQUEST_RETRY_MAX_MS = 5000; // Reduced from 8s
 const SHARED_STORAGE_CACHE_TTL_MS = 600000; // Increased from 5m to 10m
@@ -937,10 +937,8 @@ function invalidateApiReady(): void {
 }
 
 function getApiRetryDelayMs(attempt: number): number {
-  return Math.min(
-    API_REQUEST_RETRY_BASE_MS * Math.pow(2, attempt),
-    API_REQUEST_RETRY_MAX_MS
-  );
+  // Fixed 6-second delay for unstable internet connections
+  return 6000;
 }
 
 function isRetryableApiStatus(status: number): boolean {
@@ -4080,6 +4078,28 @@ export async function reviewVolunteerRegistration(
           ? 'Volunteer registration rejected by administrator.'
           : undefined,
     });
+    
+    // Send notification message to volunteer when approved
+    if (status === 'Approved') {
+      try {
+        const adminUser = await getUser(reviewedBy);
+        const adminName = adminUser?.name || 'Admin';
+        
+        await saveMessage({
+          id: `msg-approval-${linkedUser.id}-${Date.now()}`,
+          senderId: reviewedBy,
+          recipientId: linkedUser.id,
+          content: `🎉 Congratulations! Your volunteer account has been approved by ${adminName}. You can now access all volunteer features and start contributing to our programs!`,
+          timestamp: now,
+          read: false,
+        });
+        
+        console.log(`[Notification] Sent approval notification to volunteer ${linkedUser.id}`);
+      } catch (error) {
+        console.error('[Notification] Failed to send approval notification:', error);
+        // Don't fail the approval if notification fails
+      }
+    }
   }
 
   return updatedVolunteer;

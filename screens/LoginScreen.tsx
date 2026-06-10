@@ -94,9 +94,9 @@ import {
   type PHCityMunicipality,
 } from "../utils/philippineAddressData";
 
-const BACKEND_HEALTH_TIMEOUT_MS = 12000;
-const BACKEND_HEALTH_RETRY_MS = 3000;
-const BACKEND_HEALTH_MAX_SLOW_RETRIES = 2;
+const BACKEND_HEALTH_TIMEOUT_MS = 30000;
+const BACKEND_HEALTH_RETRY_MS = 6000;
+const BACKEND_HEALTH_MAX_SLOW_RETRIES = 5;
 
 type SignupVolunteerSheetState = {
   gender: string;
@@ -1108,14 +1108,6 @@ export default function LoginScreen() {
 
     if (signupEmail.trim() && !signupEmail.includes("@")) {
       Alert.alert("Validation Error", "Please enter a valid email address.");
-      return;
-    }
-
-    if (signupRole === "volunteer" && signupPillars.length === 0) {
-      Alert.alert(
-        "Validation Error",
-        "Select at least one pillar of interest.",
-      );
       return;
     }
 

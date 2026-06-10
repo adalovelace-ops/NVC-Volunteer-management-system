@@ -1906,12 +1906,6 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
                 </View>
 
-                <View style={[styles.statusBadge, { backgroundColor: isRejected ? '#dc2626' : isApproved ? '#166534' : isPending ? '#d97706' : programCard.accent }]}>
-
-                  <Text style={styles.statusBadgeText}>{isApproved ? 'Approved' : isPending ? 'Pending' : isRejected ? 'Rejected' : 'Open'}</Text>
-
-                </View>
-
               </View>
 
               {isRejected && application?.reviewNotes ? (
@@ -2164,7 +2158,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
                   <Text style={styles.formLabel}>Target Location</Text>
 
-                  <View style={styles.addressContainer}>
+                  <View style={styles.addressFormContainer}>
 
                     <View style={styles.pickerWrap}>
 
@@ -3606,7 +3600,7 @@ const styles = StyleSheet.create({
 
   },
 
-  addressContainer: {
+  addressFormContainer: {
 
     backgroundColor: '#f8fafc',
 
@@ -3691,48 +3685,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
 
     gap: 8,
-
-  },
-
-  photoPreview: {
-
-    width: '100%',
-
-    height: 180,
-
-    borderRadius: 14,
-
-    backgroundColor: '#f1f5f9',
-
-  },
-
-  photoRemoveButton: {
-
-    marginTop: 8,
-
-    alignSelf: 'flex-end',
-
-    paddingVertical: 8,
-
-    paddingHorizontal: 12,
-
-    borderRadius: 12,
-
-    backgroundColor: '#f8fafc',
-
-    borderWidth: 1,
-
-    borderColor: '#e2e8f0',
-
-  },
-
-  photoRemoveButtonText: {
-
-    color: '#334155',
-
-    fontSize: 13,
-
-    fontWeight: '700',
 
   },
 

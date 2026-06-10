@@ -307,7 +307,7 @@ export default function ScreenBrandHeader({
             <View style={styles.notificationModalFooter}>
               <Text style={styles.notificationModalFooterText}>
                 {notifications.length > 0
-                  ? `${notifications.length} notification${notifications.length !== 1 ? 's' : ''} - Click to view`
+                  ? `${notifications.length} notification${notifications.length !== 1 ? 's' : ''}`
                   : 'No notifications'}
               </Text>
             </View>
