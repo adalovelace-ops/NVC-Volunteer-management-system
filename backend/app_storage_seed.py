@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 try:
-    from .db import get_postgres_connection
+    from .db import get_postgres_connection, load_environment
     from .field_rules import normalize_comparable_phone, normalize_email, sanitize_hot_storage_item
     from .operation_guard import (
         DEMO_SEED_UNLOCK_ENV_VAR,
@@ -22,7 +22,7 @@ try:
         LEGACY_COMPAT_STORAGE_TABLES,
     )
 except ImportError:
-    from db import get_postgres_connection
+    from db import get_postgres_connection, load_environment
     from field_rules import normalize_comparable_phone, normalize_email, sanitize_hot_storage_item
     from operation_guard import DEMO_SEED_UNLOCK_ENV_VAR, require_shared_db_unlock
     from relational_mirror import (
@@ -64,7 +64,7 @@ def build_demo_app_storage() -> dict[str, Any]:
     return {
         "users": [
             {
-                "id": "admin-1",
+                "id": "user-admin-1780189738",
                 "email": "admin@nvc.org",
                 "password": "admin123",
                 "role": "admin",
@@ -75,7 +75,7 @@ def build_demo_app_storage() -> dict[str, Any]:
                 "createdAt": now_iso,
             },
             {
-                "id": "volunteer-1",
+                "id": "user-volunteer-1780189738",
                 "email": "volunteer@example.com",
                 "password": "volunteer123",
                 "role": "volunteer",
@@ -85,51 +85,29 @@ def build_demo_app_storage() -> dict[str, Any]:
                 "pillarsOfInterest": ["Education", "Nutrition"],
                 "createdAt": now_iso,
             },
-            {
-                "id": "partner-user-1",
-                "email": "partner@livelihoods.org",
-                "password": "partner123",
-                "role": "partner",
-                "name": "Partner Org Account",
-                "phone": "09198765432",
-                "userType": "Adult",
-                "pillarsOfInterest": ["Livelihood"],
-                "createdAt": now_iso,
-            },
-            {
-                "id": "partner-user-2",
-                "email": "partnerships@jollibeefoundation.org",
-                "password": "partner123",
-                "role": "partner",
-                "name": "Jollibee Foundation Account",
-                "phone": "09186341111",
-                "userType": "Adult",
-                "pillarsOfInterest": ["Nutrition", "Livelihood"],
-                "createdAt": now_iso,
-            },
         ],
-        # All other data removed - only user accounts are seeded
-        "partners": [
+        "partners": [],
+        "volunteers": [
             {
-                "id": "partner-1780189738",
-                "ownerUserId": "partner-user-1",
-                "name": "Kabankalan LGU",
-                "sectorType": "Institution",
-                "dswdAccreditationNo": "LGU-2026-001",
-                "secRegistrationNo": "LGU-KABANKALAN-001",
-                "advocacyFocus": ["Nutrition", "Livelihood"],
-                "contactEmail": "partner@livelihoods.org",
-                "contactPhone": "09198765432",
-                "address": "Kabankalan City Hall, Kabankalan City, Negros Occidental",
-                "status": "Approved",
+                "id": "volunteer-1",
+                "userId": "user-volunteer-1780189738",
+                "name": "Volunteer Account",
+                "email": "volunteer@example.com",
+                "phone": "09123456789",
+                "availability": "Weekend",
+                "totalHoursContributed": 0.0,
+                "rating": 5.0,
+                "engagementStatus": "Active",
+                "affiliations": "None",
+                "registrationStatus": "Approved",
                 "createdAt": now_iso,
-                "updatedAt": now_iso,
+                "skills": ["Leadership", "Communication"],
+                "pastProjects": [],
             }
         ],
         "programs": [],
         "projects": [],
         "events": [],
-        "volunteers": [],
         "messages": [],
         "projectGroupMessages": [],
         "statusUpdates": [],
@@ -305,85 +283,7 @@ def _upsert_demo_collection_items(
 
 
 def _normalize_demo_project_examples(connection: Any, demo_storage: dict[str, Any]) -> None:
-    # NOTE: Demo sample projects have been disabled. Not loading any canonical projects.
-    canonical_projects: list[dict[str, Any]] = []
-    
-    # Explicitly remove sample projects if they exist
-    _upsert_demo_collection_items(
-        connection, 
-        "projects", 
-        canonical_projects,
-        remove_ids={
-            "project-sample-nutrition-program",
-            "project-sample-livelihood-program",
-            "project-sample-education-program",
-        }
-    )
-
-    # Explicitly remove sample events if they exist
-    _upsert_demo_collection_items(
-        connection,
-        "events",
-        [],
-        remove_ids={
-            "project-sample-nutrition-event-1",
-            "project-sample-livelihood-event-1",
-            "project-sample-education-event-1",
-            "project-sample-education-event-2",
-        }
-    )
-
-    # Remove PBSP partner records
-    _upsert_demo_collection_items(
-        connection,
-        "partners",
-        [],
-        remove_ids={
-            "partner-1780188678",  # PBSP partner organization ID
-        }
-    )
-
-    canonical_status_updates = [
-        item
-        for item in demo_storage.get("statusUpdates", [])
-        if isinstance(item, dict)
-        and str(item.get("id") or "").strip()
-        in {
-            "status-sample-nutrition-program",
-            "status-sample-livelihood-program",
-            "status-sample-education-program",
-        }
-    ]
-    if canonical_status_updates:
-        _upsert_demo_collection_items(connection, "statusUpdates", canonical_status_updates)
-
-    canonical_messages = [
-        item
-        for item in demo_storage.get("projectGroupMessages", [])
-        if isinstance(item, dict)
-        and str(item.get("id") or "").strip() == "message-sample-livelihood-initiation"
-    ]
-    if canonical_messages:
-        _upsert_demo_collection_items(
-            connection,
-            "projectGroupMessages",
-            canonical_messages,
-            remove_ids={"message-sample-nutrition-proposal"},
-        )
-
-    canonical_applications = [
-        item
-        for item in demo_storage.get("partnerProjectApplications", [])
-        if isinstance(item, dict)
-        and str(item.get("id") or "").strip() == "partner-application-sample-livelihood-initiation"
-    ]
-    if canonical_applications:
-        _upsert_demo_collection_items(
-            connection,
-            "partnerProjectApplications",
-            canonical_applications,
-            remove_ids={"partner-application-sample-nutrition-program"},
-        )
+    pass
 
 
 # Replaces all rows in a hot-storage collection with a normalized item list.
@@ -429,7 +329,9 @@ def ensure_postgres_hot_storage_seeded(connection: Any, demo_storage: dict[str, 
     ensure_postgres_hot_storage_tables(connection)
 
     for key in HOT_STORAGE_TABLES:
-        if not _postgres_hot_storage_needs_backfill(connection, key):
+        needs_bf = _postgres_hot_storage_needs_backfill(connection, key)
+        print(f"[SEED] Key: {key}, needs backfill: {needs_bf}")
+        if not needs_bf:
             continue
 
         source_items = _get_legacy_hot_storage_collection(connection, key)
@@ -530,6 +432,8 @@ def ensure_app_storage_seeded() -> None:
 
 # CLI entry point for seeding demo app-storage data into Postgres.
 def main() -> None:
+    load_environment()
+    os.environ["ENABLE_DEMO_SEED"] = "true"
     ensure_app_storage_seeded()
     print("App storage demo data ensured.")
 

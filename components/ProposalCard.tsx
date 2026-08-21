@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView, TextInput, Alert } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import type { PartnerProjectApplication, PartnerProjectProposalDetails } from '../models/types';
 
 interface ProposalCardProps {
@@ -11,6 +12,7 @@ interface ProposalCardProps {
   onReject?: (application: PartnerProjectApplication, notes: string) => void;
   compact?: boolean;
   isAdmin?: boolean;
+  isVolunteer?: boolean;
 }
 
 const getStatusColor = (status: string) => {
@@ -31,7 +33,8 @@ const getStatusIcon = (status: string) => {
   }
 };
 
-export default function ProposalCard({ application, projectTitle, onPress, onApprove, onReject, compact = false, isAdmin = false }: ProposalCardProps) {
+export default function ProposalCard({ application, projectTitle, onPress, onApprove, onReject, compact = false, isAdmin = false, isVolunteer = false }: ProposalCardProps) {
+  const navigation = useNavigation<any>();
   const [showModal, setShowModal] = useState(false);
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [rejectionNotes, setRejectionNotes] = useState('');
@@ -46,7 +49,7 @@ export default function ProposalCard({ application, projectTitle, onPress, onApp
     if (onPress) {
       onPress();
     } else {
-      setShowModal(true);
+      navigation.navigate('Messages', { projectId: application.projectId, proposalId: application.id });
     }
   };
 
@@ -107,7 +110,7 @@ export default function ProposalCard({ application, projectTitle, onPress, onApp
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.modalTitle}>Proposal Details</Text>
+                <Text style={styles.modalTitle}>{isVolunteer ? 'Task Details' : 'Proposal Details'}</Text>
                 <Text style={styles.modalSubtitle}>{application.partnerName}</Text>
               </View>
               <TouchableOpacity onPress={() => { setShowModal(false); setShowRejectInput(false); setRejectionNotes(''); }} style={styles.closeButton}>

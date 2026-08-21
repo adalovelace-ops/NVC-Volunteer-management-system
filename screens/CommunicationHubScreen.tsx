@@ -243,7 +243,7 @@ type ProposalChatItem = {
 type ChatMessage = Message | ProjectGroupMessage;
 
 function getProposalReviewCardKey(message: ChatMessage): string | null {
-  if (!message.content?.startsWith(PROPOSAL_PREFIX)) {
+  if (typeof message.content !== 'string' || !message.content.startsWith(PROPOSAL_PREFIX)) {
     return null;
   }
 
@@ -301,25 +301,16 @@ function upsertChatMessage(current: ChatMessage[], incoming: ChatMessage): ChatM
 
 
 function getAttachmentName(uri: string, index: number): string {
-
-  if (uri.startsWith('data:')) {
-
-    const mimeType = uri.slice(5, uri.indexOf(';') > -1 ? uri.indexOf(';') : undefined);
-
+  const safeUri = String(uri || '').trim();
+  if (safeUri.startsWith('data:')) {
+    const mimeType = safeUri.slice(5, safeUri.indexOf(';') > -1 ? safeUri.indexOf(';') : undefined);
     const extension = mimeType.includes('/') ? mimeType.split('/').pop() : 'file';
-
     return `Attachment ${index + 1}.${extension || 'file'}`;
-
   }
 
-
-
-  const cleanUri = uri.split('?')[0];
-
+  const cleanUri = safeUri.split('?')[0];
   const fileName = cleanUri.split('/').pop();
-
   return fileName || `Attachment ${index + 1}`;
-
 }
 
 
@@ -460,7 +451,11 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     newProposalProjectId,
 
-    newProposalTitle
+    newProposalTitle,
+    
+    proposalId: requestedProposalId,
+    
+    section: requestedSection
 
   } = route?.params || {};
 
@@ -504,12 +499,12 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   const [messageText, setMessageText] = useState('');
 
-  const [pendingAttachments, setPendingAttachments] = useState<string[]>([]);
+  const pendingAttachments = useState<string[]>([]);
 
   const [searchText, setSearchText] = useState('');
 
   const [isSending, setIsSending] = useState(false);
-
+  const [isApproving, setIsApproving] = useState(false);
   const [reviewNotice, setReviewNotice] = useState<{
 
     title: string;
@@ -517,6 +512,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
     message: string;
 
     tone: 'success' | 'warning';
+
+    projectId?: string;
 
   } | null>(null);
 
@@ -581,13 +578,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   }, [view, isWide, navigation]);
 
   const availableSections: SidebarSection[] = isVolunteer
-
     ? ['projects', 'contacts']
-
     : isPartner
-
-    ? ['messages', 'projects']
-
+    ? ['messages', 'projects', 'proposals']
     : ['messages', 'projects', 'contacts'];
 
 
@@ -922,6 +915,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
       const convMap = new Map<string, ConversationItem>();
+      allowedDirectUsers.forEach(u => {
+        convMap.set(u.id, { user: u, unreadCount: 0 });
+      });
 
       msgs.forEach(m => {
 
@@ -929,7 +925,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
         if (!allowedDirectUserIds.has(otherId)) return;
 
-        const otherUser = others.find(u => u.id === otherId);
+        const otherUser = others.filter(u => u.id === otherId);
 
         if (!otherUser) return;
 
@@ -1047,7 +1043,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     void loadData();
 
-    return subscribeToStorageChanges(['users', 'projects', 'partnerProjectApplications', 'messages', 'projectGroupMessages'], loadData);
+    return subscribeToStorageChanges(['users', 'projects', 'partnerProjectApplications'], loadData);
 
   }, [loadData]));
 
@@ -1055,7 +1051,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   useEffect(() => {
 
-    if (user?.role !== 'admin' || activeSection !== 'proposals') {
+    if (activeSection !== 'proposals') {
 
       return undefined;
 
@@ -1073,7 +1069,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     return () => clearInterval(pollTimer);
 
-  }, [activeSection, loadData, user?.role]);
+  }, [activeSection, loadData]);
 
 
 
@@ -1266,6 +1262,22 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   }, [conversationUserId, loading, navigation, allUsers]);
 
+  // Handle requested proposal navigation
+  useEffect(() => {
+    if (!requestedProposalId || loading || proposalChats.length === 0) return;
+
+    const matchedChat = proposalChats.find((chat) => chat.application.id === requestedProposalId);
+    if (matchedChat) {
+      setSelectedProposalApplication(matchedChat.application);
+      setSelectedProjectChat(null);
+      setSelectedUser(null);
+      setProposalIntent(null);
+      setView('detail');
+    }
+
+    navigation.setParams({ proposalId: undefined });
+  }, [requestedProposalId, loading, navigation, proposalChats]);
+
 
   useEffect(() => {
 
@@ -1359,21 +1371,13 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
     try {
 
       if (selectedUser) {
-
         const fullMsg: Message = { ...msg, recipientId: selectedUser.id, read: false };
-
+        setMessages(curr => upsertChatMessage(curr, fullMsg));
         await saveMessage(fullMsg);
-
-        setMessages(curr => [...curr, fullMsg]);
-
       } else if (selectedProjectChat) {
-
         const fullMsg: ProjectGroupMessage = { ...msg, projectId: selectedProjectChat.project.id, kind: 'scope-proposal' as any };
-
+        setMessages(curr => upsertChatMessage(curr, fullMsg));
         await saveProjectGroupMessage(fullMsg);
-
-        // Don't add optimistically - let WebSocket broadcast handle it to avoid duplicates
-
       }
 
     } catch (e) {
@@ -1424,13 +1428,10 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
 
+      setMessages(curr => upsertChatMessage(curr, msg as any));
       if (selectedUser) {
-
         await saveMessage({ ...msg, recipientId: selectedUser.id, read: false });
-
       }
-
-      setMessages(curr => [...curr, msg as any]);
 
       Alert.alert('Approved', 'The proposal has been officially approved.');
 
@@ -1453,6 +1454,23 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
     }
 
   }, [messages]);
+
+  useEffect(() => {
+    if (!reviewNotice || reviewNotice.tone !== 'success' || !reviewNotice.projectId) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      navigateToAvailableRoute(
+        navigation,
+        'Projects',
+        { projectId: reviewNotice.projectId, programSuiteView: 'projects' },
+        { routeName: 'Projects', params: { projectId: reviewNotice.projectId, programSuiteView: 'projects' } }
+      );
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [navigation, reviewNotice]);
 
 
 
@@ -1865,26 +1883,21 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
     try {
 
       if (selectedUser) {
-
         const fullMsg: Message = { ...msg, recipientId: selectedUser.id, read: false };
-
+        setMessages(curr => upsertChatMessage(curr, fullMsg));
+        setMessageText('');
+        setPendingAttachments([]);
         await saveMessage(fullMsg);
-
-        setMessages(curr => [...curr, fullMsg]);
-
       } else if (selectedProjectChat) {
 
         const fullMsg: ProjectGroupMessage = { ...msg, projectId: selectedProjectChat.project.id, kind: 'message' };
 
+        setMessages(curr => upsertChatMessage(curr, fullMsg));
+        setMessageText('');
+        setPendingAttachments([]);
         await saveProjectGroupMessage(fullMsg);
 
-        // Don't add optimistically - let WebSocket broadcast handle it to avoid duplicates
-
       }
-
-      setMessageText('');
-
-      setPendingAttachments([]);
 
     } catch (e) {
 
@@ -1960,7 +1973,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   useEffect(() => {
 
-    if (!reviewNotice) {
+    if (!reviewNotice || reviewNotice.projectId) {
 
       return undefined;
 
@@ -1996,20 +2009,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   const handleReview = async (app: PartnerProjectApplication, status: 'Approved' | 'Rejected', notes?: string) => {
 
-    console.log('=== PROPOSAL REVIEW DEBUG ===');
-    console.log('Application ID:', app.id);
-    console.log('Status:', status);
-    console.log('Notes:', notes);
-    console.log('User ID:', user?.id);
-
-    // Check if this proposal has already been reviewed
-    if (app.status !== 'Pending') {
-      Alert.alert(
-        'Already Reviewed',
-        `This proposal has already been ${app.status.toLowerCase()}. Please refresh to see the latest status.`
-      );
-      return;
-    }
+    if (status === 'Approved') setIsApproving(true);
 
     const previousProposalChats = proposalChats;
 
@@ -2019,14 +2019,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     try {
 
-      // Call API first so we have the real result
-      console.log('Calling reviewPartnerProjectApplication API...');
       const reviewedApplication = await reviewPartnerProjectApplication(app.id, status, user?.id || '', notes);
-      console.log('API Response:', reviewedApplication);
-      console.log('Project ID:', reviewedApplication.projectId);
 
 
-      // Keep reviewed proposals visible so rejected applications can still be referenced and approved history remains visible
       setProposalChats(current =>
         current.map(item =>
           item.application.id === reviewedApplication.id
@@ -2042,19 +2037,16 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         )
       );
       
-      // Update messages that contain this proposal to reflect new status
       setMessages(current =>
         current.map(msg => {
-          if (msg.content?.startsWith(PROPOSAL_PREFIX)) {
+          if (typeof msg.content === 'string' && msg.content.startsWith(PROPOSAL_PREFIX)) {
             try {
               const msgApp = JSON.parse(msg.content.replace(PROPOSAL_PREFIX, ''));
               if (msgApp.id === reviewedApplication.id) {
-                // Update the proposal JSON in the message content
                 const updatedApp = { ...msgApp, status: reviewedApplication.status };
                 return { ...msg, content: PROPOSAL_PREFIX + JSON.stringify(updatedApp) };
               }
             } catch (e) {
-              // Invalid JSON, skip
             }
           }
           return msg;
@@ -2065,7 +2057,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
         status === 'Approved'
 
-          ? { title: 'Proposal approved', message: 'The proposal was approved and a new project was created.', tone: 'success' }
+          ? { title: 'Proposal approved', message: 'The proposal was approved and a new project was created.', tone: 'success', projectId: reviewedApplication.projectId }
 
           : { title: 'Proposal rejected', message: 'The proposal was rejected. A notification card has been sent to the partner.', tone: 'warning' }
 
@@ -2092,43 +2084,18 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
       setView(isWide ? 'detail' : 'sidebar');
 
-      // Reload data in background without blocking UI
-      console.log('Reloading data in background...');
       void loadData();
       if (selectedUser) {
         void loadMessages();
       }
 
-
-
-      // Show success alert after reload
-
       if (status === 'Approved') {
-
-        const title = app.proposalDetails?.proposedTitle || 'Untitled';
-
-        setTimeout(() => {
-
-          if (Platform.OS === 'web') {
-
-            if (typeof window !== 'undefined') {
-
-              window.alert(`✅ Proposal Approved!\n\n"${title}" has been approved and a new project has been created in the Program Management Suite.`);
-
-            }
-
-          } else {
-
-            Alert.alert('Proposal Approved! ✅', `"${title}" has been approved and a new project has been created in the Program Management Suite.`, [{ text: 'OK' }]);
-
-          }
-
-        }, 200);
-
+        setIsApproving(false);
       }
 
     } catch (e) {
 
+      if (status === 'Approved') setIsApproving(false);
       setProposalChats(previousProposalChats);
 
       setSelectedProposalApplication(previousSelectedProposalApplication);
@@ -2172,7 +2139,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   };
 
   const filteredConversations = conversations.filter(c => c.user.name.toLowerCase().includes(searchText.toLowerCase()));
-
+  const partnerConversations = filteredConversations.filter(c => c.user.role === 'partner');
+  const volunteerConversations = filteredConversations.filter(c => c.user.role === 'volunteer');
   const filteredProjects = projectChats.filter(c => c.project.title.toLowerCase().includes(searchText.toLowerCase()));
 
   const filteredProposals = proposalChats.filter(c => c.application.partnerName.toLowerCase().includes(searchText.toLowerCase()) || c.projectTitle.toLowerCase().includes(searchText.toLowerCase()));
@@ -2403,11 +2371,11 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
 
-            <Text style={styles.listSectionLabel}>Conversations</Text>
+            <Text style={styles.listSectionLabel}>Proposal Partners</Text>
 
-            {filteredConversations.length > 0 ? (
+            {partnerConversations.length > 0 ? (
 
-              filteredConversations.map(c => renderSidebarItem(
+              partnerConversations.map(c => renderSidebarItem(
 
                 c.user.id,
 
@@ -2425,7 +2393,35 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
             ) : (
 
-              <Text style={styles.emptyListText}>No conversations yet</Text>
+              <Text style={styles.emptyListText}>No partner conversations yet</Text>
+
+            )}
+
+
+
+            <Text style={styles.listSectionLabel}>Volunteers</Text>
+
+            {volunteerConversations.length > 0 ? (
+
+              volunteerConversations.map(c => renderSidebarItem(
+
+                c.user.id,
+
+                c.user.name,
+
+                c.lastMessage?.content || 'Start a conversation',
+
+                selectedUser?.id === c.user.id,
+
+                () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
+
+                { badge: c.unreadCount }
+
+              ))
+
+            ) : (
+
+              <Text style={styles.emptyListText}>No volunteer conversations yet</Text>
 
             )}
 
@@ -2483,7 +2479,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
               {pendingProposalCount > 0
 
-                ? `Project Proposals ΓÇó ${pendingProposalCount} pending`
+                ? `Project Proposals • ${pendingProposalCount} pending`
 
                 : 'Project Proposals'}
 
@@ -2497,7 +2493,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                 p.projectTitle,
 
-                `${p.application.partnerName} ΓÇó ${p.application.status}`,
+                `${p.application.partnerName} • ${p.application.status}`,
 
                 selectedProposalApplication?.id === p.application.id,
 
@@ -2961,11 +2957,16 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                 <MaterialIcons name="info" size={20} color={app.status === 'Approved' ? '#166534' : '#f59e0b'} />
 
-                <Text style={[styles.statusText, { color: app.status === 'Approved' ? '#166534' : '#f59e0b' }]}>
-
-                  Current Status: {app.status}
-
-                </Text>
+                <View style={{ flexDirection: 'column' }}>
+                  <Text style={[styles.statusText, { color: app.status === 'Approved' ? '#166534' : '#f59e0b' }]}>
+                    Current Status: {app.status}
+                  </Text>
+                  {(app.proposalDetails?.targetProjectTitle || app.proposalDetails?.requestedProgramModule) && (
+                    <Text style={[styles.statusText, { color: app.status === 'Approved' ? '#166534' : '#f59e0b', fontSize: 12, marginTop: 2, fontWeight: '600' }]}>
+                      Program: {app.proposalDetails?.targetProjectTitle || app.proposalDetails?.requestedProgramModule}
+                    </Text>
+                  )}
+                </View>
 
               </View>
 
@@ -2977,9 +2978,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                 <Text style={styles.reviewWorkflowText}>
 
-                  Approve this proposal to create a new project automatically. After approval, open the project in
+                  Approve this proposal to create a new project automatically. After approval, you will jump
 
-                  Projects and add events there.
+                  straight to Projects for that new record.
 
                 </Text>
 
@@ -3003,13 +3004,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                 <View style={styles.previewGridItem}>
 
-                  <Text style={styles.previewSectionLabel}>PROGRAM MODULE</Text>
+                  <Text style={styles.previewSectionLabel}>SUBMITTED ON</Text>
 
-                  <Text style={styles.previewTextCompact}>
-
-                    {proposalDetails.requestedProgramModule || 'Not provided'}
-
-                  </Text>
+                  <Text style={styles.previewTextCompact}>{formatProposalDate(app.requestedAt)}</Text>
 
                 </View>
 
@@ -3043,30 +3040,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
 
-              <View style={styles.previewGrid}>
-
-                <View style={styles.previewGridItem}>
-
-                  <Text style={styles.previewSectionLabel}>VOLUNTEER SLOTS</Text>
-
-                  <Text style={styles.previewTextCompact}>
-
-                    {proposalDetails.proposedVolunteersNeeded ?? 'Not provided'}
-
-                  </Text>
-
-                </View>
-
-                <View style={styles.previewGridItem}>
-
-                  <Text style={styles.previewSectionLabel}>SUBMITTED ON</Text>
-
-                  <Text style={styles.previewTextCompact}>{formatProposalDate(app.requestedAt)}</Text>
-
-                </View>
-
-              </View>
-
 
 
               <View style={styles.previewNarrativeCard}>
@@ -3074,56 +3047,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                 <Text style={styles.previewSectionLabel}>PROJECT DESCRIPTION</Text>
 
                 <Text style={styles.previewText}>{proposalDetails.proposedDescription || 'Not provided'}</Text>
-
-              </View>
-
-
-
-              <View style={styles.previewNarrativeCard}>
-
-                <Text style={styles.previewSectionLabel}>COMMUNITY NEED</Text>
-
-                <Text style={styles.previewText}>{proposalDetails.communityNeed || 'Not provided'}</Text>
-
-              </View>
-
-
-
-              <View style={styles.previewNarrativeCard}>
-
-                <Text style={styles.previewSectionLabel}>EXPECTED DELIVERABLES</Text>
-
-                <Text style={styles.previewText}>{proposalDetails.expectedDeliverables || 'Not provided'}</Text>
-
-              </View>
-
-
-
-              <View style={styles.previewNarrativeCard}>
-
-                <Text style={styles.previewSectionLabel}>SKILLS NEEDED</Text>
-
-                {proposalSkills.length > 0 ? (
-
-                  <View style={styles.previewSkillRow}>
-
-                    {proposalSkills.map((skill: string) => (
-
-                      <View key={skill} style={styles.previewSkillChip}>
-
-                        <Text style={styles.previewSkillChipText}>{skill}</Text>
-
-                      </View>
-
-                    ))}
-
-                  </View>
-
-                ) : (
-
-                  <Text style={styles.previewText}>No skills specified.</Text>
-
-                )}
 
               </View>
 
@@ -3581,15 +3504,13 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
             (() => {
 
-              // Don't deduplicate proposal cards - show all cards as message history
-              // Each status change (Pending → Rejected → Approved) is a separate card
               const filteredMessages = messages;
 
               return filteredMessages.map((m, i) => {
 
               const isOwn = m.senderId === user?.id;
 
-              const isProposal = m.content.startsWith(PROPOSAL_PREFIX);
+              const isProposal = typeof m.content === 'string' && m.content.startsWith(PROPOSAL_PREFIX);
 
 
 
@@ -3604,7 +3525,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                 } catch (e) { return null; }
 
                 
-                // Handle both nested (proposalDetails) and flat (legacy) formats
                 const proposalDetails = application.proposalDetails || {};
                 const data = {
                   proposedTitle: proposalDetails.proposedTitle || application.proposedTitle || 'Untitled Proposal',
@@ -3618,14 +3538,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                 };
 
                 const isApproved = application.status === 'Approved';
-
-                // Debug logging
-                console.log('[PROPOSAL CARD DEBUG]', {
-                  applicationId: application.id,
-                  applicationStatus: application.status,
-                  proposedTitle: data.proposedTitle,
-                  isApproved
-                });
 
                 return (
 
@@ -3657,7 +3569,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                           <Text style={styles.propCardTitle} numberOfLines={2}>{data.proposedTitle}</Text>
 
-                          <Text style={styles.propCardSubtitle} numberOfLines={1}>Proposal ΓÇó {application.status}</Text>
+                          <Text style={styles.propCardSubtitle} numberOfLines={1}>Proposal • {application.status}</Text>
 
                         </View>
 
@@ -3978,17 +3890,12 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
             <View style={styles.inputWrap}>
 
               <TextInput
-
                 style={styles.composerInput}
-
                 placeholder="Type a message..."
-
                 value={messageText}
-
                 onChangeText={setMessageText}
-
                 multiline
-
+                onSubmitEditing={handleSendMessage}
                 maxLength={1000}
 
               />
@@ -4113,17 +4020,14 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     <View style={styles.container}>
 
-      {/* Proposal Card Detail Popup */}
       {activeProposalCardData && (() => {
         const pd = activeProposalCardData;
         const proposalDetails = pd.proposalDetails || {};
         
-        // Find the matching application from proposalChats FIRST (before using it)
         const matchedApp = proposalChats.find(
           item => item.application.id === pd.applicationId || item.application.id === pd.id
         )?.application || null;
         
-        // Handle both nested and flat formats
         const extractedData = {
           proposedTitle: proposalDetails.proposedTitle || pd.proposedTitle || 'Project Proposal',
           proposedDescription: proposalDetails.proposedDescription || pd.proposedDescription,
@@ -4144,14 +4048,12 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         const pdStatusColor = pdApproved ? '#166534' : pdRejected ? '#dc2626' : '#d97706';
         const pdStatusBg = pdApproved ? '#dcfce7' : pdRejected ? '#fee2e2' : '#fef9c3';
         
-        // Double-check: use matchedApp status if available (most up-to-date)
         const actualStatus = matchedApp?.status || pdStatus;
         const isActuallyPending = actualStatus === 'Pending';
 
         return (
           <View style={styles.modalOverlay}>
             <View style={[styles.modalContainer, { maxWidth: 520, maxHeight: '85%' }]}>
-              {/* Header */}
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 10 }}>
                 <View style={[styles.propCompactIconBox, { backgroundColor: pdStatusBg, width: 40, height: 40 }]}>
                   <MaterialIcons name="assignment" size={22} color={pdStatusColor} />
@@ -4175,7 +4077,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
               </View>
 
               <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 400 }}>
-                {/* Description */}
                 {extractedData.proposedDescription ? (
                   <View style={{ marginBottom: 12 }}>
                     <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748b', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Description</Text>
@@ -4183,7 +4084,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                   </View>
                 ) : null}
 
-                {/* Meta grid */}
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
                   {extractedData.proposedStartDate ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#f8fafc', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
@@ -4204,22 +4104,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                     </View>
                   ) : null}
                 </View>
-
-                {/* Community need */}
-                {extractedData.communityNeed ? (
-                  <View style={{ marginBottom: 12 }}>
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748b', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Community Need</Text>
-                    <Text style={{ fontSize: 13, color: '#374151', lineHeight: 20 }}>{extractedData.communityNeed}</Text>
-                  </View>
-                ) : null}
-
-                {/* Expected deliverables */}
-                {extractedData.expectedDeliverables ? (
-                  <View style={{ marginBottom: 12 }}>
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748b', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Expected Deliverables</Text>
-                    <Text style={{ fontSize: 13, color: '#374151', lineHeight: 20 }}>{extractedData.expectedDeliverables}</Text>
-                  </View>
-                ) : null}
 
                 {Array.isArray(proposalDetails.attachments) && proposalDetails.attachments.length > 0 ? (
                   <View style={{ marginBottom: 12 }}>
@@ -4270,7 +4154,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                   </View>
                 ) : null}
 
-                {/* Rejection reason (if rejected) */}
                 {pdRejected && pd.reviewNotes ? (
                   <View style={{ marginBottom: 12, padding: 10, backgroundColor: '#fef2f2', borderRadius: 8, borderWidth: 1, borderColor: '#fecaca' }}>
                     <Text style={{ fontSize: 11, fontWeight: '700', color: '#991b1b', marginBottom: 4 }}>Rejection Reason</Text>
@@ -4279,7 +4162,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                 ) : null}
               </ScrollView>
 
-              {/* Admin actions — only for pending proposals where we have the application */}
               {user?.role === 'admin' && isActuallyPending && matchedApp ? (
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
                   <TouchableOpacity
@@ -4325,11 +4207,25 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         );
       })()}
 
+      <Modal visible={isApproving} transparent={true} animationType="fade">
+        <View style={styles.loadingModalOverlay}>
+          <View style={styles.loadingModalContent}>
+            <ActivityIndicator size="large" color="#166534" />
+            <Text style={styles.loadingModalText}>Approving Proposal...</Text>
+          </View>
+        </View>
+      </Modal>
 
+      <Modal
+        visible={showRejectionModal}
 
-      {/* Rejection Notes Modal */}
+        transparent
 
-      {showRejectionModal && pendingRejectApp && (
+        animationType="fade"
+
+        onRequestClose={() => setShowRejectionModal(false)}
+
+      >
 
         <View style={styles.modalOverlay}>
 
@@ -4405,7 +4301,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
         </View>
 
-      )}
+      </Modal>
 
 
 
@@ -4470,6 +4366,19 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
               </Text>
 
             </View>
+
+            {reviewNotice.projectId ? (
+              <TouchableOpacity
+                onPress={() => {
+                  const pid = reviewNotice.projectId!;
+                  setReviewNotice(null);
+                  navigateToAvailableRoute(navigation, 'Projects', { projectId: pid, programSuiteView: 'projects' });
+                }}
+                style={{ backgroundColor: '#166534', borderRadius: 6, paddingVertical: 6, paddingHorizontal: 14, marginRight: 6 }}
+              >
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Load</Text>
+              </TouchableOpacity>
+            ) : null}
 
             <TouchableOpacity onPress={() => setReviewNotice(null)} style={styles.reviewNoticeClose}>
 

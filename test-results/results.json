@@ -1,7 +1,7 @@
 {
   "config": {
-    "configFile": "C:\\Users\\ACER\\OneDrive\\Desktop\\volunteer-system\\playwright.config.ts",
-    "rootDir": "C:/Users/ACER/OneDrive/Desktop/volunteer-system/tests/e2e",
+    "configFile": "C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\playwright.config.ts",
+    "rootDir": "C:/Users/ASUS/Desktop/NVCC/volunteer-system/tests/e2e",
     "forbidOnly": false,
     "fullyParallel": false,
     "globalSetup": null,
@@ -16,7 +16,7 @@
     "preserveOutput": "always",
     "projects": [
       {
-        "outputDir": "C:/Users/ACER/OneDrive/Desktop/volunteer-system/test-results",
+        "outputDir": "C:/Users/ASUS/Desktop/NVCC/volunteer-system/test-results",
         "repeatEach": 1,
         "retries": 0,
         "metadata": {
@@ -24,7 +24,7 @@
         },
         "id": "chromium",
         "name": "chromium",
-        "testDir": "C:/Users/ACER/OneDrive/Desktop/volunteer-system/tests/e2e",
+        "testDir": "C:/Users/ASUS/Desktop/NVCC/volunteer-system/tests/e2e",
         "testIgnore": [],
         "testMatch": [
           "**/*.@(spec|test).?(c|m)[jt]s?(x)"
@@ -32,7 +32,7 @@
         "timeout": 60000
       },
       {
-        "outputDir": "C:/Users/ACER/OneDrive/Desktop/volunteer-system/test-results",
+        "outputDir": "C:/Users/ASUS/Desktop/NVCC/volunteer-system/test-results",
         "repeatEach": 1,
         "retries": 0,
         "metadata": {
@@ -40,7 +40,7 @@
         },
         "id": "chromium-headed",
         "name": "chromium-headed",
-        "testDir": "C:/Users/ACER/OneDrive/Desktop/volunteer-system/tests/e2e",
+        "testDir": "C:/Users/ASUS/Desktop/NVCC/volunteer-system/tests/e2e",
         "testIgnore": [],
         "testMatch": [
           "**/*.@(spec|test).?(c|m)[jt]s?(x)"
@@ -79,7 +79,7 @@
     "version": "1.60.0",
     "workers": 1,
     "webServer": {
-      "command": "npm run expo:web",
+      "command": "npm run web",
       "url": "http://localhost:8081",
       "reuseExistingServer": true,
       "timeout": 120000
@@ -87,13 +87,91 @@
   },
   "suites": [
     {
-      "title": "event-gc-message.spec.ts",
-      "file": "event-gc-message.spec.ts",
+      "title": "workflows\\proposal-card-display.spec.ts",
+      "file": "workflows/proposal-card-display.spec.ts",
       "column": 0,
       "line": 0,
       "specs": [
         {
-          "title": "Send message in TEST EVENT group chat",
+          "title": "PROP-1: TEST TEST project proposal card displays in admin messages",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 28135,
+                  "error": {
+                    "message": "TimeoutError: locator.click: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('div').filter({ hasText: /^Test$/i }).and(locator('[role=\"button\"]')).first()\u001b[22m\n",
+                    "stack": "TimeoutError: locator.click: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('div').filter({ hasText: /^Test$/i }).and(locator('[role=\"button\"]')).first()\u001b[22m\n\n    at C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\tests\\e2e\\workflows\\proposal-card-display.spec.ts:26:21",
+                    "location": {
+                      "file": "C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\tests\\e2e\\workflows\\proposal-card-display.spec.ts",
+                      "column": 21,
+                      "line": 26
+                    },
+                    "snippet": "\u001b[0m \u001b[90m 24 |\u001b[39m   \u001b[90m// Click on Test contact (partner role)\u001b[39m\n \u001b[90m 25 |\u001b[39m   \u001b[36mconst\u001b[39m testContact \u001b[33m=\u001b[39m page\u001b[33m.\u001b[39mlocator(\u001b[32m'div'\u001b[39m)\u001b[33m.\u001b[39mfilter({ hasText\u001b[33m:\u001b[39m \u001b[35m/^Test$/i\u001b[39m })\u001b[33m.\u001b[39mand(page\u001b[33m.\u001b[39mlocator(\u001b[32m'[role=\"button\"]'\u001b[39m))\u001b[33m.\u001b[39mfirst()\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 26 |\u001b[39m   \u001b[36mawait\u001b[39m testContact\u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m    |\u001b[39m                     \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 27 |\u001b[39m   \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForTimeout(\u001b[35m3000\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 28 |\u001b[39m   \n \u001b[90m 29 |\u001b[39m   \u001b[90m// Take screenshot of conversation\u001b[39m\u001b[0m"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\tests\\e2e\\workflows\\proposal-card-display.spec.ts",
+                        "column": 21,
+                        "line": 26
+                      },
+                      "message": "TimeoutError: locator.click: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('div').filter({ hasText: /^Test$/i }).and(locator('[role=\"button\"]')).first()\u001b[22m\n\n\n  24 |   // Click on Test contact (partner role)\n  25 |   const testContact = page.locator('div').filter({ hasText: /^Test$/i }).and(page.locator('[role=\"button\"]')).first();\n> 26 |   await testContact.click();\n     |                     ^\n  27 |   await page.waitForTimeout(3000);\n  28 |   \n  29 |   // Take screenshot of conversation\n    at C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\tests\\e2e\\workflows\\proposal-card-display.spec.ts:26:21"
+                    }
+                  ],
+                  "stdout": [
+                    {
+                      "text": "📸 Screenshot 1: Messages list\n"
+                    }
+                  ],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-08-20T05:23:28.606Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "screenshot",
+                      "contentType": "image/png",
+                      "path": "C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\test-results\\workflows-proposal-card-di-4ee9f--displays-in-admin-messages-chromium\\test-failed-1.png"
+                    },
+                    {
+                      "name": "video",
+                      "contentType": "video/webm",
+                      "path": "C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\test-results\\workflows-proposal-card-di-4ee9f--displays-in-admin-messages-chromium\\video.webm"
+                    },
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\test-results\\workflows-proposal-card-di-4ee9f--displays-in-admin-messages-chromium\\error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\tests\\e2e\\workflows\\proposal-card-display.spec.ts",
+                    "column": 21,
+                    "line": 26
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "88d182a3450fd60c5ee2-f01a641937110b5bc007",
+          "file": "workflows/proposal-card-display.spec.ts",
+          "line": 11,
+          "column": 5
+        },
+        {
+          "title": "PROP-1: TEST TEST project proposal card displays in admin messages",
           "ok": false,
           "tags": [],
           "tests": [
@@ -105,69 +183,69 @@
               "projectName": "chromium-headed",
               "results": [
                 {
-                  "workerIndex": 0,
+                  "workerIndex": 1,
                   "parallelIndex": 0,
                   "status": "failed",
-                  "duration": 22496,
+                  "duration": 28647,
                   "error": {
-                    "message": "TimeoutError: page.goto: Timeout 20000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"http://localhost:8081/\", waiting until \"load\"\u001b[22m\n",
-                    "stack": "TimeoutError: page.goto: Timeout 20000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"http://localhost:8081/\", waiting until \"load\"\u001b[22m\n\n    at C:\\Users\\ACER\\OneDrive\\Desktop\\volunteer-system\\tests\\e2e\\event-gc-message.spec.ts:5:14",
+                    "message": "TimeoutError: locator.click: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('div').filter({ hasText: /^Test$/i }).and(locator('[role=\"button\"]')).first()\u001b[22m\n",
+                    "stack": "TimeoutError: locator.click: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('div').filter({ hasText: /^Test$/i }).and(locator('[role=\"button\"]')).first()\u001b[22m\n\n    at C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\tests\\e2e\\workflows\\proposal-card-display.spec.ts:26:21",
                     "location": {
-                      "file": "C:\\Users\\ACER\\OneDrive\\Desktop\\volunteer-system\\tests\\e2e\\event-gc-message.spec.ts",
-                      "column": 14,
-                      "line": 5
+                      "file": "C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\tests\\e2e\\workflows\\proposal-card-display.spec.ts",
+                      "column": 21,
+                      "line": 26
                     },
-                    "snippet": "\u001b[0m \u001b[90m 3 |\u001b[39m test(\u001b[32m'Send message in TEST EVENT group chat'\u001b[39m\u001b[33m,\u001b[39m \u001b[36masync\u001b[39m ({ page }) \u001b[33m=>\u001b[39m {\n \u001b[90m 4 |\u001b[39m   console\u001b[33m.\u001b[39mlog(\u001b[32m'🔄 Navigating to app...'\u001b[39m)\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 5 |\u001b[39m   \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m'http://localhost:8081'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m   |\u001b[39m              \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 6 |\u001b[39m   \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForLoadState(\u001b[32m'networkidle'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 7 |\u001b[39m   \n \u001b[90m 8 |\u001b[39m   \u001b[90m// Login as admin\u001b[39m\u001b[0m"
+                    "snippet": "\u001b[0m \u001b[90m 24 |\u001b[39m   \u001b[90m// Click on Test contact (partner role)\u001b[39m\n \u001b[90m 25 |\u001b[39m   \u001b[36mconst\u001b[39m testContact \u001b[33m=\u001b[39m page\u001b[33m.\u001b[39mlocator(\u001b[32m'div'\u001b[39m)\u001b[33m.\u001b[39mfilter({ hasText\u001b[33m:\u001b[39m \u001b[35m/^Test$/i\u001b[39m })\u001b[33m.\u001b[39mand(page\u001b[33m.\u001b[39mlocator(\u001b[32m'[role=\"button\"]'\u001b[39m))\u001b[33m.\u001b[39mfirst()\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 26 |\u001b[39m   \u001b[36mawait\u001b[39m testContact\u001b[33m.\u001b[39mclick()\u001b[33m;\u001b[39m\n \u001b[90m    |\u001b[39m                     \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 27 |\u001b[39m   \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForTimeout(\u001b[35m3000\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 28 |\u001b[39m   \n \u001b[90m 29 |\u001b[39m   \u001b[90m// Take screenshot of conversation\u001b[39m\u001b[0m"
                   },
                   "errors": [
                     {
                       "location": {
-                        "file": "C:\\Users\\ACER\\OneDrive\\Desktop\\volunteer-system\\tests\\e2e\\event-gc-message.spec.ts",
-                        "column": 14,
-                        "line": 5
+                        "file": "C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\tests\\e2e\\workflows\\proposal-card-display.spec.ts",
+                        "column": 21,
+                        "line": 26
                       },
-                      "message": "TimeoutError: page.goto: Timeout 20000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"http://localhost:8081/\", waiting until \"load\"\u001b[22m\n\n\n\u001b[0m \u001b[90m 3 |\u001b[39m test(\u001b[32m'Send message in TEST EVENT group chat'\u001b[39m\u001b[33m,\u001b[39m \u001b[36masync\u001b[39m ({ page }) \u001b[33m=>\u001b[39m {\n \u001b[90m 4 |\u001b[39m   console\u001b[33m.\u001b[39mlog(\u001b[32m'🔄 Navigating to app...'\u001b[39m)\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 5 |\u001b[39m   \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mgoto(\u001b[32m'http://localhost:8081'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m   |\u001b[39m              \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 6 |\u001b[39m   \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForLoadState(\u001b[32m'networkidle'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 7 |\u001b[39m   \n \u001b[90m 8 |\u001b[39m   \u001b[90m// Login as admin\u001b[39m\u001b[0m\n\u001b[2m    at C:\\Users\\ACER\\OneDrive\\Desktop\\volunteer-system\\tests\\e2e\\event-gc-message.spec.ts:5:14\u001b[22m"
+                      "message": "TimeoutError: locator.click: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('div').filter({ hasText: /^Test$/i }).and(locator('[role=\"button\"]')).first()\u001b[22m\n\n\n  24 |   // Click on Test contact (partner role)\n  25 |   const testContact = page.locator('div').filter({ hasText: /^Test$/i }).and(page.locator('[role=\"button\"]')).first();\n> 26 |   await testContact.click();\n     |                     ^\n  27 |   await page.waitForTimeout(3000);\n  28 |   \n  29 |   // Take screenshot of conversation\n    at C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\tests\\e2e\\workflows\\proposal-card-display.spec.ts:26:21"
                     }
                   ],
                   "stdout": [
                     {
-                      "text": "🔄 Navigating to app...\n"
+                      "text": "📸 Screenshot 1: Messages list\n"
                     }
                   ],
                   "stderr": [],
                   "retry": 0,
-                  "startTime": "2026-06-05T03:56:45.107Z",
+                  "startTime": "2026-08-20T05:24:01.002Z",
                   "annotations": [],
                   "attachments": [
                     {
                       "name": "screenshot",
                       "contentType": "image/png",
-                      "path": "C:\\Users\\ACER\\OneDrive\\Desktop\\volunteer-system\\test-results\\event-gc-message-Send-message-in-TEST-EVENT-group-chat-chromium-headed\\test-failed-1.png"
+                      "path": "C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\test-results\\workflows-proposal-card-di-4ee9f--displays-in-admin-messages-chromium-headed\\test-failed-1.png"
                     },
                     {
                       "name": "video",
                       "contentType": "video/webm",
-                      "path": "C:\\Users\\ACER\\OneDrive\\Desktop\\volunteer-system\\test-results\\event-gc-message-Send-message-in-TEST-EVENT-group-chat-chromium-headed\\video.webm"
+                      "path": "C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\test-results\\workflows-proposal-card-di-4ee9f--displays-in-admin-messages-chromium-headed\\video.webm"
                     },
                     {
                       "name": "error-context",
                       "contentType": "text/markdown",
-                      "path": "C:\\Users\\ACER\\OneDrive\\Desktop\\volunteer-system\\test-results\\event-gc-message-Send-message-in-TEST-EVENT-group-chat-chromium-headed\\error-context.md"
+                      "path": "C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\test-results\\workflows-proposal-card-di-4ee9f--displays-in-admin-messages-chromium-headed\\error-context.md"
                     }
                   ],
                   "errorLocation": {
-                    "file": "C:\\Users\\ACER\\OneDrive\\Desktop\\volunteer-system\\tests\\e2e\\event-gc-message.spec.ts",
-                    "column": 14,
-                    "line": 5
+                    "file": "C:\\Users\\ASUS\\Desktop\\NVCC\\volunteer-system\\tests\\e2e\\workflows\\proposal-card-display.spec.ts",
+                    "column": 21,
+                    "line": 26
                   }
                 }
               ],
               "status": "unexpected"
             }
           ],
-          "id": "87ea3752378b40758dde-d65b15eaa9c594824361",
-          "file": "event-gc-message.spec.ts",
-          "line": 3,
+          "id": "88d182a3450fd60c5ee2-8dfcd523a5c0fcba0a54",
+          "file": "workflows/proposal-card-display.spec.ts",
+          "line": 11,
           "column": 5
         }
       ]
@@ -175,11 +253,11 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-06-05T03:56:43.941Z",
-    "duration": 24918.126,
+    "startTime": "2026-08-20T05:23:26.990Z",
+    "duration": 64642.490999999995,
     "expected": 0,
     "skipped": 0,
-    "unexpected": 1,
+    "unexpected": 2,
     "flaky": 0
   }
 }

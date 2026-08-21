@@ -173,10 +173,10 @@ def main() -> None:
                 "matches_with_missing_project_or_event": """
                     select count(*)
                     from volunteer_matches m
-                    left join projects p on p.projects_id = m.project_id
+                    left join projects p on p.id = m.project_id
                     left join events e on e.events_id = m.project_id
                     where coalesce(m.project_id, '') <> ''
-                      and p.projects_id is null
+                      and p.id is null
                       and e.events_id is null
                 """,
                 "matches_with_missing_volunteer": """

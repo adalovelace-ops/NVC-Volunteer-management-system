@@ -43,7 +43,7 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: 'npm run expo:web',
+    command: 'npm run web',
     url: 'http://localhost:8081',
     reuseExistingServer: true,
     timeout: 120000,

@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { Project } from '../../models/types';
 import { getPrimaryProjectImageSource } from '../../utils/projectMap';
 import { getProjectStatusColor, getProjectDisplayStatus } from '../../utils/projectStatus';

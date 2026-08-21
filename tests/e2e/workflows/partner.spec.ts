@@ -337,10 +337,13 @@ test('PAR-UI-2: Partner can login via mobile UI in browser and sees partner dash
 // ─────────────────────────────────────────────────────────────────────────────
 test('PAR-UI-3: Partner mobile UI shows programs screen', async ({ page }) => {
   await loginAsMobile(page, 'partner', PARTNER_JOLLIBEE.email, PARTNER_JOLLIBEE.password);
-  await page.waitForTimeout(3000);
-
-  // Partner dashboard shows program/project content inline
-  const hasPrograms = await pageContains(page, /program|project|proposal/i);
+  // Wait up to 10 seconds for program/project/proposal content to render
+  let hasPrograms = false;
+  for (let i = 0; i < 20; i++) {
+    hasPrograms = await pageContains(page, /program|project|proposal/i);
+    if (hasPrograms) break;
+    await page.waitForTimeout(500);
+  }
   expect(hasPrograms).toBe(true);
 
   // Try clicking Browse Programs if visible

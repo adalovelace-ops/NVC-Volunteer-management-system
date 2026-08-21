@@ -1,0 +1,244 @@
+Created At: 2026-08-19T01:29:26+08:00
+Completed At: 2026-08-19T01:29:59+08:00
+The following changes were made by the multi_replace_file_content tool to: c:\Users\ASUS\Desktop\NVCC\volunteer-system\screens\CommunicationHubScreen.tsx. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -2224,231 +2224,6 @@
+         </View>
+       </View>
+     );
+-  };
+-
+-  const renderRightPanel = () => {
+-    const app = activeProposal as any;
+-    if (activeSection === 'messages' || !app) {
+-      return (
+-        <View style={styles.rightPanelEmpty}>
+-          <MaterialIcons name="assignment" size={48} color="#cbd5e1" />
+-          <Text style={styles.rightPanelEmptyText}>No proposal details</Text>
+-        </View>
+-      );
+-    }
+-
+-    const proposalDetails = app.proposalDetails || {};
+-    const proposalTitle = proposalDetails.proposedTitle || 'Project Proposal';
+-    const statusLabel = getProposalStatusLabel(app.status);
+-    const statusTone = getProposalStatusTone(app.status);
+-    const submittedDate = app.requestedAt ? format(new Date(app.requestedAt), 'MMM dd, yyyy • hh:mm a') : 'Jul 21, 2026 • 10:25 AM';
+-    
+-    // Linked Program Lookup from programs/tracks
+-    const matchedTrack = programTracks.find(t => 
+-      t.id === app.programModule || 
+-      t.title === app.programModule ||
+-      t.id === proposalDetails.requestedProgramModule ||
+-      t.title === proposalDetails.requestedProgramModule
+-    );
+-    const programName = matchedTrack ? matchedTrack.title : (proposalDetails.requestedProgramModule || app.programModule || 'Nutrition Program');
+-
+-    const getInitials = (nameStr: string): string => {
+-      if (!nameStr) return '?';
+-      const clean = nameStr.replace(/Account|Foundation|Team|LGU/gi, '').trim();
+-      const parts = clean.split(/\s+/).filter(Boolean);
+-      if (parts.length >= 2) {
+-        return (parts[0][0] + parts[1][0]).toUpperCase();
+-      }
+-      return parts[0] ? parts[0].substring(0, 2).toUpperCase() : nameStr.substring(0, 2).toUpperCase();
+-    };
+-
+-    const getDmParticipants = () => {
+-      if (!selectedUser) return [];
+-      
+-      const me = {
+-        id: user?.id || 'admin',
+-        name: user?.name || 'Admin',
+-        initials: getInitials(user?.name || 'Admin'),
+-        color: '#dcfce7',
+-        textColor: '#15803d'
+-      };
+-      
+-      let selectedInitials = getInitials(selectedUser.name);
+-      let selectedColor = '#ede9fe';
+-      let selectedTextColor = '#6d28d9';
+-      
+-      if (selectedUser.id === 'pbsp') {
+-        selectedInitials = 'PB';
+-        selectedColor = '#ede9fe';
+-        selectedTextColor = '#6d28d9';
+-      } else if (selectedUser.id === 'jollibee') {
+-        selectedInitials = 'J';
+-        selectedColor = '#ffedd5';
+-        selectedTextColor = '#c2410c';
+-      } else if (selectedUser.id === 'lgu-calapan') {
+-        selectedInitials = 'LC';
+-        selectedColor = '#dbeafe';
+-        selectedTextColor = '#1e40af';
+-      }
+-      
+-      const other = {
+-        id: selectedUser.id,
+-        name: selectedUser.name,
+-        initials: selectedInitials,
+-        color: selectedColor,
+-        textColor: selectedTextColor
+-      };
+-      
+-      if (selectedUser.id === 'pbsp') {
+-        const jollibee = {
+-          id: 'jollibee',
+-          name: 'Jollibee Foundation Account',
+-          initials: 'J',
+-          color: '#ffedd5',
+-          textColor: '#c2410c'
+-        };
+-        return [other, me, jollibee];
+-      }
+-      
+-      if (selectedUser.id === 'nvc-team') {
+-        const pbsp = {
+-          id: 'pbsp',
+-          name: 'PBSP Account',
+-          initials: 'PB',
+-          color: '#ede9fe',
+-          textColor: '#6d28d9'
+-        };
+-        const jollibee = {
+-          id: 'jollibee',
+-          name: 'Jollibee Foundation Account',
+-          initials: 'J',
+-          color: '#ffedd5',
+-          textColor: '#c2410c'
+-        };
+-        return [me, pbsp, jollibee];
+-      }
+-      
+-      return [other, me];
+-    };
+-
+-    const getProjectParticipants = () => {
+-      if (!selectedProjectChat) return [];
+-      return selectedProjectChat.members.map(m => {
+-        let initials = getInitials(m.name);
+-        let color = '#f1f5f9';
+-        let textColor = '#475569';
+-        
+-        if (m.role === 'Admin') {
+-          color = '#dcfce7';
+-          textColor = '#15803d';
+-        } else if (m.role === 'Partner') {
+-          color = '#ede9fe';
+-          textColor = '#6d28d9';
+-        } else if (m.role === 'Volunteer') {
+-          color = '#dbeafe';
+-          textColor = '#1e40af';
+-        }
+-        
+-        return {
+-          id: m.id,
+-          name: m.name,
+-          initials,
+-          color,
+-          textColor
+-        };
+-      });
+-    };
+-
+-    const participants = selectedProjectChat ? getProjectParticipants() : getDmParticipants();
+-
+-    const isStarred = selectedUser ? starredUserIds.has(selectedUser.id) : false;
+-    const handleToggleStar = () => {
+-      if (selectedUser) {
+-        const next = new Set(starredUserIds);
+-        if (next.has(selectedUser.id)) {
+-          next.delete(selectedUser.id);
+-        } else {
+-          next.add(selectedUser.id);
+-        }
+-        setStarredUserIds(next);
+-      }
+-    };
+-
+-    const isMuted = selectedUser ? mutedUserIds.has(selectedUser.id) : false;
+-    const handleToggleMute = () => {
+-      if (selectedUser) {
+-        const next = new Set(mutedUserIds);
+-        if (next.has(selectedUser.id)) {
+-          next.delete(selectedUser.id);
+-        } else {
+-          next.add(selectedUser.id);
+-        }
+-        setMutedUserIds(next);
+-      }
+-    };
+-
+-    const handleArchive = () => {
+-      if (selectedUser) {
+-        Alert.alert(
+-          'Archive Conversation',
+-          'Are you sure you want to archive this conversation?',
+-          [
+-            { text: 'Cancel', style: 'cancel' },
+-            {
+-              text: 'Archive',
+-              onPress: () => {
+-                const next = new Set(archivedUserIds);
+-                next.add(selectedUser.id);
+-                setArchivedUserIds(next);
+-                closeActiveConversation();
+-              }
+-            }
+-          ]
+-        );
+-      }
+-    };
+-
+-    const isNotReviewed = app.status === 'DRAFT' || app.status === 'Pending' || app.status === 'Awaiting Review';
+-
+-    return (
+-      <View style={styles.rightPanel}>
+-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.rightPanelContent}>
+-          <View style={styles.rightPanelHeader}>
+-            <Text style={styles.rightPanelTitle}>Proposal Details</Text>
+-            <MaterialIcons name="keyboard-arrow-down" size={20} color="#64748b" />
+-          </View>
+-
+-          {/* Status Section */}
+-          <View style={styles.rightSection}>
+-            <Text style={styles.rightSectionLabel}>Status</Text>
+-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+-              <View style={[styles.rightStatusPill, { backgroundColor: statusTone.backgroundColor }]}>
+-                <Text style={[styles.rightStatusText, { color: statusTone.color }]}>{statusLabel}</Text>
+-              </View>
+-            </View>
+-            {isNotReviewed && (
+-              <View style={styles.rightStatusMetaRow}>
+-                <View style={[styles.statusDot, { backgroundColor: '#ea580c' }]} />
+-                <Text style={styles.rightStatusMetaText}>Awaiting review</Text>
+-              </View>
+-            )}
+-          </View>
+-
+-          {/* Submitted Section */}
+-          <View style={styles.rightSection}>
+-            <Text style={styles.rightSectionLabel}>Submitted</Text>
+-            <Text style={styles.rightSectionValue}>{submittedDate}</Text>
+-          </View>
+-
+-          {/* Proposal ID Section */}
+-          <View style={styles.rightSection}>
+-            <Text style={styles.rightSectionLabel}>Proposal ID</Text>
+-            <Text style={styles.rightSectionValue}>{app.id || '1783968838426-nxoox'}</Text>
+-          </View>
+-
+-          {/* Linked Program Section */}
+-          <View style={styles.rightSection}>
+-            <Text style={styles.rightSectionLabel}>Linked Program</Text>
+             <Text style={styles.rightSectionValueGreen}>{programName}</Text>
+           </View>
+ 
+[diff_block_end]
+
+Please note that the above snippet only shows the MODIFIED lines from the last change. It shows up to 3 lines of unchanged lines before and after the modified lines. The actual file contents may have many more lines not shown.
+
+We did our best to apply changes despite some inaccuracies. Double check if the edit applied is what you intended.
+
+=====
+

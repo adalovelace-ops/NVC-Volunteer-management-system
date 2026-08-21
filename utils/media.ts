@@ -1,6 +1,6 @@
-import * as ImagePicker from 'expo-image-picker';
-import * as DocumentPicker from 'expo-document-picker';
-import { Linking } from 'react-native';
+import { launchImageLibrary } from 'react-native-image-picker';
+import { pick } from 'react-native-document-picker';
+import { Linking, Platform } from 'react-native';
 import { compressImage } from './imageCompression';
 
 // Safe Platform accessor for web environments
@@ -19,18 +19,23 @@ const IMAGE_PICKER_QUALITY = 0.4;
 
 // Returns true when the provided string can be rendered as an image preview.
 export function isImageMediaUri(value?: string | null): boolean {
-  if (!value) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
     return false;
   }
 
   return (
-    value.startsWith('data:image/') ||
-    value.startsWith('file:') ||
-    value.startsWith('content:') ||
-    value.startsWith('ph:') ||
-    IMAGE_FILE_PATTERN.test(value) ||
-    value.startsWith('https://') ||
-    value.startsWith('http://')
+    trimmed.startsWith('data:image/') ||
+    trimmed.startsWith('file:') ||
+    trimmed.startsWith('content:') ||
+    trimmed.startsWith('ph:') ||
+    IMAGE_FILE_PATTERN.test(trimmed) ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('http://')
   );
 }
 
@@ -115,50 +120,108 @@ export function getPrimaryReportMediaUri(
 
 // Opens the device photo picker and returns a persistable image URI/data URI.
 export async function pickImageFromDevice(): Promise<string | null> {
-  if (getPlatformOS() !== 'web') {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      throw new Error('Photo library access is required to upload an image.');
-    }
+  if (Platform.OS === 'web') {
+    return new Promise((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = (e: any) => {
+        const file = e.target.files?.[0];
+        if (!file) {
+          resolve(null);
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (event: any) => {
+          resolve(event.target.result);
+        };
+        reader.onerror = () => {
+          resolve(null);
+        };
+        reader.readAsDataURL(file);
+      };
+      input.click();
+    });
   }
 
-  const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ['images'],
-    allowsEditing: true,
-    quality: IMAGE_PICKER_QUALITY,
-    base64: true,
+  return new Promise((resolve) => {
+    const options: any = {
+      mediaType: 'photo',
+      includeBase64: true,
+      quality: IMAGE_PICKER_QUALITY,
+    };
+
+    launchImageLibrary(options, async (response) => {
+      if (response.didCancel || response.errorCode) {
+        resolve(null);
+        return;
+      }
+
+      const asset = response.assets?.[0];
+      if (!asset) {
+        resolve(null);
+        return;
+      }
+
+      if (asset.base64) {
+        const imageDataUri = `data:${asset.type || 'image/jpeg'};base64,${asset.base64}`;
+        const optimizedImage = await compressImage(imageDataUri);
+        resolve(optimizedImage || imageDataUri);
+      } else if (asset.uri) {
+        resolve(asset.uri);
+      } else {
+        resolve(null);
+      }
+    });
   });
-
-  if (result.canceled || !result.assets?.length) {
-    return null;
-  }
-
-  const asset = result.assets[0];
-  if (asset.base64) {
-    const imageDataUri = `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}`;
-    const optimizedImage = await compressImage(imageDataUri);
-    return optimizedImage || imageDataUri;
-  }
-
-  return asset.uri;
 }
 
 // Opens the device file picker for documents and returns a persistable file URI/data URI.
 export async function pickDocumentFromDevice(): Promise<string | null> {
-  const result = await DocumentPicker.getDocumentAsync({
-    copyToCacheDirectory: true,
-    multiple: false,
-    base64: true,
-  });
-
-  if (result.canceled || !result.assets?.length) {
-    return null;
+  if (Platform.OS === 'web') {
+    return new Promise((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '*/*';
+      input.onchange = (e: any) => {
+        const file = e.target.files?.[0];
+        if (!file) {
+          resolve(null);
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (event: any) => {
+          resolve(event.target.result);
+        };
+        reader.onerror = () => {
+          resolve(null);
+        };
+        reader.readAsDataURL(file);
+      };
+      input.click();
+    });
   }
 
-  const asset = result.assets[0];
-  if (asset.base64) {
-    return `data:${asset.mimeType || 'application/octet-stream'};base64,${asset.base64}`;
-  }
+  try {
+    const result = await pick({
+      presentationStyle: 'formSheet',
+      copyTo: 'cachesDirectory',
+    });
 
-  return asset.uri;
+    if (!result || result.length === 0) {
+      return null;
+    }
+
+    const asset = result[0] as any;
+    if (asset.base64) {
+      return `data:${asset.mimeType || 'application/octet-stream'};base64,${asset.base64}`;
+    }
+
+    return asset.uri;
+  } catch (error) {
+    if (error instanceof Error && error.message === 'User cancelled document picker') {
+      return null;
+    }
+    throw error;
+  }
 }

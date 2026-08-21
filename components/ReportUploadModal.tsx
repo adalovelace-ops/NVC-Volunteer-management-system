@@ -12,7 +12,7 @@ import {
   Image,
   Keyboard,
 } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import type {
   PartnerProjectReportSummary,
   SubmittedReport,
@@ -796,30 +796,7 @@ export default function ReportUploadModal({
         </Text>
       </View>
 
-      <Text style={styles.sectionTitle}>Auto-generated Event Metrics</Text>
-      <Text style={styles.sectionHelper}>
-        Attendance count, event task count, and field photo are generated automatically from your event records.
-      </Text>
-      <View style={styles.autoMetricsCard}>
-        <View style={styles.autoMetricRow}>
-          <Text style={styles.autoMetricLabel}>Volunteer Attendance Count</Text>
-          <Text style={styles.autoMetricValue}>
-            {selectedProject ? volunteerMetrics.attendanceDays : 'Select an event'}
-          </Text>
-        </View>
-        <View style={styles.autoMetricRow}>
-          <Text style={styles.autoMetricLabel}>Event Task Count</Text>
-          <Text style={styles.autoMetricValue}>
-            {selectedProject ? volunteerMetrics.tasksCompleted : 'Select an event'}
-          </Text>
-        </View>
-        <View style={styles.autoMetricRow}>
-          <Text style={styles.autoMetricLabel}>Volunteer Event Joins</Text>
-          <Text style={styles.autoMetricValue}>
-            {selectedProject ? volunteerMetrics.volunteerEventJoins : 'Select an event'}
-          </Text>
-        </View>
-      </View>
+
 
       <Text style={styles.sectionTitle}>Report Photo</Text>
       <Text style={styles.sectionHelper}>
@@ -880,23 +857,7 @@ export default function ReportUploadModal({
         </View>
       )}
 
-      <Text style={styles.sectionTitle}>Beneficiary Count</Text>
-      <Text style={styles.sectionHelper}>
-        Enter the number of beneficiaries served during this event.
-      </Text>
-      <View style={styles.metricsGrid}>
-        <View style={styles.metricInput}>
-          <Text style={styles.metricLabel}>Beneficiary Count</Text>
-          <TextInput
-            style={styles.metricInputField}
-            placeholder="0"
-            value={metrics.beneficiariesServed}
-            onChangeText={value => handleMetricChange('beneficiariesServed', value)}
-            keyboardType="number-pad"
-            placeholderTextColor="#cbd5e1"
-          />
-        </View>
-      </View>
+
 
       <Text style={styles.sectionTitle}>Short Admin Summary</Text>
       <Text style={styles.sectionHelper}>

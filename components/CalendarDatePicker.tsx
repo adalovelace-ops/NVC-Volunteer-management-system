@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { MaterialIcons } from '@expo/vector-icons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { addMonths, format, isSameDay, isSameMonth, subMonths } from 'date-fns';
 

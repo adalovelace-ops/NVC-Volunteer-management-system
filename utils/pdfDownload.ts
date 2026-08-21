@@ -1,6 +1,6 @@
-import { Alert } from 'react-native';
-import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
+import { Alert, Platform } from 'react-native';
+import RNFS from 'react-native-fs';
+import Share from 'react-native-share';
 
 function sanitizeFilename(filename: string): string {
   return filename.replace(/[\\/:*?"<>|]+/g, '-');
@@ -129,25 +129,36 @@ export async function downloadPdfFile(
   }
 
   try {
-    const sharingAvailable = await Sharing.isAvailableAsync();
-    if (!sharingAvailable) {
-      Alert.alert('Download Unavailable', fallbackMessage);
+    if (Platform.OS === 'web') {
+      const blob = new Blob([pdfContent], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = safeFilename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } else {
+      // Native: Write file to cache and share
+      const cachePath = RNFS.CachesDirectoryPath;
+      const filePath = `${cachePath}/${safeFilename}`;
+      
+      // Write PDF content to file
+      await RNFS.writeFile(filePath, pdfContent, 'utf8');
+
+      // Share the file
+      await Share.open({
+        url: `file://${filePath}`,
+        type: 'application/pdf',
+        filename: safeFilename,
+      });
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === 'User did not share') {
+      // User cancelled, don't show error
       return;
     }
-
-    const file = new File(Paths.cache, safeFilename);
-    if (file.exists) {
-      file.delete();
-    }
-    file.create();
-    file.write(pdfContent);
-
-    await Sharing.shareAsync(file.uri, {
-      mimeType: 'application/pdf',
-      dialogTitle: safeFilename,
-      UTI: 'com.adobe.pdf',
-    });
-  } catch (error) {
     console.error('Unable to save PDF:', error);
     Alert.alert('Download Failed', fallbackMessage);
   }

@@ -1,14 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { Platform, Text, TextInput, View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MaterialIcons } from '@expo/vector-icons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useAuth } from '../contexts/AuthContext';
 import ScreenBrandHeader from '../components/ScreenBrandHeader';
 import VolunteerDashboardScreen from '../screens/VolunteerDashboardScreen';
-import VolunteerProjectsScreen from '../screens/VolunteerProjectsScreen';
+import VolunteerHomeScreen from '../screens/VolunteerHomeScreen';
+import VolunteerEventsScreen from '../screens/VolunteerEventsScreen';
 import VolunteerTasksScreen from '../screens/VolunteerTasksScreen';
-import MappingScreen from '../screens/MappingScreen';
 import CommunicationHubScreen from '../screens/CommunicationHubScreen';
 import VolunteerReportsScreen from '../screens/VolunteerReportsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
@@ -16,11 +16,11 @@ import VolunteerProjectDetailsScreen from '../screens/VolunteerProjectDetailsScr
 import { getMessagesForUser, subscribeToMessages, getAllUsers, subscribeToStorageChanges, markMessageAsRead } from '../models/storage';
 
 export type VolunteerTabParamList = {
+  Home: undefined;
   Dashboard: undefined;
-  Projects: { projectId?: string } | undefined;
+  Events: { projectId?: string } | undefined;
   ProjectDetails: { projectId: string };
   Tasks: undefined;
-  Map: undefined;
   Messages: { projectId?: string } | undefined;
   Reports: { projectId?: string; autoOpenUpload?: boolean } | undefined;
   Profile: undefined;
@@ -30,10 +30,10 @@ const Tab = createBottomTabNavigator<VolunteerTabParamList>();
 
 const getIconName = (routeName: keyof VolunteerTabParamList) => {
   switch (routeName) {
+    case 'Home': return 'home';
     case 'Dashboard': return 'dashboard';
-    case 'Projects': return 'business-center';
+    case 'Events': return 'event';
     case 'Tasks': return 'assignment';
-    case 'Map': return 'map';
     case 'Messages': return 'mail';
     case 'Reports': return 'insert-chart';
     case 'Profile': return 'person';
@@ -46,6 +46,36 @@ export default function VolunteerNavigator() {
   const [unreadMessages, setUnreadMessages] = useState<any[]>([]);
   const [messageUnreadCount, setMessageUnreadCount] = useState(0);
   const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      return;
+    }
+
+    const previousTextDefaultProps = (Text as any).defaultProps;
+    const previousTextInputDefaultProps = (TextInput as any).defaultProps;
+
+    (Text as any).defaultProps = {
+      ...(previousTextDefaultProps || {}),
+      style: [
+        (previousTextDefaultProps as any)?.style,
+        { fontFamily: 'Nunito' },
+      ],
+    };
+
+    (TextInput as any).defaultProps = {
+      ...(previousTextInputDefaultProps || {}),
+      style: [
+        previousTextInputDefaultProps?.style,
+        { fontFamily: 'Nunito' },
+      ],
+    };
+
+    return () => {
+      (Text as any).defaultProps = previousTextDefaultProps;
+      (TextInput as any).defaultProps = previousTextInputDefaultProps;
+    };
+  }, []);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -110,11 +140,11 @@ export default function VolunteerNavigator() {
         tabBarStyle: { backgroundColor: '#fff', borderTopColor: '#eee', paddingBottom: Math.max(insets.bottom, 12), height: 56 + Math.max(insets.bottom, 12) },
       })}
     >
+      <Tab.Screen name="Home" component={VolunteerHomeScreen} options={{ title: 'Home', headerShown: false }} />
       <Tab.Screen name="Dashboard" component={VolunteerDashboardScreen} options={{ title: 'Volunteer Dashboard' }} />
-      <Tab.Screen name="Projects" component={VolunteerProjectsScreen} options={{ title: 'Projects' }} />
+      <Tab.Screen name="Events" component={VolunteerEventsScreen} options={{ title: 'Events' }} />
       <Tab.Screen name="ProjectDetails" component={VolunteerProjectDetailsScreen} options={{ title: 'Project Details', tabBarButton: () => null }} />
       <Tab.Screen name="Tasks" component={VolunteerTasksScreen} options={{ title: 'My Tasks' }} />
-      <Tab.Screen name="Map" component={MappingScreen} options={{ title: 'Impact Map' }} />
       <Tab.Screen name="Messages" component={CommunicationHubScreen} options={{ title: 'Messages', tabBarBadge: messageUnreadCount > 0 ? messageUnreadCount : undefined }} />
       <Tab.Screen name="Reports" component={VolunteerReportsScreen} options={{ title: 'My Reports' }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ title: 'My Profile' }} />

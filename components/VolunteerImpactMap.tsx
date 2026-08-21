@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import MapView, { Callout, Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
 
 // Safe Platform accessor for web environments
@@ -255,6 +255,7 @@ type VolunteerImpactMapProps = {
   title?: string;
   subtitle?: string;
   initialMapStyleKey?: MapStylePresetKey;
+  dashboardVariant?: boolean;
   volunteerAccounts?: MapAccountOption[];
   partnerAccounts?: MapAccountOption[];
   onVolunteerPress?: (volunteerId: string) => void;

@@ -25,7 +25,7 @@ def _trace(message: str) -> None:
 RELATIONAL_TABLE_DDL = [
     f"""
     create table if not exists users (
-      id text primary key,
+      users_id text primary key,
       email text,
       password text not null,
       role text not null,
@@ -99,6 +99,7 @@ RELATIONAL_TABLE_DDL = [
             workplace_or_school text,
             college_course text,
             certifications_or_trainings text,
+            valid_id_photo text,
             video_briefing_url text,
             affiliations text not null default {JSON_ARRAY},
             registration_status text,
@@ -121,6 +122,7 @@ RELATIONAL_TABLE_DDL = [
     "alter table volunteers add column if not exists home_address_city_municipality text",
     "alter table volunteers add column if not exists home_address_barangay text",
     "alter table volunteers add column if not exists video_briefing_url text",
+    "alter table volunteers add column if not exists valid_id_photo text",
     f"""
     create table if not exists skills (
       skills_id text primary key,
@@ -505,8 +507,8 @@ RELATIONAL_TABLE_DDL = [
     "create index if not exists reports_project_id_idx on reports (project_id)",
     "create index if not exists reports_partner_user_id_idx on reports (partner_user_id)",
     "create index if not exists reports_generated_at_idx on reports (generated_at)",
-    "create index if not exists reports_generated_at_is_null_idx on reports (id) where generated_at is null",
-    "create index if not exists reports_generated_at_is_not_null_idx on reports (id) where generated_at is not null",
+    "create index if not exists reports_generated_at_is_null_idx on reports (reports_id) where generated_at is null",
+    "create index if not exists reports_generated_at_is_not_null_idx on reports (reports_id) where generated_at is not null",
     "create index if not exists reports_status_idx on reports (status)",
     "analyze reports",
     "alter table reports add column if not exists submitter_user_id text",
@@ -629,6 +631,7 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             ("workplace_or_school", False),
             ("college_course", False),
             ("certifications_or_trainings", False),
+            ("valid_id_photo", False),
             
             ("video_briefing_url", False),
             ("affiliations", False),
@@ -692,6 +695,7 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             ("volunteers", False),
             ("joined_user_ids", False),
             ("skills_needed", False),
+            ("volunteer_requirements", False),
             ("internal_tasks", False),
             ("created_at", False),
             ("updated_at", False),
@@ -767,6 +771,7 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             ("volunteers", False),
             ("joined_user_ids", False),
             ("skills_needed", False),
+            ("volunteer_requirements", False),
             ("internal_tasks", False),
             ("created_at", False),
             ("updated_at", False),
@@ -936,6 +941,7 @@ FIELD_NAME_MAPS: dict[str, dict[str, str]] = {
         "volunteersNeeded": "volunteers_needed",
         "joinedUserIds": "joined_user_ids",
         "skillsNeeded": "skills_needed",
+        "volunteerRequirements": "volunteer_requirements",
         "internalTasks": "internal_tasks",
         "createdAt": "created_at",
         "updatedAt": "updated_at",
@@ -979,6 +985,7 @@ FIELD_NAME_MAPS: dict[str, dict[str, str]] = {
         "volunteersNeeded": "volunteers_needed",
         "joinedUserIds": "joined_user_ids",
         "skillsNeeded": "skills_needed",
+        "volunteerRequirements": "volunteer_requirements",
         "internalTasks": "internal_tasks",
         "createdAt": "created_at",
         "updatedAt": "updated_at",
@@ -1082,8 +1089,6 @@ _NON_STANDARD_PK_TABLES: dict[str, str] = {
     "users": "users_id",
     "volunteers": "volunteers_id",
     "partners": "partners_id",
-    "projects": "projects_id",
-    "events": "events_id",
     "volunteer_matches": "volunteer_matches_id",
     "volunteer_event_joins": "volunteer_event_joins_id",
     "volunteer_time_logs": "volunteer_time_logs_id",
@@ -1091,13 +1096,11 @@ _NON_STANDARD_PK_TABLES: dict[str, str] = {
     "reports": "reports_id",
     "messages": "messages_id",
     "project_group_messages": "project_group_messages_id",
-    "program_tracks": "program_tracks_id",
     "admin_planning_calendars": "admin_planning_calendars_id",
     "admin_planning_items": "admin_planning_items_id",
     "status_updates": "status_updates_id",
     "skills": "skills_id",
     "tasks": "tasks_id",
-    "programs": "programs_id",
 }
 
 
@@ -1404,6 +1407,7 @@ def _normalize_row(key: str, item: dict[str, Any]) -> tuple[Any, ...]:
             _normalize_string_list(item.get("volunteers")),
             _normalize_string_list(item.get("joinedUserIds")),
             _normalize_skills_needed(item),
+            _normalize_string_list(item.get("volunteerRequirements")),
             _json_dump(item.get("internalTasks"), []),
             item.get("createdAt"),
             item.get("updatedAt"),
@@ -1476,6 +1480,7 @@ def _normalize_row(key: str, item: dict[str, Any]) -> tuple[Any, ...]:
             _normalize_string_list(item.get("volunteers")),
             _normalize_string_list(item.get("joinedUserIds")),
             _normalize_skills_needed(item),
+            _normalize_string_list(item.get("volunteerRequirements")),
             _json_dump(item.get("internalTasks"), []),
             item.get("createdAt"),
             item.get("updatedAt"),
@@ -1707,6 +1712,7 @@ def _row_to_item(key: str, row: dict[str, Any]) -> dict[str, Any]:
             "workplaceOrSchool": row.get("workplace_or_school"),
             "collegeCourse": row.get("college_course"),
             "certificationsOrTrainings": row.get("certifications_or_trainings"),
+            "validIdPhoto": row.get("valid_id_photo"),
             "videoBriefingUrl": row.get("video_briefing_url"),
             "affiliations": _json_load(row.get("affiliations"), []),
             "registrationStatus": row.get("registration_status"),
@@ -1766,6 +1772,7 @@ def _row_to_item(key: str, row: dict[str, Any]) -> dict[str, Any]:
             "volunteers": row.get("volunteers") or [],
             "joinedUserIds": row.get("joined_user_ids") or [],
             "skillsNeeded": row.get("skills_needed") or [],
+            "volunteerRequirements": row.get("volunteer_requirements") or [],
             "internalTasks": _json_load(row.get("internal_tasks"), []),
             "createdAt": row.get("created_at"),
             "updatedAt": row.get("updated_at"),
@@ -1838,6 +1845,7 @@ def _row_to_item(key: str, row: dict[str, Any]) -> dict[str, Any]:
             "volunteers": row.get("volunteers") or [],
             "joinedUserIds": row.get("joined_user_ids") or [],
             "skillsNeeded": row.get("skills_needed") or [],
+            "volunteerRequirements": row.get("volunteer_requirements") or [],
             "internalTasks": _json_load(row.get("internal_tasks"), []),
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
@@ -2341,6 +2349,7 @@ def sync_relational_mirror_collection(connection: Any, key: str, items: list[Any
 
     normalized_items = [item for item in items if isinstance(item, dict) and item.get("id")]
     rows = [_normalize_row(key, item) for item in normalized_items]
+    print(f"[TRACE] sync_relational_mirror_collection: key={key}, items={len(items)}, normalized_items={len(normalized_items)}, rows={len(rows)}")
     column_names = [column_name for column_name, _ in spec["columns"]]
     placeholders = ["%s" for _ in spec["columns"]]
     filter_clause = _row_filter_clause(key)
@@ -2680,3 +2689,4 @@ def upsert_relational_item(connection: Any, key: str, item: dict[str, Any]) -> d
         _sync_task_rows_from_project_event_items(connection, [item])
 
     return item
+

@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { PartnerProjectApplication } from '../../models/types';
 import { format } from 'date-fns';
 
@@ -87,12 +87,7 @@ export default function ProposalCard({
           </View>
         </View>
 
-        {proposalDetails?.communityNeed && (
-          <View style={styles.narrativeSection}>
-            <Text style={styles.narrativeLabel}>Community Need</Text>
-            <Text style={styles.narrativeText} numberOfLines={2}>{proposalDetails.communityNeed}</Text>
-          </View>
-        )}
+
       </View>
 
       {isAdmin && status === 'Pending' && (

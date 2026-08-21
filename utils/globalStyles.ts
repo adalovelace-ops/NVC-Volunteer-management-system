@@ -12,24 +12,24 @@ export const globalTextStyles = StyleSheet.create({
     fontWeight: Platform.OS === 'web' ? '400' : undefined,
   },
   textLight: {
-    fontFamily: Platform.OS === 'web' ? GLOBAL_FONT_FAMILY : FONT_WEIGHTS.light as string,
-    fontWeight: Platform.OS === 'web' ? '300' : undefined,
+    fontFamily: GLOBAL_FONT_FAMILY,
+    fontWeight: '300',
   },
   textRegular: {
-    fontFamily: Platform.OS === 'web' ? GLOBAL_FONT_FAMILY : FONT_WEIGHTS.normal as string,
-    fontWeight: Platform.OS === 'web' ? '400' : undefined,
+    fontFamily: GLOBAL_FONT_FAMILY,
+    fontWeight: '400',
   },
   textSemiBold: {
-    fontFamily: Platform.OS === 'web' ? GLOBAL_FONT_FAMILY : FONT_WEIGHTS.semibold as string,
-    fontWeight: Platform.OS === 'web' ? '600' : undefined,
+    fontFamily: GLOBAL_FONT_FAMILY,
+    fontWeight: '600',
   },
   textBold: {
-    fontFamily: Platform.OS === 'web' ? GLOBAL_FONT_FAMILY : FONT_WEIGHTS.bold as string,
-    fontWeight: Platform.OS === 'web' ? '700' : undefined,
+    fontFamily: GLOBAL_FONT_FAMILY,
+    fontWeight: '700',
   },
   textExtraBold: {
-    fontFamily: Platform.OS === 'web' ? GLOBAL_FONT_FAMILY : FONT_WEIGHTS.extrabold as string,
-    fontWeight: Platform.OS === 'web' ? '800' : undefined,
+    fontFamily: GLOBAL_FONT_FAMILY,
+    fontWeight: '800',
   },
 });
 
@@ -38,14 +38,14 @@ export const globalTextStyles = StyleSheet.create({
  */
 export function getFontStyle(weight: 'light' | 'normal' | 'semibold' | 'bold' | 'extrabold' = 'normal') {
   return {
-    fontFamily: Platform.OS === 'web' ? GLOBAL_FONT_FAMILY : FONT_WEIGHTS[weight] as string,
-    fontWeight: Platform.OS === 'web' ? {
+    fontFamily: GLOBAL_FONT_FAMILY,
+    fontWeight: {
       light: '300',
       normal: '400',
       semibold: '600',
       bold: '700',
       extrabold: '800',
-    }[weight] : undefined,
+    }[weight] as any,
   };
 }
 

@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $pidDir = Join-Path $projectRoot '.dev-pids'
@@ -8,44 +8,56 @@ if (-not (Test-Path $pidDir)) {
   exit 1
 }
 
-$services = @('backend', 'expo')
+$services = @('backend', 'web')
 $healthyCount = 0
 
-foreach ($service in $services) {
-  $pidFile = Join-Path $pidDir ("$service.pid")
+function Test-ServiceHealth {
+  param(
+    [Parameter(Mandatory = $true)][string]$Service
+  )
 
-  if (-not (Test-Path $pidFile)) {
-    Write-Host "${service}: stopped"
+  $url = if ($Service -eq 'backend') { 'http://127.0.0.1:8000/health' } else { 'http://127.0.0.1:8081/' }
+
+  try {
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 5
+    return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500)
+  } catch {
+    return $false
+  }
+}
+
+foreach ($service in $services) {
+  $pidFile = Join-Path $pidDir ($service + '.pid')
+  $isHealthy = Test-ServiceHealth -Service $service
+  $pidValue = $null
+
+  if (Test-Path $pidFile) {
+    $pidValue = Get-Content $pidFile -ErrorAction SilentlyContinue
+  }
+
+  if ($isHealthy) {
+    if ($pidValue) {
+      Write-Host ($service + ': running (PID ' + $pidValue + ', health check passed)')
+    } else {
+      Write-Host ($service + ': running (health check passed)')
+    }
+    $healthyCount++
     continue
   }
 
-  $pidValue = Get-Content $pidFile -ErrorAction SilentlyContinue
   if (-not $pidValue) {
-    Write-Host "${service}: stopped (empty pid file)"
-    Remove-Item $pidFile -ErrorAction SilentlyContinue
+    Write-Host ($service + ': stopped')
     continue
   }
 
   $process = Get-Process -Id ([int]$pidValue) -ErrorAction SilentlyContinue
   if (-not $process) {
-    Write-Host "${service}: stopped (stale pid file removed)"
+    Write-Host ($service + ': stopped (stale pid file removed)')
     Remove-Item $pidFile -ErrorAction SilentlyContinue
     continue
   }
 
-  if ($service -eq 'backend') {
-    $listener = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($listener) {
-      Write-Host "${service}: running (PID $pidValue, port 8000 listening)"
-      $healthyCount++
-    } else {
-      Write-Host "${service}: unhealthy (PID $pidValue alive, port 8000 not listening)"
-    }
-    continue
-  }
-
-  Write-Host "${service}: running (PID $pidValue)"
-  $healthyCount++
+  Write-Host ($service + ': unhealthy (PID ' + $pidValue + ' alive, health check failed)')
 }
 
 if ($healthyCount -lt 2) {

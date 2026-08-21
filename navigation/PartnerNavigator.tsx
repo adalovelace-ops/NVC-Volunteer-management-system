@@ -1,10 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { MaterialIcons } from '@expo/vector-icons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ScreenBrandHeader from '../components/ScreenBrandHeader';
 import { useAuth } from '../contexts/AuthContext';
 import { getMessagesForUser, subscribeToMessages, getAllUsers, subscribeToStorageChanges, markMessageAsRead } from '../models/storage';
+import PartnerDashboardScreen from '../screens/PartnerDashboardScreen';
+import PartnerProgramManagementScreen from '../screens/PartnerProgramManagementScreen';
+import PartnerProjectsScreen from '../screens/PartnerProjectsScreen';
+import MappingScreen from '../screens/MappingScreen';
+import CommunicationHubScreen from '../screens/CommunicationHubScreen';
+import PartnerReportsScreen from '../screens/PartnerReportsScreen';
+import ProfileScreen from '../screens/ProfileScreen';
 
 export type PartnerTabParamList = {
   Dashboard: { openProposalModule?: string } | undefined;
@@ -24,21 +31,6 @@ export type PartnerTabParamList = {
 };
 
 const Tab = createBottomTabNavigator<PartnerTabParamList>();
-
-function lazyScreen<T extends object>(loader: () => { default: React.ComponentType<T> }) {
-  return function LazyLoadedScreen(props: T) {
-    const Component = loader().default;
-    return <Component {...props} />;
-  };
-}
-
-const PartnerDashboardScreen = lazyScreen(() => require('../screens/PartnerDashboardScreen'));
-const PartnerProgramManagementScreen = lazyScreen(() => require('../screens/PartnerProgramManagementScreen'));
-const PartnerProjectsScreen = lazyScreen(() => require('../screens/PartnerProjectsScreen'));
-const MappingScreen = lazyScreen(() => require('../screens/MappingScreen'));
-const CommunicationHubScreen = lazyScreen(() => require('../screens/CommunicationHubScreen'));
-const PartnerReportsScreen = lazyScreen(() => require('../screens/PartnerReportsScreen'));
-const ProfileScreen = lazyScreen(() => require('../screens/ProfileScreen'));
 
 const getIconName = (routeName: keyof PartnerTabParamList) => {
   switch (routeName) {

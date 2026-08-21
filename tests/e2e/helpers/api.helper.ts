@@ -86,7 +86,7 @@ export async function getPendingUsers(): Promise<any[]> {
   return [];
 }
 
-export async function approveUser(userId: string, adminId: string = 'admin-1'): Promise<any> {
+export async function approveUser(userId: string, adminId: string = 'user-admin-1780189738'): Promise<any> {
   return apiCall(
     `/auth/users/${encodeURIComponent(userId)}/approve?admin_id=${encodeURIComponent(adminId)}`,
     'POST',
@@ -114,7 +114,7 @@ export async function submitPartnerProposal(
 export async function reviewPartnerApplication(
   applicationId: string,
   status: 'Approved' | 'Rejected',
-  reviewedBy: string = 'admin-1',
+  reviewedBy: string = 'user-admin-1780189738',
   reviewNotes?: string
 ): Promise<any> {
   return apiCall(

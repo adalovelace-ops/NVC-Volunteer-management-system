@@ -14,7 +14,7 @@ function isIgnoredInterface(name) {
   );
 }
 
-// Picks the most likely LAN IPv4 address for Expo Go and device-to-backend access.
+// Picks the most likely LAN IPv4 address for device-to-backend access.
 function getPreferredLanIp() {
   const override = process.env.VOLCRE_LAN_IP?.trim();
   if (override) {

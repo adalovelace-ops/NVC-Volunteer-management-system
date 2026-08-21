@@ -11,11 +11,53 @@ import {
   ScrollView,
   Image,
   Pressable,
+  Platform,
 } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useFocusEffect } from '@react-navigation/native';
 import InlineLoadError from '../components/InlineLoadError';
 import { useAuth } from '../contexts/AuthContext';
+import Svg, { Circle, Path, G } from 'react-native-svg';
+
+function EmptyTasksIllustration() {
+  return (
+    <Svg width={180} height={140} viewBox="0 0 180 140" fill="none">
+      <Circle cx={90} cy={75} r={40} fill="#E4EEE7" opacity={0.5} />
+      <G opacity={0.65}>
+        <Path d="M45,82 C48,70 58,68 62,65 C63,71 58,82 45,82 Z" fill="#6B8F71" />
+        <Path d="M52,65 C54,55 62,53 66,51 C67,56 63,65 52,65 Z" fill="#6B8F71" />
+        <Path d="M58,95 C62,88 70,88 74,86 C74,91 69,96 58,95 Z" fill="#6B8F71" />
+        <Path d="M38,78 L65,85" stroke="#6B8F71" strokeWidth={1.5} strokeLinecap="round" />
+      </G>
+      <G opacity={0.65}>
+        <Path d="M135,82 C132,70 122,68 118,65 C117,71 122,82 135,82 Z" fill="#6B8F71" />
+        <Path d="M128,65 C126,55 118,53 114,51 C113,56 117,65 128,65 Z" fill="#6B8F71" />
+        <Path d="M122,95 C118,88 110,88 106,86 C106,91 111,96 122,95 Z" fill="#6B8F71" />
+        <Path d="M142,78 L115,85" stroke="#6B8F71" strokeWidth={1.5} strokeLinecap="round" />
+      </G>
+      <Path
+        d="M72,40 L108,40 C112,40 115,43 115,47 L115,108 C115,112 112,115 108,115 L72,115 C68,115 65,112 65,108 L65,47 C65,43 68,40 72,40 Z"
+        fill="#ffffff"
+        stroke="#6B8F71"
+        strokeWidth={3}
+      />
+      <Path
+        d="M82,40 L82,34 C82,31 84,29 87,29 L93,29 C96,29 98,31 98,34 L98,40 Z"
+        fill="#6B8F71"
+      />
+      <Circle cx={90} cy={77} r={18} fill="#E4EEE7" />
+      <Path
+        d="M84,77 L88,81 L96,73"
+        stroke="#3F7A54"
+        strokeWidth={3}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Path d="M75,100 L95,100" stroke="#E4EEE7" strokeWidth={2.5} strokeLinecap="round" />
+      <Path d="M75,106 L87,106" stroke="#E4EEE7" strokeWidth={2.5} strokeLinecap="round" />
+    </Svg>
+  );
+}
 import {
   getAllVolunteers,
   getAllProjects,
@@ -657,7 +699,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
     const isAssigned = tasks.some(task => task.projectId === projectId);
     const attendanceState = getTaskEventAttendanceState(project, isAssigned, projectLogs);
 
-    if (!attendanceState.canConfirmAttendance) {
+    if (!attendanceState.canConfirmAttendance && !attendanceState.eventHasNotStarted) {
       Alert.alert('Attendance Unavailable', attendanceState.helperText);
       return;
     }
@@ -1460,17 +1502,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
             </Text>
             <Text style={styles.taskGroupStatLabel}>Attendance</Text>
           </View>
-          <View style={styles.taskGroupStatCard}>
-            <Text
-              style={styles.taskGroupStatValue}
-              numberOfLines={2}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-            >
-              {formatVolunteerTime(totalVolunteerMinutes)}
-            </Text>
-            <Text style={styles.taskGroupStatLabel}>Volunteer Time</Text>
-          </View>
+
           <View style={styles.taskGroupStatCard}>
             <Text
               style={styles.taskGroupStatValue}
@@ -1586,28 +1618,28 @@ export default function VolunteerTasksScreen({ navigation }: any) {
       <View style={styles.taskSummaryRow}>
         <View style={styles.taskSummaryCard}>
           <View style={styles.taskSummaryIconWrap}>
-            <MaterialIcons name="assignment" size={16} color="#166534" />
+            <MaterialIcons name="assignment" size={18} color="#3F7A54" />
           </View>
           <Text style={styles.taskSummaryValue}>{tasks.length}</Text>
           <Text style={styles.taskSummaryLabel}>Total</Text>
         </View>
         <View style={styles.taskSummaryCard}>
           <View style={styles.taskSummaryIconWrap}>
-            <MaterialIcons name="bookmark-added" size={16} color="#166534" />
+            <MaterialIcons name="bookmark" size={18} color="#3F7A54" />
           </View>
           <Text style={styles.taskSummaryValue}>{assignedCount}</Text>
           <Text style={styles.taskSummaryLabel}>Assigned</Text>
         </View>
         <View style={styles.taskSummaryCard}>
           <View style={styles.taskSummaryIconWrap}>
-            <MaterialIcons name="pending-actions" size={16} color="#166534" />
+            <MaterialIcons name="pending-actions" size={18} color="#3F7A54" />
           </View>
           <Text style={styles.taskSummaryValue}>{inProgressCount}</Text>
           <Text style={styles.taskSummaryLabel}>In Progress</Text>
         </View>
         <View style={styles.taskSummaryCard}>
           <View style={styles.taskSummaryIconWrap}>
-            <MaterialIcons name="task-alt" size={16} color="#166534" />
+            <MaterialIcons name="task-alt" size={18} color="#3F7A54" />
           </View>
           <Text style={styles.taskSummaryValue}>{completedCount}</Text>
           <Text style={styles.taskSummaryLabel}>Completed</Text>
@@ -1615,14 +1647,45 @@ export default function VolunteerTasksScreen({ navigation }: any) {
       </View>
 
       {tasks.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <MaterialIcons name="check-circle-outline" size={64} color="#ccc" />
-          <Text style={styles.emptyTitle}>No tasks assigned yet</Text>
-          <Text style={styles.emptySubtitle}>
-            {hasFieldOfficerAccess
-              ? 'You can still manage assignments in your field officer events above.'
-              : 'Tasks will appear here when admins or field officers assign work to you inside an event'}
-          </Text>
+        <View style={styles.emptyCardContainer}>
+          <View style={styles.emptyStateCard}>
+            <View style={styles.emptyIllustrationWrap}>
+              <EmptyTasksIllustration />
+            </View>
+            <Text style={styles.emptyStateTitle}>No tasks assigned yet</Text>
+            <Text style={styles.emptyStateSubtitle}>
+              Tasks will appear here when admins or field officers assign work to you inside an event.
+            </Text>
+            <TouchableOpacity
+              style={styles.emptyStateBtn}
+              onPress={() => navigation.navigate('Events' as any)}
+              activeOpacity={0.8}
+            >
+              <MaterialIcons name="event" size={16} color="#fff" style={{ marginRight: 6 }} />
+              <Text style={styles.emptyStateBtnText}>View My Events</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Tip Card */}
+          <View style={styles.tipCard}>
+            <View style={styles.tipIconWrap}>
+              <MaterialIcons name="lightbulb-outline" size={18} color="#fff" />
+            </View>
+            <View style={styles.tipContent}>
+              <Text style={styles.tipTitle}>Tip</Text>
+              <Text style={styles.tipDesc}>
+                Keep an eye on your tasks and stay updated with your events.
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.tipBtn}
+              onPress={() => navigation.navigate('Events' as any)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.tipBtnText}>Go to Events</Text>
+              <MaterialIcons name="chevron-right" size={16} color="#3F7A54" />
+            </TouchableOpacity>
+          </View>
         </View>
       ) : (
         <>
@@ -1855,15 +1918,15 @@ export default function VolunteerTasksScreen({ navigation }: any) {
                             style={[
                               styles.attendanceButton,
                               styles.timeInButton,
-                              !attendanceState.canConfirmAttendance && styles.attendanceButtonDisabled,
+                              !attendanceState.canConfirmAttendance && !attendanceState.eventHasNotStarted && styles.attendanceButtonDisabled,
                             ]}
                             onPress={() => void handleConfirmAttendanceForProject(selectedTaskGroup.projectId)}
-                            disabled={!attendanceState.canConfirmAttendance}
+                            disabled={!attendanceState.canConfirmAttendance && !attendanceState.eventHasNotStarted}
                           >
-                            <MaterialIcons name="verified-user" size={18} color="#fff" />
+                            <MaterialIcons name={attendanceState.eventHasNotStarted ? "photo-camera" : "verified-user"} size={18} color="#fff" />
                             <Text style={styles.attendanceButtonText}>
                               {attendanceState.eventHasNotStarted
-                                ? 'Await Start'
+                                ? 'Submit Photo'
                                 : attendanceState.hasConfirmedToday
                                 ? 'Done Today'
                                 : attendanceState.eventHasEnded
@@ -2483,7 +2546,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#FAF5E9',
   },
   attendanceNoticeOverlay: {
     position: 'absolute',
@@ -2522,20 +2585,21 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    paddingVertical: 18,
+    backgroundColor: 'transparent',
   },
   headerTitle: {
-    fontSize: 17,
-    fontWeight: 'bold',
-    color: '#0f172a',
-    marginBottom: 2,
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
+    fontSize: 23,
+    fontWeight: '700',
+    color: '#1F3A2E',
+    marginBottom: 4,
   },
   headerSubtitle: {
-    fontSize: 11,
-    color: '#666',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
+    fontSize: 13,
+    color: '#5B564C',
+    lineHeight: 18,
   },
   topTabBar: {
     flexDirection: 'row',
@@ -3862,5 +3926,106 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#166534',
+  },
+  emptyCardContainer: {
+    marginHorizontal: 16,
+    marginTop: 18,
+    gap: 16,
+    paddingBottom: 24,
+  },
+  emptyStateCard: {
+    backgroundColor: 'rgba(63,122,84,0.03)',
+    borderWidth: 1,
+    borderColor: '#DED2B4',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+  },
+  emptyIllustrationWrap: {
+    marginBottom: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyStateTitle: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1F3A2E',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptyStateSubtitle: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
+    fontSize: 13,
+    color: '#5B564C',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 20,
+    paddingHorizontal: 10,
+  },
+  emptyStateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#3F7A54',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 100,
+  },
+  emptyStateBtnText: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
+    color: '#ffffff',
+    fontWeight: '700',
+    fontSize: 13.5,
+  },
+  tipCard: {
+    backgroundColor: '#F2E9D8',
+    borderWidth: 1,
+    borderColor: '#DED2B4',
+    borderRadius: 20,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  tipIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#6B8F71',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tipContent: {
+    flex: 1,
+  },
+  tipTitle: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1F3A2E',
+    marginBottom: 2,
+  },
+  tipDesc: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
+    fontSize: 11.5,
+    color: '#5B564C',
+    lineHeight: 15,
+  },
+  tipBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 100,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#DED2B4',
+  },
+  tipBtnText: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
+    color: '#3F7A54',
+    fontWeight: '700',
+    fontSize: 11.5,
+    marginRight: 2,
   },
 });

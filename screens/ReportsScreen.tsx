@@ -880,14 +880,8 @@ export default function ReportsScreen({ navigation, route }: any) {
   );
 
   const volunteerEventProjects = useMemo(() => {
-    if (user?.role !== 'volunteer') {
-      return projects;
-    }
-
-    return projects.filter(
-      project => project.isEvent && volunteerTimedInProjectIds.includes(project.id)
-    );
-  }, [projects, user?.role, volunteerTimedInProjectIds]);
+    return projects;
+  }, [projects]);
 
   const handleOpenUploadModal = useCallback(() => {
     if (user?.role === 'volunteer' && volunteerEventProjects.length === 0) {

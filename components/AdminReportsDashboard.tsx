@@ -11,9 +11,9 @@ import {
   ActivityIndicator,
   useWindowDimensions,
 } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
-import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+import RNFS from 'react-native-fs';
+import Share from 'react-native-share';
 import DownloadPreviewModal from './DownloadPreviewModal';
 import type { SubmittedReport } from '../screens/ReportsScreen';
 import type { Project, Volunteer } from '../models/types';
@@ -174,6 +174,7 @@ async function downloadFile(
 ) {
   const safeFilename = filename.replace(/[\\/:*?"<>|]+/g, '-');
 
+  // Web version: use browser download
   if (typeof document !== 'undefined' && typeof window !== 'undefined') {
     const blob = new Blob([content], { type });
     const url = window.URL.createObjectURL(blob);
@@ -187,26 +188,25 @@ async function downloadFile(
     return;
   }
 
+  // Native version: use file system and share
   try {
-    const sharingAvailable = await Sharing.isAvailableAsync();
-    if (!sharingAvailable) {
-      Alert.alert('Download Unavailable', fallbackMessage);
-      return;
-    }
+    const cachePath = RNFS.CachesDirectoryPath;
+    const filePath = `${cachePath}/${safeFilename}`;
+    
+    // Write file to cache
+    await RNFS.writeFile(filePath, content, 'utf8');
 
-    const file = new File(Paths.cache, safeFilename);
-    if (file.exists) {
-      file.delete();
-    }
-    file.create();
-    file.write(content);
-
-    await Sharing.shareAsync(file.uri, {
-      mimeType: type,
-      dialogTitle: safeFilename,
-      UTI: type === 'application/pdf' ? 'com.adobe.pdf' : undefined,
+    // Share the file
+    await Share.open({
+      url: `file://${filePath}`,
+      type: type,
+      filename: safeFilename,
     });
   } catch (error) {
+    if (error instanceof Error && error.message === 'User did not share') {
+      // User cancelled, don't show error
+      return;
+    }
     console.error('Unable to save report file:', error);
     Alert.alert('Download Failed', fallbackMessage);
   }
@@ -624,11 +624,7 @@ export default function AdminReportsDashboard({
       );
 
     const volunteerReports = [...reports]
-      .filter(
-        report =>
-          report.submitterRole === 'volunteer' &&
-          report.reportType !== 'field_report'
-      )
+      .filter(report => report.submitterRole === 'volunteer')
       .sort(
         (left, right) =>
           new Date(right.submittedAt).getTime() -
@@ -648,17 +644,6 @@ export default function AdminReportsDashboard({
     const partnerEventGroups = groupReportsByEvent(partnerReports, eventsById);
 
     return [
-      {
-        key: 'all',
-        label: 'Field Reports',
-        subtitle: 'Assigned field officer submissions',
-        count: fieldEventGroups.length,
-        accent: '#d9f2de',
-        panel: '#2f8f45',
-        card: '#4aa764',
-        chips: ['Events', 'Accounts', 'Reports'],
-        reports: fieldReports,
-      },
       {
         key: 'volunteer',
         label: 'Volunteer Reports',
@@ -759,23 +744,7 @@ export default function AdminReportsDashboard({
             </TouchableOpacity>
           </View>
 
-          <View style={styles.tabBar}>
-            <Text style={styles.tabItem}>Reports</Text>
-            <Text style={styles.tabDivider}>|</Text>
-            <Text style={styles.tabDivider}>+</Text>
-          </View>
 
-          <View style={styles.kpiRow}>
-            <Text style={styles.kpiText}>Volunteer Event Joins: {summary.volunteerEventJoins}</Text>
-            <Text style={styles.kpiText}>
-              Attendance Metrics: {summary.verifiedAttendance}
-            </Text>
-            <Text style={styles.kpiText}>
-              Beneficiaries: {summary.beneficiariesServed}
-            </Text>
-            <Text style={styles.kpiText}>Projects: {projects.length}</Text>
-            <Text style={styles.kpiText}>Volunteers: {volunteers.length}</Text>
-          </View>
 
           <View style={[styles.board, !isDesktop && styles.boardStacked]}>
             {columns.map(column => {

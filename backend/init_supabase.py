@@ -1,12 +1,12 @@
 try:
     from .app_storage_seed import ensure_app_storage_table, ensure_postgres_hot_storage_tables
-    from .db import get_connection
+    from .db import get_connection, load_environment
     from .operation_guard import SCHEMA_SETUP_UNLOCK_ENV_VAR, require_shared_db_unlock
     from .relational_mirror import ensure_relational_mirror_tables
     from .schema_maintenance import maintain_schema_health
 except ImportError:
     from app_storage_seed import ensure_app_storage_table, ensure_postgres_hot_storage_tables
-    from db import get_connection
+    from db import get_connection, load_environment
     from operation_guard import SCHEMA_SETUP_UNLOCK_ENV_VAR, require_shared_db_unlock
     from relational_mirror import ensure_relational_mirror_tables
     from schema_maintenance import maintain_schema_health
@@ -15,7 +15,7 @@ except ImportError:
 BASE_DDL = [
     """
     create table if not exists messages (
-      messages_id text primary key,
+      id text primary key,
       sender_id text not null references users(users_id) on delete cascade,
       recipient_id text not null references users(users_id) on delete cascade,
       project_id text,
@@ -27,7 +27,7 @@ BASE_DDL = [
     """,
     """
     create table if not exists project_group_messages (
-      project_group_messages_id text primary key,
+      id text primary key,
       project_id text not null,
       sender_id text not null references users(users_id) on delete cascade,
       content text not null,
@@ -48,6 +48,7 @@ BASE_DDL = [
 
 # Creates or updates the backend schema used by the volunteer system.
 def main() -> None:
+    load_environment()
     require_shared_db_unlock("schema setup and maintenance", SCHEMA_SETUP_UNLOCK_ENV_VAR)
 
     ensure_app_storage_table()

@@ -29,11 +29,11 @@ test('Send message in TEST EVENT group chat', async ({ page }) => {
   await page.waitForTimeout(1500);
   console.log('✅ Event GC tab clicked');
   
-  // Look for TEST EVENT in the list
-  console.log('🔍 Looking for TEST EVENT...');
-  const testEvent = page.locator('text=TEST EVENT');
+  // Look for TEST EVENT or Baybay Nutrition Distribution Day in the list
+  console.log('🔍 Looking for TEST EVENT or Baybay Nutrition Distribution Day...');
+  const testEvent = page.locator('text=TEST EVENT').or(page.locator('text=Baybay Nutrition Distribution Day')).first();
   await expect(testEvent).toBeVisible({ timeout: 10000 });
-  console.log('✅ Found TEST EVENT');
+  console.log('✅ Found event');
   
   await testEvent.click();
   await page.waitForTimeout(2000);

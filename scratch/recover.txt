@@ -1,0 +1,1034 @@
+--- a/screens/CommunicationHubScreen.tsx
+-import React, { useCallback, useEffect, useRef, useState } from 'react';
+-  deleteProjectGroupChat,
+-
+-  getConversation,
+-
+-  getMessagesForUser,
+-
+-  getProjectGroupMessages,
+-
+-  markMessageAsRead,
+-
+-  saveMessage,
+-
+-  saveProjectGroupMessage,
+-
+-  subscribeToMessages,
+-
+-
+-
+-
+-
+-
+-
+-};
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-    : ['messages', 'projects', 'contacts'];
+-
+-
+-      const [usersResult, snapshotResult, messagesResult, partnerApplicationsResult] = await Promise.allSettled([
+-      ]);
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-        
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-    const timer = setTimeout(() => {
+-
+-
+-
+-
+-
+-
+-    if (app.status !== 'Pending') {
+-
+-
+-
+-      
+-                return { ...msg, content: PROPOSAL_PREFIX + JSON.stringify(updatedApp) };
+-
+-
+-
+-  const filteredConversations = conversations.filter(c => c.user.name.toLowerCase().includes(searchText.toLowerCase()));
+-
+-  const filteredProjects = projectChats.filter(c => c.project.title.toLowerCase().includes(searchText.toLowerCase()));
+-
+-  const filteredProposals = proposalChats.filter(c => c.application.partnerName.toLowerCase().includes(searchText.toLowerCase()) || c.projectTitle.toLowerCase().includes(searchText.toLowerCase()));
+-
+-  const filteredUsers = allUsers.filter(u => u.name.toLowerCase().includes(searchText.toLowerCase()));
+-
+-  const pendingProposalCount = pendingProposalChats.length;
+-
+-
+-
+-  const renderSidebarItem = (
+-
+-    id: string,
+-
+-    title: string,
+-
+-    subtitle: string,
+-
+-    active: boolean,
+-
+-    onPress: () => void,
+-
+-    options?: { avatar?: string; icon?: string; badge?: number; color?: string }
+-
+-  ) => (
+-
+-    <TouchableOpacity
+-
+-      key={id}
+-
+-      style={[styles.sidebarItem, active && styles.sidebarItemActive]}
+-
+-      onPress={onPress}
+-
+-      activeOpacity={0.7}
+-
+-    >
+-
+-      <View style={[styles.sidebarAvatar, { backgroundColor: options?.color || '#166534' }]}>
+-
+-        {options?.icon ? (
+-
+-          <MaterialIcons name={options.icon as any} size={20} color="#fff" />
+-
+-        ) : (
+-          <Text style={styles.sidebarAvatarText}>{title[0].toUpperCase()}</Text>
+-        )}
+-      </View>
+-      <View style={styles.sidebarItemInfo}>
+-        <View style={styles.sidebarItemHeader}>
+-          <Text style={[styles.sidebarItemTitle, active && styles.sidebarItemTitleActive]} numberOfLines={1}>
+-            {title}
+-          </Text>
+-          {options?.badge ? (
+-            <View style={styles.sidebarBadge}>
+-              <Text style={styles.sidebarBadgeText}>{options.badge}</Text>
+-
+-          ) : null}
+-
+-        <Text style={[styles.sidebarItemSubtitle, active && styles.sidebarItemSubtitleActive]} numberOfLines={1}>
+-
+-          {subtitle}
+-
+-        </Text>
+-
+-      </View>
+-
+-    </TouchableOpacity>
+-
+-  );
+-
+-
+-
+-  const renderSidebar = () => (
+-
+-    <View style={[styles.sidebar, !isWide && view === 'detail' && styles.hidden]}>
+-
+-      <View style={styles.sidebarHeader}>
+-
+-        <Text style={styles.sidebarHeaderTitle}>Messages</Text>
+-
+-        <TouchableOpacity style={styles.sidebarHeaderAction}>
+-
+-          <Ionicons name="create-outline" size={22} color="#166534" />
+-
+-        </TouchableOpacity>
+-
+-      </View>
+-
+-
+-
+-      <View style={styles.searchBox}>
+-
+-        <Ionicons name="search-outline" size={18} color="#94a3b8" />
+-
+-        <TextInput
+-
+-          style={styles.searchInput}
+-
+-          placeholder="Search..."
+-
+-          value={searchText}
+-
+-          onChangeText={setSearchText}
+-
+-          placeholderTextColor="#94a3b8"
+-
+-        />
+-
+-      </View>
+-
+-
+-
+-      {!isTablet && (
+-
+-        <View style={styles.sectionTabs}>
+-
+-          {availableSections.map(section => {
+-
+-            const sectionMeta = getSidebarSectionMeta(section);
+-
+-            return (
+-
+-
+-                key={section}
+-
+-                onPress={() => setActiveSection(section)}
+-
+-                style={[styles.sectionTab, activeSection === section && styles.sectionTabActive]}
+-
+-
+-                <View style={[styles.sectionTabIconWrap, activeSection === section && styles.sectionTabIconWrapActive]}>
+-
+-                  <MaterialIcons
+-
+-                    name={sectionMeta.icon}
+-
+-                    size={18}
+-
+-                    color={activeSection === section ? '#ffffff' : '#166534'}
+-
+-                  />
+-
+-                </View>
+-
+-                <Text style={[styles.sectionTabText, activeSection === section && styles.sectionTabTextActive]}>
+-
+-                  {sectionMeta.label}
+-
+-                </Text>
+-
+-                {section === 'proposals' && pendingProposalCount > 0 ? (
+-
+-                  <View style={[styles.sectionTabBadge, activeSection === section && styles.sectionTabBadgeActive]}>
+-
+-                    <Text
+-
+-                      style={[
+-
+-                        styles.sectionTabBadgeText,
+-
+-                        activeSection === section && styles.sectionTabBadgeTextActive,
+-
+-                      ]}
+-
+-                    >
+-
+-                      {pendingProposalCount}
+-
+-                    </Text>
+-
+-                  </View>
+-
+-                ) : null}
+-
+-            );
+-
+-          })}
+-
+-        </View>
+-
+-      )}
+-
+-
+-
+-      <ScrollView style={styles.sidebarList}>
+-
+-        {activeSection === 'messages' && (
+-
+-          <>
+-
+-            <Text style={styles.listSectionLabel}>General</Text>
+-
+-            {renderSidebarItem('admin-nvc', 'Admin NVC', 'System support and updates', false, () => {
+-
+-              const admin = allUsers.find(u => u.role === 'admin');
+-
+-              if (admin) {
+-
+-                setSelectedUser(admin); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail');
+-
+-              } else {
+-
+-                Alert.alert('Notice', 'Admin contact not available in this session.');
+-
+-              }
+-
+-            }, { icon: 'verified-user', color: '#0369a1' })}
+-
+-
+-
+-            <Text style={styles.listSectionLabel}>Conversations</Text>
+-
+-            {filteredConversations.length > 0 ? (
+-
+-              filteredConversations.map(c => renderSidebarItem(
+-
+-                c.user.id,
+-
+-                c.user.name,
+-
+-                c.lastMessage?.content || 'Start a conversation',
+-
+-                selectedUser?.id === c.user.id,
+-
+-                () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
+-
+-                { badge: c.unreadCount }
+-
+-              ))
+-
+-            ) : (
+-
+-              <Text style={styles.emptyListText}>No conversations yet</Text>
+-
+-            )}
+-
+-          </>
+-
+-        )}
+-
+-
+-
+-        {activeSection === 'projects' && (
+-
+-          <>
+-
+-            <Text style={styles.listSectionLabel}>Event GC</Text>
+-
+-            {filteredProjects.length > 0 ? (
+-
+-              filteredProjects.map(p => renderSidebarItem(
+-
+-                p.project.id,
+-
+-                p.project.title,
+-
+-                `${p.participantCount} participants`,
+-
+-                selectedProjectChat?.project.id === p.project.id,
+-
+-                () => { setSelectedProjectChat(p); setSelectedUser(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
+-
+-                { icon: 'groups' }
+-
+-              ))
+-            ) : (
+-              <Text style={styles.emptyListText}>
+-                {isVolunteer ? 'No joined event GC yet' : 'No event GC available'}
+-            )}
+-
+-          </>
+-
+-        )}
+-
+-
+-
+-        {activeSection === 'proposals' && (
+-
+-          <>
+-
+-            <Text style={styles.listSectionLabel}>
+-
+-              {pendingProposalCount > 0
+-
+-                ? `Project Proposals ΓÇó ${pendingProposalCount} pending`
+-
+-                : 'Project Proposals'}
+-
+-            </Text>
+-
+-            {filteredProposals.length > 0 ? (
+-
+-              filteredProposals.map(p => renderSidebarItem(
+-
+-                p.application.id,
+-
+-                p.projectTitle,
+-
+-                `${p.application.partnerName} ΓÇó ${p.application.status}`,
+-
+-                selectedProposalApplication?.id === p.application.id,
+-
+-                () => { setSelectedProposalApplication(p.application); setSelectedUser(null); setSelectedProjectChat(null); setProposalIntent(null); setView('detail'); },
+-
+-                {
+-
+-                  icon: 'description',
+-
+-                  color:
+-
+-                    p.application.status === 'Approved'
+-
+-                      ? '#166534'
+-
+-                      : p.application.status === 'Rejected'
+-
+-                      ? '#dc2626'
+-
+-                      : '#f59e0b',
+-
+-                  badge: p.application.status === 'Pending' ? 1 : (p.application.status === 'Rejected' ? 1 : undefined),
+-
+-                }
+-
+-              ))
+-            ) : (
+-              <Text style={styles.emptyListText}>
+-                No partner proposals yet. Submitted proposals will appear here for admin review.
+-            )}
+-
+-          </>
+-
+-        )}
+-
+-
+-
+-        {activeSection === 'contacts' && (
+-
+-          <>
+-
+-            <Text style={styles.listSectionLabel}>All Contacts</Text>
+-
+-            {filteredUsers.length > 0 ? (
+-
+-              filteredUsers.map(u => renderSidebarItem(
+-
+-                u.id,
+-
+-                u.name,
+-
+-                u.role.toUpperCase(),
+-
+-                selectedUser?.id === u.id,
+-
+-                () => { setSelectedUser(u); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); }
+-
+-              ))
+-
+-            ) : (
+-
+-              <Text style={styles.emptyListText}>No contacts found</Text>
+-
+-            )}
+-          </>
+-
+-      </ScrollView>
+-
+-    </View>
+-
+-  );
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-              const filteredMessages = messages;
+-
+-
+-                
+-
+-                        <View style={styles.propCardIconBox}>
+-
+-                          <MaterialIcons name="assignment" size={28} color="#d97706" />
+-
+-
+-                        <View style={{ flex: 1, minWidth: 0 }}>
+-
+-                          <Text style={styles.propCardTitle} numberOfLines={2}>{data.proposedTitle}</Text>
+-
+-                          <Text style={styles.propCardSubtitle} numberOfLines={1}>Proposal ΓÇó {application.status}</Text>
+-
+-
+-                        {isApproved && (
+-
+-                          <View style={styles.propApprovedBadge}>
+-
+-                            <MaterialIcons name="check-circle" size={18} color="#166534" />
+-
+-                            <Text style={styles.propApprovedText}>Done</Text>
+-
+-                          </View>
+-
+-                        )}
+-
+-
+-
+-                        <Text style={styles.propCardDesc} numberOfLines={2}>
+-
+-                          {data.proposedDescription || 'No description provided.'}
+-
+-                        <View style={styles.propCardMetaGrid}>
+-
+-                          <View style={styles.propCardMetaItem}>
+-
+-                            <MaterialIcons name="event" size={14} color="#64748b" />
+-
+-                            <Text style={styles.propCardMetaText} numberOfLines={1}>{data.proposedStartDate || 'TBD'}</Text>
+-
+-                          </View>
+-
+-                          <View style={styles.propCardMetaItem}>
+-
+-                            <MaterialIcons name="people" size={14} color="#64748b" />
+-
+-                            <Text style={styles.propCardMetaText} numberOfLines={1}>{data.proposedVolunteersNeeded || '0'}</Text>
+-
+-                          </View>
+-
+-                          <View style={styles.propCardMetaItem}>
+-
+-                            <MaterialIcons name="location-on" size={14} color="#64748b" />
+-                            <Text style={styles.propCardMetaText} numberOfLines={1}>{data.proposedLocation || 'TBD'}</Text>
+-
+-                      <Text style={styles.propTapHint}>Tap to view details</Text>
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-        
+-        
+-        
+-        
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-        {renderDetail()}
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-  
+-
+-  },
+-
+-
+-  proposalMessageRow: { maxWidth: '92%', width: '92%' },
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-    height: 200,
+-
+-    minHeight: 200,
+-
+-    maxHeight: 200,
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-    alignItems: 'flex-start',
+-
+-    gap: 10,
+-
+-    padding: 12,
+-
+-
+-
+-    backgroundColor: '#fffbeb',
+-
+-
+-
+-    width: 40,
+-
+-    height: 40,
+-
+-    borderRadius: 8,
+-
+-    backgroundColor: '#fef3c7',
+-
+-
+-
+-    flexShrink: 0,
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-    fontSize: 15,
+-
+-    fontWeight: '700',
+-
+-    color: '#92400e',
+-
+-    lineHeight: 20,
+-
+-
+-
+-    fontSize: 12,
+-
+-    fontWeight: '600',
+-
+-    color: '#d97706',
+-
+-
+-
+-
+-  propApprovedBadge: {
+-
+-    flexDirection: 'row',
+-
+-    alignItems: 'center',
+-
+-    gap: 4,
+-
+-    backgroundColor: '#f0fdf4',
+-
+-
+-
+-    borderRadius: 8,
+-
+-    borderWidth: 1,
+-
+-    borderColor: '#dcfce7',
+-
+-
+-  propApprovedText: {
+-
+-    fontSize: 12,
+-
+-
+-    color: '#166534',
+-
+-
+-
+-    padding: 12,
+-
+-    flex: 1,
+-
+-
+-
+-
+-
+-    lineHeight: 19,
+-
+-    marginBottom: 12,
+-
+-    height: 38,
+-
+-
+-  propCardMetaGrid: {
+-
+-    flexDirection: 'row',
+-
+-    flexWrap: 'nowrap',
+-
+-    gap: 8,
+-
+-    height: 32,
+-
+-
+-  propCardMetaItem: {
+-
+-    flex: 1,
+-
+-
+-
+-    gap: 4,
+-
+-    backgroundColor: '#f8fafc',
+-
+-    paddingHorizontal: 8,
+-
+-    paddingVertical: 6,
+-
+-    borderRadius: 8,
+-
+-    minWidth: 0,
+-
+-
+-  propCardMetaText: {
+-
+-    fontSize: 12,
+-
+-    fontWeight: '600',
+-
+-    color: '#64748b',
+-
+-    flex: 1,
+-
+-
+-  propCardFooter: {
+-
+-
+-    padding: 16,
+-
+-    gap: 10,
+-
+-
+-
+-    backgroundColor: '#fafafa',
+-
+-
+-  propCardEditBtn: {
+-
+-    flex: 1,
+-
+-    flexDirection: 'row',
+-
+-
+-
+-    gap: 6,
+-
+-    backgroundColor: '#fff',
+-
+-    borderWidth: 1,
+-
+-    borderColor: '#e2e8f0',
+-
+-    paddingVertical: 10,
+-
+-    borderRadius: 10,
+-
+-
+-  propCardEditBtnText: {
+-
+-    fontSize: 13,
+-
+-
+-
+-
+-  propCardApproveBtn: {
+-
+-    flex: 1,
+-
+-    flexDirection: 'row',
+-
+-
+-
+-    gap: 6,
+-
+-    backgroundColor: '#166534',
+-
+-    paddingVertical: 10,
+-
+-    borderRadius: 10,
+-
+-
+-  propCardApproveBtnText: {
+-
+-    fontSize: 13,
+-
+-
+-
+-
+-

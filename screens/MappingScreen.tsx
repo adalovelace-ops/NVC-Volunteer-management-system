@@ -12,7 +12,7 @@ import {
   ScrollView,
   type ImageStyle,
 } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import MapView, { Callout, Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
 import InlineLoadError from '../components/InlineLoadError';
 import PhotoMapMarker from '../components/PhotoMapMarker';

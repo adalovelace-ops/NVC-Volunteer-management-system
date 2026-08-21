@@ -2,23 +2,34 @@ import { ImageSourcePropType } from 'react-native';
 import { Project } from '../models/types';
 import { getProjectStatusColor } from './projectStatus';
 import { isImageMediaUri } from './media';
+import artisansOfHopeImage from '../assets/programs/artisans-of-hope.jpg';
+import educationImage from '../assets/programs/education.jpg';
+import farmToForkImage from '../assets/programs/farm-to-fork.jpg';
+import growingHopeImage from '../assets/programs/growing-hope.jpg';
+import livelihoodImage from '../assets/programs/livelihood.jpg';
+import lovebagsImage from '../assets/programs/lovebags.jpg';
+import mingoReliefImage from '../assets/programs/mingo-relief.jpg';
+import nutritionImage from '../assets/programs/nutrition.jpg';
+import peterProjectImage from '../assets/programs/peter-project.jpg';
+import projectJosephImage from '../assets/programs/project-joseph.jpg';
+import schoolSupportImage from '../assets/programs/school-support.jpg';
 
 const PROGRAM_IMAGE_BY_CATEGORY: Partial<Record<Project['category'], ImageSourcePropType>> = {
-  Nutrition: require('../assets/programs/nutrition.jpg'),
-  Education: require('../assets/programs/education.jpg'),
-  Livelihood: require('../assets/programs/livelihood.jpg'),
+  Nutrition: nutritionImage,
+  Education: educationImage,
+  Livelihood: livelihoodImage,
 };
 
 const PROGRAM_PHOTO_BY_TITLE: Record<string, ImageSourcePropType> = {
-  'Farm to Fork Program': require('../assets/programs/farm-to-fork.jpg'),
-  'Mingo for Nutritional Support': require('../assets/programs/nutrition.jpg'),
-  'Mingo for Emergency Relief': require('../assets/programs/mingo-relief.jpg'),
-  LoveBags: require('../assets/programs/lovebags.jpg'),
-  'School Support': require('../assets/programs/school-support.jpg'),
-  'Artisans of Hope': require('../assets/programs/artisans-of-hope.jpg'),
-  'Project Joseph': require('../assets/programs/project-joseph.jpg'),
-  'Growing Hope': require('../assets/programs/growing-hope.jpg'),
-  'Peter Project': require('../assets/programs/peter-project.jpg'),
+  'Farm to Fork Program': farmToForkImage,
+  'Mingo for Nutritional Support': nutritionImage,
+  'Mingo for Emergency Relief': mingoReliefImage,
+  LoveBags: lovebagsImage,
+  'School Support': schoolSupportImage,
+  'Artisans of Hope': artisansOfHopeImage,
+  'Project Joseph': projectJosephImage,
+  'Growing Hope': growingHopeImage,
+  'Peter Project': peterProjectImage,
 };
 
 const PROGRAM_PHOTO_MATCHERS: Array<{
@@ -27,39 +38,39 @@ const PROGRAM_PHOTO_MATCHERS: Array<{
 }> = [
   {
     matches: (_project, normalizedTitle) => normalizedTitle.includes('farm to fork'),
-    source: require('../assets/programs/farm-to-fork.jpg'),
+    source: farmToForkImage,
   },
   {
     matches: (_project, normalizedTitle) =>
       normalizedTitle.includes('lovebag') || normalizedTitle.includes('school bag'),
-    source: require('../assets/programs/lovebags.jpg'),
+    source: lovebagsImage,
   },
   {
     matches: (_project, normalizedTitle) => normalizedTitle.includes('school'),
-    source: require('../assets/programs/school-support.jpg'),
+    source: schoolSupportImage,
   },
   {
     matches: (_project, normalizedTitle) => normalizedTitle.includes('artisans'),
-    source: require('../assets/programs/artisans-of-hope.jpg'),
+    source: artisansOfHopeImage,
   },
   {
     matches: (_project, normalizedTitle) =>
       normalizedTitle.includes('joseph') || normalizedTitle.includes('sewing'),
-    source: require('../assets/programs/project-joseph.jpg'),
+    source: projectJosephImage,
   },
   {
     matches: (_project, normalizedTitle) =>
       normalizedTitle.includes('growing hope') || normalizedTitle.includes('garden'),
-    source: require('../assets/programs/growing-hope.jpg'),
+    source: growingHopeImage,
   },
   {
     matches: (_project, normalizedTitle) => normalizedTitle.includes('peter'),
-    source: require('../assets/programs/peter-project.jpg'),
+    source: peterProjectImage,
   },
   {
     matches: (project, normalizedTitle) =>
       normalizedTitle.includes('mingo') || normalizedTitle.includes('masiglang') || project.category === 'Nutrition',
-    source: require('../assets/programs/nutrition.jpg'),
+    source: nutritionImage,
   },
 ];
 

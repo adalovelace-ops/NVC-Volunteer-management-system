@@ -3265,7 +3265,6 @@ async def review_partner_project_application(
         should_create_program_project = (
             next_status == "Approved"
             and not next_project_id.startswith("project-proposal-")
-            and (next_project_id.startswith("program:") or has_project_proposal_details)
         )
 
         if should_create_program_project:
@@ -3284,9 +3283,9 @@ async def review_partner_project_application(
             requested_program_module = str(
                 proposal_details.get("requestedProgramModule")
                 or fallback_program_module.split("::", 1)[0]
+                or application.get("programModule")
+                or "General"
             ).strip()
-            if not requested_program_module:
-                raise HTTPException(status_code=400, detail="Program module is required to approve this proposal.")
 
             now_iso = datetime.now(timezone.utc).isoformat()
             partner_user_id = str(application.get("partnerUserId") or "")
@@ -3310,6 +3309,52 @@ async def review_partner_project_application(
                 or proposal_details.get("programId")
                 or next_project_id
             )
+
+            # Resolve parent ID to actual database program project ID if it is generic
+            lookup_module = None
+            if parent_project_id.startswith("program:"):
+                lookup_module = parent_project_id.split(":", 1)[1].strip()
+            elif not parent_project_id and requested_program_module:
+                lookup_module = requested_program_module
+
+            if lookup_module:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        select id from public.projects 
+                        where (is_event = false or is_event is null)
+                          and (parent_project_id is null or parent_project_id = '' or parent_project_id = 'wiwi')
+                          and (category = %s or program_module = %s)
+                        limit 1
+                        """,
+                        (lookup_module, lookup_module)
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        cursor.execute(
+                            """
+                            select id from public.projects 
+                            where (is_event = false or is_event is null)
+                              and (parent_project_id is null or parent_project_id = '' or parent_project_id = 'wiwi')
+                            order by id
+                            limit 1
+                            """
+                        )
+                        row = cursor.fetchone()
+                    if row:
+                        parent_project_id = row[0]
+
+            # If the resolved parent is a project itself, traverse up to get the parent program track ID
+            if parent_project_id:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "select parent_project_id from public.projects where id = %s",
+                        (parent_project_id,)
+                    )
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        parent_project_id = row[0]
+
             generated_start_date = _normalize_partner_proposal_date(
                 proposal_details.get("proposedStartDate"),
                 now_iso,
@@ -3407,6 +3452,28 @@ async def review_partner_project_application(
             if next_status == "Approved" and generated_project is not None:
                 returned_card["approvedProjectTitle"] = str(generated_project.get("title") or "")
                 returned_card["approvedProjectId"] = next_project_id
+
+            # Strip base64 data from attachments to stay within messages_content_len_chk (4000 chars)
+            def _strip_attachment_data(attachments: list) -> list:
+                cleaned = []
+                for att in (attachments or []):
+                    if not isinstance(att, dict):
+                        continue
+                    url = str(att.get("url") or "")
+                    if url.startswith("data:"):
+                        att = {**att, "url": ""}
+                    cleaned.append(att)
+                return cleaned
+
+            returned_card_attachments = returned_card.pop("attachments", [])
+            returned_card["attachments"] = _strip_attachment_data(returned_card_attachments)
+
+            card_json = json.dumps(returned_card)
+            # Truncate if still too long (max 3900 to leave room for prefix)
+            max_card_len = 3900 - len("___PROPOSAL_CARD___:")
+            if len(card_json) > max_card_len:
+                card_json = card_json[:max_card_len]
+
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
@@ -3421,7 +3488,7 @@ async def review_partner_project_application(
                         reviewed_by,
                         updated_application.get("partnerUserId"),
                         None,
-                        f"___PROPOSAL_CARD___:{json.dumps(returned_card)}",
+                        f"___PROPOSAL_CARD___:{card_json}",
                         reviewed_at,
                         False,
                         "[]",

@@ -5,7 +5,7 @@ import { Platform, View, ActivityIndicator } from "react-native";
 import { AuthProvider } from "./contexts/AuthContext";
 import StackNavigator from "./navigation/StackNavigator";
 import ErrorBoundary from './components/ErrorBoundary';
-import { useNunitoFont } from './utils/fonts';
+import { useDMSansFont } from './utils/fonts';
 import { useEffect } from 'react';
 import * as SplashScreen from 'expo-splash-screen';
 
@@ -27,13 +27,13 @@ const isMobileModeOnWeb = (() => {
 if (typeof document !== "undefined") {
   const link = document.createElement("link");
   link.href =
-    "https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700;800&display=swap";
+    "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap";
   link.rel = "stylesheet";
   document.head.appendChild(link);
 
-  // Apply Nunito globally to the body for web
+  // Apply DM Sans globally to the body for web
   document.body.style.fontFamily =
-    'Nunito, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    "'DM Sans', sans-serif";
 
   // When running in ?mode=mobile, inject a <style> tag that constrains the
   // entire app AND all modal portals to a phone-sized frame.  React Native
@@ -108,7 +108,7 @@ if (typeof document !== "undefined") {
 
 // Bootstraps the root providers and navigation tree for the mobile and web app.
 export default function App() {
-  const fontsLoaded = useNunitoFont();
+  const fontsLoaded = useDMSansFont();
 
   useEffect(() => {
     if (fontsLoaded) {

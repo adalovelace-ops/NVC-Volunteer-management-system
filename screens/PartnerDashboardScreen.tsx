@@ -26,7 +26,8 @@ import {
 
 } from 'react-native';
 
-import { MaterialIcons, Ionicons } from '@expo/vector-icons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 import { Picker } from '@react-native-picker/picker';
 
@@ -654,12 +655,13 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
       ...projects.filter(project => {
         const title = String(project.title || '').toLowerCase();
         const id = String(project.id || '').toLowerCase();
+        const module = getProgramModule(project);
         return (
           !project.isEvent &&
           !project.parentProjectId &&
           !id.startsWith('project-proposal-') &&
-          title.includes('program') &&
-          !title.includes('proposal')
+          !title.includes('proposal') &&
+          (Boolean(module) || title.includes('program') || title.includes('education') || title.includes('nutrition') || title.includes('livelihood') || title.includes('disaster') || title.includes('relief') || title.includes('support'))
         );
       }),
     ];
@@ -1599,43 +1601,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
 
 
-      <ProjectTimelineCalendarCard
 
-        title="Partner Project Calendar"
-
-        subtitle={
-
-          timelineProjectIds?.length
-
-            ? 'Your approved project proposals are aligned with the admin planning calendar.'
-
-            : 'Review the shared project schedule and admin planning dates in one timeline.'
-
-        }
-
-        projects={projects}
-
-        planningCalendars={planningCalendars}
-
-        planningItems={planningItems}
-
-        projectFilterIds={timelineProjectIds}
-
-        accentColor="#166534"
-
-        emptyText="No partner timeline items yet."
-
-        onOpenProject={projectId =>
-
-          navigateToAvailableRoute(navigation, 'Programs', {
-
-            projectId,
-
-          })
-
-        }
-
-      />
 
 
 
@@ -3835,6 +3801,42 @@ const styles = StyleSheet.create({
     fontSize: 13,
 
     lineHeight: 20,
+
+  },
+
+  pickerTrigger: {
+
+    flexDirection: 'row',
+
+    alignItems: 'center',
+
+    borderWidth: 1,
+
+    borderColor: '#cbd5e1',
+
+    borderRadius: 8,
+
+    padding: 12,
+
+    backgroundColor: '#fff',
+
+    gap: 8,
+
+  },
+
+  pickerTriggerText: {
+
+    fontSize: 16,
+
+    color: '#0f172a',
+
+    fontWeight: '500',
+
+  },
+
+  pickerPlaceholder: {
+
+    color: '#94a3b8',
 
   },
 

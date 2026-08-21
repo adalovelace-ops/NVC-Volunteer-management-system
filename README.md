@@ -1,6 +1,6 @@
 # Volcre
 
-Expo and React Native app for managing volunteer programs, partner organizations, project coordination, and admin review workflows. The app reads and writes through a Python API backed by Supabase Postgres.
+React Native Web app for managing volunteer programs, partner organizations, project coordination, and admin review workflows. The app reads and writes through a Python API backed by Supabase Postgres.
 
 ## Public HTTPS Backend
 
@@ -22,7 +22,7 @@ VOLCRE_WEB_API_BASE_URL=https://your-service.onrender.com
 VOLCRE_AUTO_START_BACKEND=false
 ```
 
-Then restart Expo so the app uses the hosted backend instead of a local one.
+Then restart the web app so it uses the hosted backend instead of a local one.
 
 ## Current Scope
 
@@ -35,7 +35,6 @@ Then restart Expo so the app uses the hosted backend instead of a local one.
 ## Tech Stack
 
 - React Native 0.81
-- Expo SDK 54
 - React Navigation
 - TypeScript
 - `date-fns`
@@ -110,7 +109,7 @@ Default API base URL:
 http://127.0.0.1:8000
 ```
 
-You can change it in Expo config here:
+You can change it with environment variables:
 
 - [app.json](/c:/Users/ACER/OneDrive/Desktop/volunteer-system/app.json)
 
@@ -119,7 +118,7 @@ If you use a physical phone instead of web or an emulator, replace `127.0.0.1` w
 Important:
 
 - Do not commit your real Supabase password.
-- The Expo app must not connect directly to raw Postgres with the database password.
+- The web app must not connect directly to raw Postgres with the database password.
 - The safe path is the included Python API, which now backs the app storage layer.
 
 ## Installation
@@ -137,7 +136,7 @@ npm run ios
 npm run web
 ```
 
-Supervised dev mode (keeps the backend and Expo running and restarts them if they crash):
+Supervised dev mode (keeps the backend and web app running and restarts them if they crash):
 
 ```bash
 npm run all:bg
@@ -269,7 +268,7 @@ Key files:
 - `models/types.ts`: shared types
 - `screens/LoginScreen.tsx`: authentication UI and demo credentials
 - `screens/ProjectsScreen.tsx`: volunteer and partner project actions
-- `screens/PartnerOnboardingScreen.tsx`: partner onboarding and admin approval
+- `screens/PartnerManagementScreen.tsx`: partner onboarding and admin approval
 - `screens/ProjectLifecycleScreen.tsx`: admin project status and partner join approvals
 - `navigation/TabNavigator.tsx`: role-based tabs and admin web sidebar
 

@@ -1,33 +1,26 @@
 {
-  "expo": {
-    "name": "NVC",
-    "slug": "volcre",
-    "version": "1.0.0",
-    "orientation": "portrait",
-    "extra": {
-      "apiBaseUrl": "http://127.0.0.1:8000",
-      "webApiBaseUrl": "http://127.0.0.1:8000"
-    },
-    "assetBundlePatterns": [
-      "**/*"
+  "name": "NVC",
+  "displayName": "NVC",
+  "version": "1.0.0",
+  "orientation": "portrait",
+  "description": "Volunteer and Community Engagement Platform",
+  "env": {
+    "apiBaseUrl": "http://127.0.0.1:8000",
+    "webApiBaseUrl": "http://127.0.0.1:8000",
+    "googleMapsWebApiKey": ""
+  },
+  "permissions": {
+    "ios": [
+      "NSPhotoLibraryUsageDescription",
+      "NSCameraUsageDescription",
+      "NSLocationWhenInUseUsageDescription"
     ],
-    "ios": {
-      "supportsTablet": true
-    },
-    "android": {
-      "adaptiveIcon": {
-        "backgroundColor": "#ffffff"
-      }
-    },
-    "scheme": "volcre",
-    "plugins": [
-      "expo-font",
-      [
-        "expo-image-picker",
-        {
-          "photosPermission": "Allow NVC to access your photos so partners and volunteers can upload real project images."
-        }
-      ]
+    "android": [
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+      "android.permission.CAMERA",
+      "android.permission.ACCESS_FINE_LOCATION",
+      "android.permission.ACCESS_COARSE_LOCATION"
     ]
   }
 }

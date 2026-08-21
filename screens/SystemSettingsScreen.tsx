@@ -11,7 +11,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import Constants from 'expo-constants';
 import { useAuth } from '../contexts/AuthContext';
 import {
   clearStorageCache,
@@ -230,9 +229,9 @@ export default function SystemSettingsScreen() {
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Application</Text>
         <Text style={styles.infoLabel}>App Name</Text>
-        <Text style={styles.infoText}>{Constants.expoConfig?.name || 'NVC'}</Text>
+        <Text style={styles.infoText}>NVC</Text>
         <Text style={styles.infoLabel}>Version</Text>
-        <Text style={styles.infoText}>{Constants.expoConfig?.version || '1.0.0'}</Text>
+        <Text style={styles.infoText}>1.0.0</Text>
         <Text style={styles.infoLabel}>Backend URL</Text>
         <Text style={styles.infoText}>{getApiBaseUrl()}</Text>
       </View>

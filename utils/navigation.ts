@@ -69,6 +69,17 @@ export function navigateToAvailableRoute(
   params?: object,
   fallback?: FallbackRoute
 ): boolean {
+  // Directly try to navigate to core routes to bypass lazy state initialization of unvisited tabs.
+  const coreRoutes = ['Projects', 'Programs', 'Dashboard', 'Messages', 'Volunteers', 'Partners', 'Profile', 'Events'];
+  if (coreRoutes.includes(routeName)) {
+    try {
+      navigation.navigate(routeName, params);
+      return true;
+    } catch (e) {
+      console.warn(`Failed direct navigation to core route ${routeName}:`, e);
+    }
+  }
+
   if (canNavigateToRoute(navigation, routeName)) {
     navigation.navigate(routeName, params);
     return true;

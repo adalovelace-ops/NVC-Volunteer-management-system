@@ -11,7 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -196,8 +196,9 @@ export default function PartnerProjectsScreen({ route }: any) {
 
     if (projectMetrics.some(entry => entry.project.id === targetProjectId)) {
       setSelectedProjectId(targetProjectId);
+      navigation?.setParams?.({ projectId: undefined });
     }
-  }, [projectMetrics, route?.params?.projectId]);
+  }, [projectMetrics, route?.params?.projectId, navigation]);
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Alert } from 'react-native';
 import { User } from '../models/types';
+import { requestNotificationPermissionAndGetToken } from '../utils/messaging';
 import {
   getProjectsScreenSnapshot,
   getStorageItemsFast,
@@ -141,8 +142,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const savedUser = await getCurrentUser();
         if (savedUser) {
-          setUser(savedUser);
-          void prefetchForUser(savedUser).catch(() => null);
+          if (!getIsWeb() && savedUser.role === 'admin') {
+            // Do not restore admin session on mobile
+            void saveCurrentUser(null).catch(() => null);
+          } else if (getIsWeb() && savedUser.role !== 'admin') {
+            // Do not restore volunteer/partner session on web
+            void saveCurrentUser(null).catch(() => null);
+          } else {
+            setUser(savedUser);
+            void prefetchForUser(savedUser).catch(() => null);
+          }
         }
       } catch (error) {
         console.error('[App] Failed to restore session:', error);
@@ -173,11 +182,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      // Block admin logins on mobile.
+      if (!getIsWeb() && userData.role === 'admin') {
+        Alert.alert(
+          'Access Restricted',
+          'Admin accounts can only log in on the web portal. Mobile is only for volunteers and partners.'
+        );
+        return;
+      }
+
       setUser(userData);
       void saveCurrentUser(userData).catch((error) => {
         console.error('Error persisting current user:', error);
       });
       void prefetchForUser(userData).catch(() => null);
+      
+      // Register FCM token
+      requestNotificationPermissionAndGetToken(userData.id).catch(e => console.log('FCM error:', e));
     } catch (error) {
       console.error('Error during login:', error);
       throw error;
@@ -196,6 +217,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw error;
     }
   };
+
+  // Automatically enforce platform boundaries if the session state violates them.
+  useEffect(() => {
+    if (user) {
+      const isWeb = getIsWeb();
+      if (isWeb && user.role !== 'admin') {
+        void logout().catch(() => null);
+      } else if (!isWeb && user.role === 'admin') {
+        void logout().catch(() => null);
+      }
+    }
+  }, [user]);
 
   // Updates the current user profile in both context state and storage.
   const updateUserProfile = async (userData: User) => {

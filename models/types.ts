@@ -66,6 +66,10 @@ export interface User {
     certificationsOrTrainings?: string;
     hobbiesAndInterests?: string;
     specialSkills?: string;
+    validIdPhoto?: string;
+    videoBriefingUrl?: string;
+    skills?: string[];
+    affiliations?: { organization: string; position: string }[];
   };
 }
 
@@ -110,6 +114,7 @@ export interface ProjectInternalTask {
   assignedVolunteerNames?: string[];
   isFieldOfficer?: boolean;
   skillsNeeded: string[]; // Skills required for this specific task
+  volunteersNeeded?: number; // Target number of volunteers for this task
   createdAt: string;
   updatedAt: string;
 }
@@ -161,6 +166,7 @@ export interface Project {
   id: string;
   title: string;
   description: string;
+  context?: string;
   partnerId: string;
   imageUrl?: string;
   imageHidden?: boolean;
@@ -192,6 +198,7 @@ export interface Project {
   volunteers: string[]; // Volunteer IDs
   joinedUserIds?: string[];
   skillsNeeded?: string[]; // Skills required for this project/event
+  volunteerRequirements?: string[]; // Requirements for volunteers (e.g. orientation, clothing, briefing)
   communityNeed?: string;
   expectedDeliverables?: string;
   attachments?: {
@@ -257,6 +264,7 @@ export interface Volunteer {
   specialSkills?: string;
   videoBriefingUrl?: string;
   affiliations?: VolunteerAffiliation[];
+  validIdPhoto?: string;
   registrationStatus?: 'Pending' | 'Approved' | 'Rejected';
   reviewedBy?: string;
   reviewedAt?: string;
@@ -471,3 +479,5 @@ export interface SectorNeed {
   description: string;
   goalAmount: number;
 }
+
+

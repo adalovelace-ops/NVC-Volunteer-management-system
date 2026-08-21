@@ -546,7 +546,7 @@ export function buildProgramProposalProjectId(programModule: string): string {
 }
 
 export function getProgramModuleFromProposalProjectId(projectId: string): string | null {
-  if (!projectId.startsWith('program:')) {
+  if (typeof projectId !== 'string' || !projectId.startsWith('program:')) {
     return null;
   }
 
@@ -564,7 +564,10 @@ async function sendSystemMessage(
   recipientId: string,
   content: string
 ): Promise<void> {
-  await saveMessage({
+  // Messages now live in Firestore (see lib/messages.ts). Writing here keeps
+  // system/proposal cards in the same store the Communication Hub reads from.
+  const { saveMessage: saveFirestoreMessage } = await import('../lib/messages');
+  await saveFirestoreMessage({
     id: createGeneratedMessageId(),
     senderId,
     recipientId,
@@ -1846,13 +1849,23 @@ export async function getPartnerDashboardSnapshot(): Promise<{
     const id = String(project.id || '').trim();
     const title = String(project.title || '').trim();
     const normalizedTitle = title.toLowerCase();
+    const module = String(project.programModule || project.category || '').trim();
     if (project.isEvent || project.parentProjectId) {
       return false;
     }
     if (id.startsWith('project-proposal-') || proposalProjectIds.has(id) || proposalTitles.has(normalizedTitle)) {
       return false;
     }
-    return normalizedTitle.includes('program');
+    const looksLikeProgram =
+      normalizedTitle.includes('program') ||
+      normalizedTitle.includes('education') ||
+      normalizedTitle.includes('nutrition') ||
+      normalizedTitle.includes('livelihood') ||
+      normalizedTitle.includes('disaster') ||
+      normalizedTitle.includes('relief') ||
+      normalizedTitle.includes('support') ||
+      Boolean(module);
+    return looksLikeProgram;
   });
   const dashboardProgramById = new Map<string, Project>();
   [...programTrackRecords, ...topLevelProjectPrograms, ...programs]
@@ -2302,13 +2315,15 @@ export async function saveUser(user: User): Promise<void> {
 
 // Validates DSWD accreditation numbers before partner applications are saved.
 export function isValidDswdAccreditationNo(value: string): boolean {
-  const normalizedValue = value.trim().toUpperCase();
-  return /^[A-Z0-9][A-Z0-9\-\/]{5,}$/.test(normalizedValue);
+  const normalizedValue = value.trim();
+  if (normalizedValue === '') return true; // Empty is valid if it's not required (or handled elsewhere)
+  return normalizedValue.length > 0; // Just needs to have some characters
 }
 
 // Validates DSWD accreditation number against database (format + assignment check).
 export async function validateDswdAccreditationNo(value: string): Promise<{ valid: boolean; reason?: string }> {
   const normalizedValue = value.trim().toUpperCase();
+  if (normalizedValue === '') return { valid: true };
 
   // First check basic format
   if (!isValidDswdAccreditationNo(value)) {
@@ -2780,6 +2795,7 @@ export async function createUserAccount(input: {
     certificationsOrTrainings?: string;
     hobbiesAndInterests?: string;
     specialSkills?: string;
+    validIdPhoto?: string;
     skills: string[];
     videoBriefingUrl?: string;
     affiliations?: Array<{
@@ -2809,14 +2825,19 @@ export async function createUserAccount(input: {
     throw new Error('Use a valid Philippine mobile number in 11-digit or +63 format.');
   }
 
-  if (
-    input.role === 'partner' &&
-    (!input.partnerRegistration ||
-      !input.partnerRegistration.organizationName.trim() ||
-      !isValidDswdAccreditationNo(input.partnerRegistration.dswdAccreditationNo) ||
-      input.partnerRegistration.advocacyFocus.length === 0)
-  ) {
-    throw new Error('Complete the organization application details before submitting.');
+  if (input.role === 'partner') {
+    if (!input.partnerRegistration) {
+      throw new Error('Complete the organization application details before submitting.');
+    }
+    if (!input.partnerRegistration.organizationName.trim()) {
+      throw new Error('Organization name is required.');
+    }
+    if (!isValidDswdAccreditationNo(input.partnerRegistration.dswdAccreditationNo)) {
+      throw new Error('Invalid DSWD Accreditation Number format. It must be at least 6 alphanumeric characters.');
+    }
+    if (input.partnerRegistration.advocacyFocus.length === 0) {
+      throw new Error('Select at least one advocacy focus.');
+    }
   }
 
   const users = await getStorageItem<User[]>(STORAGE_KEYS.USERS) || [];
@@ -2882,6 +2903,7 @@ export async function createUserAccount(input: {
         collegeCourse: input.volunteerMembershipSheet?.collegeCourse || '',
         certificationsOrTrainings:
           input.volunteerMembershipSheet?.certificationsOrTrainings || '',
+        validIdPhoto: input.volunteerMembershipSheet?.validIdPhoto || '',
         hobbiesAndInterests: input.volunteerMembershipSheet?.hobbiesAndInterests || '',
         specialSkills: input.volunteerMembershipSheet?.specialSkills || '',
         videoBriefingUrl: input.volunteerMembershipSheet?.videoBriefingUrl || '',
@@ -4085,7 +4107,8 @@ export async function reviewVolunteerRegistration(
         const adminUser = await getUser(reviewedBy);
         const adminName = adminUser?.name || 'Admin';
         
-        await saveMessage({
+        const { saveMessage: saveFirestoreMessage } = await import('../lib/messages');
+        await saveFirestoreMessage({
           id: `msg-approval-${linkedUser.id}-${Date.now()}`,
           senderId: reviewedBy,
           recipientId: linkedUser.id,
@@ -4272,7 +4295,7 @@ async function addLoggedHoursToVolunteer(
     (new Date(log.timeOut).getTime() - new Date(log.timeIn).getTime()) / 3_600_000
   );
 
-  await saveVolunteer({
+    await saveVolunteer({
     ...volunteer,
     totalHoursContributed: parseFloat(
       (volunteer.totalHoursContributed + durationHours).toFixed(1)
@@ -4280,97 +4303,61 @@ async function addLoggedHoursToVolunteer(
   });
 }
 
+import {
+  saveMessage as fbSaveMessage,
+  saveProjectGroupMessage as fbSaveProjectGroupMessage,
+  deleteProjectGroupChat as fbDeleteProjectGroupChat,
+  getMessagesForUser as fbGetMessagesForUser,
+  getConversation as fbGetConversation,
+  getProjectGroupMessages as fbGetProjectGroupMessages,
+  markMessageAsRead as fbMarkMessageAsRead,
+  type MessageSubscriptionEvent,
+  subscribeToMessages as fbSubscribeToMessages
+} from '../lib/messages';
+
+export { type MessageSubscriptionEvent };
+
 // Message Storage
-// Persists a direct user-to-user message and triggers refresh notifications.
 export async function saveMessage(message: Message): Promise<void> {
-  try {
-    await fetchApiResponse('/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(message),
-    });
-    // Invalidate caches for both sender and recipient
-    invalidateMessageCache(message.senderId, message.recipientId);
-    invalidateMessageCache(message.recipientId, message.senderId);
-    notifyWebMessageUpdate();
-  } catch (error) {
-    if (!isExpectedRemoteStorageError(error)) {
-      console.error('Error saving message:', error);
-    }
-    throw error;
-  }
+  await fbSaveMessage(message);
+  invalidateMessageCache(message.senderId, message.recipientId);
+  invalidateMessageCache(message.recipientId, message.senderId);
+  notifyWebMessageUpdate();
 }
 
-// Persists a project group chat message and triggers refresh notifications.
 export async function saveProjectGroupMessage(message: ProjectGroupMessage): Promise<void> {
-  try {
-    await fetchApiResponse(
-      `/projects/${encodeURIComponent(message.projectId)}/group-messages`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(message),
-      }
-    );
-    // Invalidate group message cache for this project
-    invalidateMessageCache(undefined, undefined, message.projectId);
-    notifyWebMessageUpdate();
-  } catch (error) {
-    if (!isExpectedRemoteStorageError(error)) {
-      console.error('Error saving project group message:', error);
-    }
-    throw error;
-  }
+  await fbSaveProjectGroupMessage(message);
+  invalidateMessageCache(undefined, undefined, message.projectId);
+  notifyWebMessageUpdate();
 }
 
 export async function deleteProjectGroupChat(projectId: string): Promise<void> {
-  const messages =
-    (await getStorageItem<ProjectGroupMessage[]>(STORAGE_KEYS.PROJECT_GROUP_MESSAGES)) || [];
-  await setStorageItem(
-    STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
-    messages.filter(message => message.projectId !== projectId)
-  );
+  await fbDeleteProjectGroupChat(projectId);
   invalidateMessageCache(undefined, undefined, projectId);
   notifyWebMessageUpdate();
 }
 
-// Returns all direct messages relevant to a specific user.
-// Results are cached for MESSAGES_CACHE_TTL_MS and invalidated on send/receive.
 export async function getMessagesForUser(userId: string): Promise<Message[]> {
   const cached = messagesForUserCache.get(userId);
   if (cached && Date.now() - cached.timestamp < MESSAGES_CACHE_TTL_MS) {
     return cached.data;
   }
-  const payload = await requestApiJson<{ messages?: Message[] }>(
-    `/messages?user_id=${encodeURIComponent(userId)}&limit=10000`
-  );
-  const messages = payload.messages || [];
+  const messages = await fbGetMessagesForUser(userId);
   messagesForUserCache.set(userId, { data: messages, timestamp: Date.now() });
   return messages;
 }
 
-// Returns the direct-message history between two users.
-// Results are cached for CONVERSATION_CACHE_TTL_MS and invalidated on send/receive.
 export async function getConversation(userId1: string, userId2: string): Promise<Message[]> {
   const cacheKey = [userId1, userId2].sort().join(':');
   const cached = conversationCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < CONVERSATION_CACHE_TTL_MS) {
     return cached.data;
   }
-  const payload = await requestApiJson<{ messages?: Message[] }>(
-    `/messages/conversation?user1=${encodeURIComponent(userId1)}&user2=${encodeURIComponent(userId2)}&limit=10000`
-  );
-  const messages = payload.messages || [];
+  const messages = await fbGetConversation(userId1, userId2);
   conversationCache.set(cacheKey, { data: messages, timestamp: Date.now() });
   return messages;
 }
 
-// Returns the project group chat history available to a specific user.
-// Results are cached for CONVERSATION_CACHE_TTL_MS and invalidated on new messages.
 export async function getProjectGroupMessages(
   projectId: string,
   userId: string
@@ -4380,15 +4367,11 @@ export async function getProjectGroupMessages(
   if (cached && Date.now() - cached.timestamp < CONVERSATION_CACHE_TTL_MS) {
     return cached.data;
   }
-  const payload = await requestApiJson<{ messages?: ProjectGroupMessage[] }>(
-    `/projects/${encodeURIComponent(projectId)}/group-messages?user_id=${encodeURIComponent(userId)}`
-  );
-  const messages = payload.messages || [];
+  const messages = await fbGetProjectGroupMessages(projectId, userId);
   groupMessagesCache.set(cacheKey, { data: messages, timestamp: Date.now() });
   return messages;
 }
 
-// Invalidates all message caches for a user (call after send/receive).
 export function invalidateMessageCache(userId?: string, conversationPartnerId?: string, projectId?: string): void {
   if (userId) {
     messagesForUserCache.delete(userId);
@@ -4398,7 +4381,6 @@ export function invalidateMessageCache(userId?: string, conversationPartnerId?: 
     conversationCache.delete(cacheKey);
   }
   if (projectId) {
-    // Clear all group message cache entries for this project
     for (const key of groupMessagesCache.keys()) {
       if (key.startsWith(`${projectId}:`)) {
         groupMessagesCache.delete(key);
@@ -4407,87 +4389,26 @@ export function invalidateMessageCache(userId?: string, conversationPartnerId?: 
   }
 }
 
-// Marks a direct message as read and updates storage listeners.
 export async function markMessageAsRead(messageId: string): Promise<void> {
-  await requestApiJson(
-    `/messages/${encodeURIComponent(messageId)}/read`,
-    { method: 'PATCH' }
-  );
+  await fbMarkMessageAsRead(messageId);
   notifyWebMessageUpdate();
 }
 
-export type MessageSubscriptionEvent =
-  | { type: 'message.changed'; message: Message }
-  | { type: 'project-group-message.changed'; message: ProjectGroupMessage };
-
-// Opens a realtime websocket subscription for direct and project chat updates.
 export function subscribeToMessages(
   userId: string,
   onChange: (event: MessageSubscriptionEvent) => void
 ): () => void {
-
-  let socket: WebSocket | null = null;
-  let heartbeat: ReturnType<typeof setInterval> | null = null;
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  let closed = false;
-
-  const cleanupSocket = () => {
-    if (heartbeat) {
-      clearInterval(heartbeat);
-      heartbeat = null;
+  return fbSubscribeToMessages(userId, (event) => {
+    // Invalidate local cache on real-time event so next reload fetches fresh data
+    if (event.type === 'message.changed') {
+      const msg = event.message as Message;
+      invalidateMessageCache(msg.senderId, msg.recipientId);
+      invalidateMessageCache(msg.recipientId, msg.senderId);
+    } else if (event.type === 'project-group-message.changed') {
+      invalidateMessageCache(undefined, undefined, event.message.projectId);
     }
-    if (socket) {
-      socket.onopen = null;
-      socket.onmessage = null;
-      socket.onerror = null;
-      socket.onclose = null;
-      socket.close();
-      socket = null;
-    }
-  };
-
-  const connect = () => {
-    cleanupSocket();
-    socket = new WebSocket(getMessagesWebSocketUrl(userId));
-
-    socket.onopen = () => {
-      heartbeat = setInterval(() => {
-        if (socket?.readyState === WebSocket.OPEN) {
-          socket.send('ping');
-        }
-      }, 25000);
-    };
-
-    socket.onmessage = event => {
-      try {
-        const payload = JSON.parse(event.data) as MessageSubscriptionEvent;
-        onChange(payload);
-      } catch (error) {
-        console.error('Error parsing message event:', error);
-      }
-    };
-
-    socket.onclose = () => {
-      cleanupSocket();
-      if (!closed) {
-        reconnectTimer = setTimeout(connect, 1500);
-      }
-    };
-
-    socket.onerror = () => {
-      socket?.close();
-    };
-  };
-
-  connect();
-
-  return () => {
-    closed = true;
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-    }
-    cleanupSocket();
-  };
+    onChange(event);
+  });
 }
 
 // Opens a realtime websocket subscription for shared storage changes.
@@ -5208,7 +5129,8 @@ export async function verifyPartnerRegistration(
 export async function reviewPartnerRegistration(
   partnerId: string,
   status: Partner['status'],
-  reviewedBy: string
+  reviewedBy: string,
+  rejectionReason?: string
 ): Promise<Partner> {
   const partner = await getPartner(partnerId);
   if (!partner) {
@@ -5239,7 +5161,7 @@ export async function reviewPartnerRegistration(
       approvedAt: status === 'Approved' ? now : undefined,
       rejectionReason:
         status === 'Rejected'
-          ? 'Partner registration rejected by administrator.'
+          ? rejectionReason?.trim() || 'Partner registration rejected by administrator.'
           : undefined,
     });
   }
@@ -6080,17 +6002,20 @@ function normalizeComparablePhone(value?: string): string {
 }
 
 async function ensurePartnerOwnershipLinks(): Promise<void> {
-  const [partners, users] = await Promise.all([
+  const [partners = [], users = []] = await Promise.all([
     getStorageItem<Partner[]>(STORAGE_KEYS.PARTNERS),
     getStorageItem<User[]>(STORAGE_KEYS.USERS),
   ]);
 
-  if (!partners?.length || !users?.length) {
+  if (!users?.length) {
     return;
   }
 
   let changed = false;
-  const nextPartners = partners.map(partner => {
+  let nextPartners: Partner[] = [...(partners || [])];
+
+  // 1. Link unlinked partners to their user
+  nextPartners = nextPartners.map(partner => {
     if (partner.ownerUserId) {
       return partner;
     }
@@ -6124,7 +6049,47 @@ async function ensurePartnerOwnershipLinks(): Promise<void> {
     };
   });
 
+  // 2. Ensure every partner user in users table has a corresponding Partner record
+  for (const user of users) {
+    if (user.role !== 'partner') continue;
+
+    const userEmail = (user.email || '').trim().toLowerCase();
+    const userPhone = normalizeComparablePhone(user.phone);
+
+    const exists = nextPartners.some(p =>
+      p.ownerUserId === user.id ||
+      (userEmail && p.contactEmail?.toLowerCase() === userEmail) ||
+      (userPhone && normalizeComparablePhone(p.contactPhone) === userPhone)
+    );
+
+    if (!exists) {
+      changed = true;
+      const advocacyFocus: AdvocacyFocus[] = (user.pillarsOfInterest || []).map(p => p as AdvocacyFocus);
+      if (advocacyFocus.length === 0) advocacyFocus.push('Nutrition');
+
+      nextPartners.push(
+        normalizePartnerRecord({
+          id: `partner-${user.id}`,
+          ownerUserId: user.id,
+          name: user.name,
+          description: `${advocacyFocus.join(', ')} partnership application`,
+          category: getCategoryFromAdvocacyFocus(advocacyFocus),
+          sectorType: 'NGO',
+          dswdAccreditationNo: '',
+          secRegistrationNo: '',
+          advocacyFocus,
+          contactEmail: user.email || '',
+          contactPhone: user.phone || '',
+          status: user.approvalStatus === 'approved' ? 'Approved' : user.approvalStatus === 'rejected' ? 'Rejected' : 'Pending',
+          verificationStatus: user.approvalStatus === 'approved' ? 'Verified' : 'Pending',
+          createdAt: user.createdAt || new Date().toISOString(),
+        })
+      );
+    }
+  }
+
   if (changed) {
     await setStorageItem(STORAGE_KEYS.PARTNERS, nextPartners);
   }
 }
+

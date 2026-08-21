@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { MaterialIcons } from '@expo/vector-icons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { StyleSheet, Text, View } from 'react-native';
 import { format } from 'date-fns';
 import type { Project } from '../models/types';

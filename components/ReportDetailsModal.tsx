@@ -12,7 +12,7 @@ import {
   useWindowDimensions,
   Alert,
 } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import type { SubmittedReport } from '../screens/ReportsScreen';
 import {
   getAttachmentLabel,
@@ -281,7 +281,7 @@ export default function ReportDetailsModal({
               <View style={styles.sectionHeaderRow}>
                 <Text style={styles.sectionTitle}>Key Metrics</Text>
                 <Text style={styles.sectionCaption}>
-                  {Object.values(report.metrics).filter(value => value !== undefined && value !== null && value !== '').length} captured
+                  {Object.values(report.metrics).filter(value => value !== undefined && value !== null).length} captured
                 </Text>
               </View>
                 <View style={[styles.metricsDisplay, isWideLayout && styles.metricsDisplayWide]}>
@@ -289,7 +289,7 @@ export default function ReportDetailsModal({
                   .filter(([key, value]) => {
                     // Filter out volunteerHours metric and empty values
                     if (key === 'volunteerHours') return false;
-                    return value !== undefined && value !== null && value !== '';
+                    return value !== undefined && value !== null;
                   })
                   .map(([key, value]) => (
                     <View key={key} style={styles.metricCard}>
