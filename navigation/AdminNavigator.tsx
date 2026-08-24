@@ -135,8 +135,10 @@ function SidebarTabBar({ state, descriptors, navigation, collapsed, onToggle }: 
     
     // Custom check for programSuiteView params on Projects screen
     if (item.route === 'Projects') {
-      const activeView = (state.routes[state.index].params as any)?.programSuiteView || 'projects';
-      focused = focused && (item.params?.programSuiteView === activeView);
+      const currentRoute = state.routes[state.index];
+      const activeView = (currentRoute.params as any)?.programSuiteView || 'projects';
+      const itemTargetView = item.params?.programSuiteView || 'projects';
+      focused = activeRouteName === 'Projects' && activeView === itemTargetView;
     }
     
     const routeObj = state.routes.find(r => r.name === item.route);
@@ -237,6 +239,7 @@ export default function AdminNavigator() {
   const messageUnreadCount = unreadMessages.length;
   const reportNotificationCount = unreadReports.length;
   const pendingUserApprovalCount = pendingUsers.length;
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [tabBarProps, setTabBarProps] = useState<BottomTabBarProps | null>(null);
   const [tabBarSignature, setTabBarSignature] = useState('');
@@ -353,7 +356,7 @@ export default function AdminNavigator() {
     <Tab.Navigator
       tabBar={isWeb ? props => <SidebarCapture {...props} onPropsChange={(p, s) => { setTabBarProps(p); setTabBarSignature(s); }} /> : undefined}
       screenOptions={({ route }) => ({
-        headerShown: !isWeb,
+        headerShown: !isWeb && route.name !== 'Messages',
         header: ({ options, navigation }) => (
           <ScreenBrandHeader
             title={options.title || route.name}
@@ -406,10 +409,37 @@ export default function AdminNavigator() {
     <View style={styles.webFrame}>
       <View style={styles.adminTopBar}>
         <View style={styles.adminTopActions}>
-          <TouchableOpacity style={styles.adminTopIconButton} activeOpacity={0.8}>
-            <MaterialIcons name="search" size={24} color="#475569" />
+          <TouchableOpacity
+            style={styles.adminTopIconButton}
+            activeOpacity={0.8}
+            onPress={() => {
+              if (tabBarProps?.navigation) {
+                tabBarProps.navigation.navigate('Messages');
+              } else {
+                Alert.alert('Messages', 'Opening Communication Hub...');
+              }
+            }}
+          >
+            <MaterialIcons name="chat-bubble-outline" size={24} color="#475569" />
+            {messageUnreadCount > 0 ? (
+              <View style={styles.adminTopBadge}>
+                <Text style={styles.adminTopBadgeText}>{Math.min(messageUnreadCount, 9)}</Text>
+              </View>
+            ) : null}
           </TouchableOpacity>
-          <TouchableOpacity style={styles.adminTopIconButton} activeOpacity={0.8}>
+          <TouchableOpacity
+            style={styles.adminTopIconButton}
+            activeOpacity={0.8}
+            onPress={() => {
+              const pendingCount = pendingUserApprovalCount + messageUnreadCount + reportNotificationCount;
+              Alert.alert(
+                'Notifications',
+                pendingCount > 0
+                  ? `You have ${pendingCount} pending item${pendingCount === 1 ? '' : 's'}:\n• ${messageUnreadCount} unread message(s)\n• ${pendingUserApprovalCount} pending user approval(s)\n• ${reportNotificationCount} unread report(s)`
+                  : 'No new notifications.'
+              );
+            }}
+          >
             <MaterialIcons name="notifications-none" size={24} color="#475569" />
             {pendingUserApprovalCount + messageUnreadCount + reportNotificationCount > 0 ? (
               <View style={styles.adminTopBadge}>
@@ -418,12 +448,58 @@ export default function AdminNavigator() {
             ) : null}
           </TouchableOpacity>
           <View style={styles.adminTopDivider} />
-          <View style={styles.adminTopAvatar}><Text style={styles.adminTopAvatarText}>SW</Text></View>
-          <View>
-            <Text style={styles.adminTopUserName}>{user?.name || 'Sarah Williams'}</Text>
-            <Text style={styles.adminTopUserOrg}>IDFI U Women's Initiative</Text>
+          <View style={{ position: 'relative', zIndex: 100 }}>
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 8, backgroundColor: showUserMenu ? '#f1f5f9' : 'transparent' }}
+              activeOpacity={0.85}
+              onPress={() => setShowUserMenu(!showUserMenu)}
+            >
+              <View style={styles.adminTopAvatar}>
+                <Text style={styles.adminTopAvatarText}>
+                  {user?.name
+                    ? user.name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
+                    : 'AD'}
+                </Text>
+              </View>
+              <View>
+                <Text style={styles.adminTopUserName}>{user?.name || 'Administrator'}</Text>
+                <Text style={styles.adminTopUserOrg}>{user?.organization || 'Negrense Volunteers for Change (NVC)'}</Text>
+              </View>
+              <MaterialIcons name={showUserMenu ? 'keyboard-arrow-up' : 'keyboard-arrow-down'} size={22} color="#64748b" />
+            </TouchableOpacity>
+
+            {showUserMenu && (
+              <View style={styles.userDropdownMenu}>
+                <TouchableOpacity
+                  style={styles.userDropdownItem}
+                  onPress={() => {
+                    setShowUserMenu(false);
+                    if (tabBarProps?.navigation) {
+                      tabBarProps.navigation.navigate('Profile');
+                    }
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <MaterialIcons name="person" size={18} color="#166534" />
+                  <Text style={styles.userDropdownItemText}>Profile Tab</Text>
+                </TouchableOpacity>
+                <View style={styles.userDropdownDivider} />
+                <TouchableOpacity
+                  style={styles.userDropdownItem}
+                  onPress={() => {
+                    setShowUserMenu(false);
+                    if (tabBarProps?.navigation) {
+                      tabBarProps.navigation.navigate('Profile', { tab: 'settings' });
+                    }
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <MaterialIcons name="settings" size={18} color="#166534" />
+                  <Text style={styles.userDropdownItemText}>Settings Tab</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
-          <MaterialIcons name="keyboard-arrow-down" size={22} color="#64748b" />
         </View>
       </View>
       <View style={styles.webLayout}>
@@ -447,18 +523,18 @@ export default function AdminNavigator() {
 const styles = StyleSheet.create({
   webFrame: { flex: 1, backgroundColor: '#f6f8fa' },
   webMainPane: { flex: 1, backgroundColor: '#f6f8fa' },
-  adminTopBar: { height: 102, backgroundColor: '#ffffff', borderBottomWidth: 1, borderBottomColor: '#e6ebef', flexDirection: 'row', alignItems: 'center', paddingRight: 32, shadowColor: '#0f172a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.04, shadowRadius: 14, elevation: 2 },
+  adminTopBar: { height: 72, backgroundColor: '#ffffff', borderBottomWidth: 1, borderBottomColor: '#e6ebef', flexDirection: 'row', alignItems: 'center', paddingRight: 32, shadowColor: '#0f172a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.04, shadowRadius: 14, elevation: 10, zIndex: 100 },
   adminTopBrandSlot: { width: SIDEBAR_WIDTH, height: 56, borderRightWidth: 1, borderRightColor: '#dfe5ea', alignItems: 'center', justifyContent: 'center' },
-  adminTopActions: { marginLeft: 'auto' as any, flexDirection: 'row', alignItems: 'center', gap: 18 },
+  adminTopActions: { marginLeft: 'auto' as any, flexDirection: 'row', alignItems: 'center', gap: 18, zIndex: 101 },
   adminTopIconButton: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', position: 'relative' },
   adminTopBadge: { position: 'absolute', top: 2, right: 2, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#157a34', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   adminTopBadgeText: { color: '#ffffff', fontSize: 10, fontWeight: '900' },
-  adminTopDivider: { width: 1, height: 48, backgroundColor: '#e5eaf0' },
-  adminTopAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#e7f3e3', alignItems: 'center', justifyContent: 'center' },
-  adminTopAvatarText: { color: '#0b7a35', fontWeight: '900', fontSize: 14 },
-  adminTopUserName: { fontSize: 14, fontWeight: '900', color: '#101828' },
-  adminTopUserOrg: { marginTop: 3, fontSize: 11, color: '#667085' },
-  webLayout: { flex: 1, flexDirection: 'row', backgroundColor: '#f6f8fa' },
+  adminTopDivider: { width: 1, height: 36, backgroundColor: '#e5eaf0' },
+  adminTopAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#e7f3e3', alignItems: 'center', justifyContent: 'center' },
+  adminTopAvatarText: { color: '#0b7a35', fontWeight: '900', fontSize: 13 },
+  adminTopUserName: { fontSize: 13, fontWeight: '800', color: '#101828' },
+  adminTopUserOrg: { marginTop: 2, fontSize: 10, color: '#667085' },
+  webLayout: { flex: 1, flexDirection: 'row', backgroundColor: '#f6f8fa', zIndex: 1 },
   sidebarWrapper: { height: '100%', backgroundColor: '#ffffff', borderRightWidth: 1, borderRightColor: '#edf1f4', overflow: 'hidden' },
   sidebarWrapperExpanded: { width: SIDEBAR_WIDTH, minWidth: SIDEBAR_WIDTH },
   sidebarWrapperCollapsed: { width: SIDEBAR_WIDTH_COLLAPSED, minWidth: SIDEBAR_WIDTH_COLLAPSED },
@@ -497,4 +573,38 @@ const styles = StyleSheet.create({
   sidebarHelpTitle: { fontSize: 12, fontWeight: '800', color: '#1e293b' },
   sidebarHelpText: { marginTop: 2, fontSize: 10, color: '#64748b' },
   sidebarCopyright: { marginHorizontal: 12, marginBottom: 28, fontSize: 12, color: '#75839a' },
+  userDropdownMenu: {
+    position: 'absolute',
+    top: 48,
+    right: 0,
+    width: 170,
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 20,
+    paddingVertical: 6,
+    zIndex: 9999,
+  },
+  userDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  userDropdownItemText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  userDropdownDivider: {
+    height: 1,
+    backgroundColor: '#f1f5f9',
+    marginVertical: 2,
+  },
 });

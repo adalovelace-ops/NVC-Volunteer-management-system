@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 
 import {
 
@@ -73,6 +73,7 @@ import {
   getProjectsScreenSnapshot,
 
   leaveVolunteerEventGroup,
+  joinProjectEvent,
 
   markMessageAsRead,
 
@@ -119,6 +120,7 @@ import { isImageMediaUri, pickDocumentFromDevice, pickImageFromDevice } from '..
 import { getRequestErrorMessage } from '../utils/requestErrors';
 
 import ProposalCard from '../components/ProposalCard';
+import AppLogo from '../components/AppLogo';
 
 
 
@@ -425,7 +427,7 @@ function getSidebarSectionMeta(section: SidebarSection): {
 
 export default function CommunicationHubScreen({ navigation, route }: any) {
 
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
 
   const insets = useSafeAreaInsets();
 
@@ -436,6 +438,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   const isTablet = width >= 768;
 
   const isVolunteer = user?.role === 'volunteer';
+  const isDetailsAdmin = isAdmin;
 
   const isPartner = user?.role === 'partner';
 
@@ -531,6 +534,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
 
   const [showConversationMenu, setShowConversationMenu] = useState(false);
+  const [showAddMemberModal, setShowAddMemberModal] = useState(false);
+  const [availableVolunteers, setAvailableVolunteers] = useState<any[]>([]);
 
   const [showMembersModal, setShowMembersModal] = useState(false);
 
@@ -2233,117 +2238,62 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     <View style={[styles.sidebar, !isWide && view === 'detail' && styles.hidden]}>
 
-      <View style={styles.sidebarHeader}>
-
-        <Text style={styles.sidebarHeaderTitle}>Messages</Text>
-
-        <TouchableOpacity style={styles.sidebarHeaderAction}>
-
-          <Ionicons name="create-outline" size={22} color="#166534" />
-
-        </TouchableOpacity>
-
-      </View>
-
-
-
-      <View style={styles.searchBox}>
-
-        <Ionicons name="search-outline" size={18} color="#94a3b8" />
-
-        <TextInput
-
-          style={styles.searchInput}
-
-          placeholder="Search..."
-
-          value={searchText}
-
-          onChangeText={setSearchText}
-
-          placeholderTextColor="#94a3b8"
-
-        />
-
-      </View>
-
-
-
-      {!isTablet && (
-
-        <View style={styles.sectionTabs}>
-
-          {availableSections.map(section => {
-
-            const sectionMeta = getSidebarSectionMeta(section);
-
-            return (
-
-              <TouchableOpacity
-
-                key={section}
-
-                onPress={() => setActiveSection(section)}
-
-                style={[styles.sectionTab, activeSection === section && styles.sectionTabActive]}
-
-              >
-
-                <View style={[styles.sectionTabIconWrap, activeSection === section && styles.sectionTabIconWrapActive]}>
-
-                  <MaterialIcons
-
-                    name={sectionMeta.icon}
-
-                    size={18}
-
-                    color={activeSection === section ? '#ffffff' : '#166534'}
-
-                  />
-
-                </View>
-
-                <Text style={[styles.sectionTabText, activeSection === section && styles.sectionTabTextActive]}>
-
-                  {sectionMeta.label}
-
-                </Text>
-
-                {section === 'proposals' && pendingProposalCount > 0 ? (
-
-                  <View style={[styles.sectionTabBadge, activeSection === section && styles.sectionTabBadgeActive]}>
-
-                    <Text
-
-                      style={[
-
-                        styles.sectionTabBadgeText,
-
-                        activeSection === section && styles.sectionTabBadgeTextActive,
-
-                      ]}
-
-                    >
-
-                      {pendingProposalCount}
-
-                    </Text>
-
-                  </View>
-
-                ) : null}
-
-              </TouchableOpacity>
-
-            );
-
-          })}
-
+        <View style={styles.sidebarHeader}>
+          <AppLogo />
+          <TouchableOpacity
+            style={styles.sidebarHeaderAction}
+            onPress={() => {
+              if (availableSections.includes('contacts')) {
+                setActiveSection('contacts');
+              } else if (allUsers.length > 0) {
+                setSelectedUser(allUsers[0]);
+                setSelectedProjectChat(null);
+                setSelectedProposalApplication(null);
+                setProposalIntent(null);
+                setView('detail');
+              }
+            }}
+            activeOpacity={0.8}
+            accessibilityLabel="New conversation"
+          >
+            <MaterialIcons name="add" size={24} color="#166534" />
+          </TouchableOpacity>
         </View>
 
-      )}
+        <View style={styles.searchBox}>
+          <Ionicons name="search-outline" size={18} color="#94a3b8" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search messages, volunteers, or announcements"
+            value={searchText}
+            onChangeText={setSearchText}
+            placeholderTextColor="#94a3b8"
+          />
+        </View>
 
-
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sectionTabs}>
+            {['messages', 'updates', 'projects'].map(section => {
+              const isUpdates = section === 'updates';
+              const label = section === 'messages' ? 'Messages' : section === 'updates' ? 'Updates' : 'Event Group Chat';
+              return (
+                <TouchableOpacity
+                  key={section}
+                  onPress={() => !isUpdates && setActiveSection(section as any)}
+                  style={[
+                    styles.sectionTab,
+                    activeSection === section && styles.sectionTabActive
+                  ]}
+                >
+                  <Text style={[
+                    styles.sectionTabText,
+                    activeSection === section && styles.sectionTabTextActive
+                  ]}>
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
 
       <ScrollView style={styles.sidebarList}>
 
@@ -2351,79 +2301,55 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
           <>
 
-            <Text style={styles.listSectionLabel}>General</Text>
-
-            {renderSidebarItem('admin-nvc', 'Admin NVC', 'System support and updates', false, () => {
-
-              const admin = allUsers.find(u => u.role === 'admin');
-
-              if (admin) {
-
-                setSelectedUser(admin); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail');
-
-              } else {
-
-                Alert.alert('Notice', 'Admin contact not available in this session.');
-
-              }
-
-            }, { icon: 'verified-user', color: '#0369a1' })}
-
-
-
-            <Text style={styles.listSectionLabel}>Proposal Partners</Text>
-
-            {partnerConversations.length > 0 ? (
-
-              partnerConversations.map(c => renderSidebarItem(
-
-                c.user.id,
-
-                c.user.name,
-
-                c.lastMessage?.content || 'Start a conversation',
-
-                selectedUser?.id === c.user.id,
-
-                () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
-
-                { badge: c.unreadCount }
-
-              ))
-
-            ) : (
-
-              <Text style={styles.emptyListText}>No partner conversations yet</Text>
-
-            )}
-
-
-
-            <Text style={styles.listSectionLabel}>Volunteers</Text>
-
-            {volunteerConversations.length > 0 ? (
-
-              volunteerConversations.map(c => renderSidebarItem(
-
-                c.user.id,
-
-                c.user.name,
-
-                c.lastMessage?.content || 'Start a conversation',
-
-                selectedUser?.id === c.user.id,
-
-                () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
-
-                { badge: c.unreadCount }
-
-              ))
-
-            ) : (
-
-              <Text style={styles.emptyListText}>No volunteer conversations yet</Text>
-
-            )}
+              {partnerConversations.length === 0 && volunteerConversations.length === 0 ? (
+                <View style={styles.emptyStateContainer}>
+                  <View style={styles.emptyStateIllustration}>
+                    <MaterialCommunityIcons name="chat-processing-outline" size={80} color="#bbf7d0" style={{ position: 'absolute' }} />
+                    <MaterialCommunityIcons name="star-four-points" size={24} color="#fcd34d" style={{ position: 'absolute', top: -10, right: -10 }} />
+                  </View>
+                  <Text style={styles.emptyStateTitle}>No messages yet</Text>
+                  <Text style={styles.emptyStateSubtitle}>When you start a conversation or receive a message, it will appear here.</Text>
+                  <TouchableOpacity
+                    style={styles.emptyStateButton}
+                    onPress={() => {
+                      if (availableSections.includes('contacts')) {
+                        setActiveSection('contacts');
+                      } else if (allUsers.length > 0) {
+                        setSelectedUser(allUsers[0]);
+                        setSelectedProjectChat(null);
+                        setSelectedProposalApplication(null);
+                        setProposalIntent(null);
+                        setView('detail');
+                      }
+                    }}
+                  >
+                    <MaterialIcons name="edit" size={18} color="#fff" />
+                    <Text style={styles.emptyStateButtonText}>Start a conversation</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.listSectionLabel}>Proposal Partners</Text>
+                  {partnerConversations.map(c => renderSidebarItem(
+                    c.user.id,
+                    c.user.name,
+                    c.lastMessage?.content || 'Start a conversation',
+                    selectedUser?.id === c.user.id,
+                    () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
+                    { badge: c.unreadCount }
+                  ))}
+                  
+                  <Text style={styles.listSectionLabel}>Volunteers</Text>
+                  {volunteerConversations.map(c => renderSidebarItem(
+                    c.user.id,
+                    c.user.name,
+                    c.lastMessage?.content || 'Start a conversation',
+                    selectedUser?.id === c.user.id,
+                    () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
+                    { badge: c.unreadCount }
+                  ))}
+                </>
+              )}
 
           </>
 
@@ -4430,11 +4356,34 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
               </View>
 
+              {isDetailsAdmin && selectedProjectChat && (
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#dcfce7',
+                    paddingHorizontal: 14,
+                    paddingVertical: 8,
+                    borderRadius: 8,
+                    marginBottom: 12
+                  }}
+                  onPress={() => {
+                    if (!selectedProjectChat) return;
+                    try {
+                      const existingIds = selectedProjectChat?.members.map(m => m.id) || [];
+                      setAvailableVolunteers(users.filter(u => u.role === 'volunteer' && !existingIds.includes(u.id)));
+                      setShowAddMemberModal(true);
+                    } catch (e) {
+                      console.error(e);
+                    }
+                  }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#166534' }}>+ Add Volunteer</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
 
                 style={styles.membersModalClose}
 
-                onPress={() => setShowMembersModal(false)}
+                onPress={() => setShowMembersModal(false)} 
 
                 activeOpacity={0.85}
 
@@ -4531,7 +4480,66 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       </Modal>
 
       <Modal
+        visible={showAddMemberModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAddMemberModal(false)}
+      >
+        <View style={styles.membersModalBackdrop}>
+          <View style={styles.membersModalCard}>
+            <View style={styles.membersModalHeader}>
+              <View>
+                <Text style={styles.membersModalTitle}>Add Volunteer</Text>
+                <Text style={styles.membersModalSubtitle}>Select a volunteer to add to GC</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.membersModalClose}
+                onPress={() => setShowAddMemberModal(false)}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="close" size={20} color="#475569" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.membersList} showsVerticalScrollIndicator>
+              {availableVolunteers.length > 0 ? (
+                availableVolunteers.map(volunteer => (
+                  <TouchableOpacity
+                    key={volunteer.id}
+                    style={[styles.memberItem, { justifyContent: 'space-between' }]}
+                    onPress={async () => {
+                      if (!selectedProjectChat) return;
+                      try {
+                        await joinProjectEvent(selectedProjectChat.project.id, volunteer.id);
+                        setShowAddMemberModal(false);
+                        void loadData();
+                      } catch (err) {
+                        console.error(err);
+                      }
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <View style={[styles.memberAvatar, styles.memberAvatarVolunteer]}>
+                        <Text style={styles.memberAvatarInitial}>{volunteer.name?.[0]?.toUpperCase() || 'V'}</Text>
+                      </View>
+                      <View>
+                        <Text style={styles.memberName}>{volunteer.name}</Text>
+                        <Text style={styles.memberRole}>Volunteer</Text>
+                      </View>
+                    </View>
+                    <MaterialIcons name="add-circle-outline" size={24} color="#166534" />
+                  </TouchableOpacity>
+                ))
+              ) : (
+                <View style={styles.membersEmptyState}>
+                  <Text style={styles.membersEmptyText}>No available volunteers.</Text>
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
+      <Modal
         visible={Boolean(previewImageUri)}
 
         transparent
@@ -4849,6 +4857,104 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, fontSize: 13, color: '#1e293b' },
 
 
+
+  notificationBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    borderRadius: 14,
+    padding: 12,
+    marginHorizontal: 12,
+    marginBottom: 12,
+    gap: 10,
+    shadowColor: '#166534',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  notificationBannerIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#dcfce7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notificationBannerTextWrap: {
+    flex: 1,
+  },
+  notificationBannerTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#166534',
+  },
+  notificationBannerSubtitle: {
+    fontSize: 11,
+    color: '#475569',
+    marginTop: 1,
+  },
+  notificationBannerAction: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#166534',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#dcfce7',
+    borderRadius: 6,
+  },
+  emptyStateContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+    paddingHorizontal: 24,
+    gap: 12,
+  },
+  emptyStateIllustration: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: '#f0fdf4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    position: 'relative',
+  },
+  emptyStateTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f172a',
+    textAlign: 'center',
+  },
+  emptyStateSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 18,
+    maxWidth: 240,
+  },
+  emptyStateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#166534',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginTop: 8,
+    shadowColor: '#166534',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  emptyStateButtonText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
 
   sectionTabs: {
 

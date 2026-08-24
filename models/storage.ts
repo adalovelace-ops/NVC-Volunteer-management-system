@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import { NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isAbortLikeError } from '../utils/requestErrors';
+import { sendEmailNotificationAndCalendarSync } from '../utils/calendarSync';
 
 // Safe Platform accessor for web environments
 function getPlatformOS(): string {
@@ -671,6 +672,29 @@ async function notifyPartnerAboutProjectJoinReview(
       }
     )
   );
+
+  if (application.status === 'Approved') {
+    const project = await getProject(application.projectId);
+    const allUsers = await getAllUsers();
+    const partnerUser = allUsers.find(u => u.id === application.partnerUserId);
+    const contactEmail = partnerUser?.email || application.contactEmail;
+
+    if (contactEmail) {
+      void sendEmailNotificationAndCalendarSync({
+        recipientEmail: contactEmail,
+        recipientName: application.partnerName || 'Partner',
+        subject: `Proposal Approved & Scheduled: ${application.projectTitle || 'Program Proposal'}`,
+        messageText: `Your program proposal for "${application.projectTitle || 'Proposal'}" has been approved by NVC Admin! The event schedule is now synced to your Google Calendar.`,
+        eventDetails: project ? {
+          title: project.title,
+          description: project.description || `Partner Event for ${project.title}`,
+          startDate: project.startDate,
+          endDate: project.endDate,
+          location: project.location?.address || 'NVC Community Location',
+        } : undefined,
+      });
+    }
+  }
 }
 
 async function notifyAdminAboutVolunteerProjectJoinRequest(
@@ -689,7 +713,6 @@ async function notifyAdminAboutVolunteerProjectJoinRequest(
   const volunteerEmail = volunteer.email.trim()
     ? ` (${volunteer.email.trim()})`
     : '';
-
   await sendSystemMessage(
     volunteer.userId,
     adminUser.id,
@@ -721,6 +744,26 @@ async function notifyVolunteerAboutProjectMatchDecision(
     volunteerUserId,
     `NVC Admin ${outcome}`
   );
+
+  if (decision === 'Matched') {
+    const allUsers = await getAllUsers();
+    const volunteerUser = allUsers.find(u => u.id === volunteerUserId);
+    if (volunteerUser?.email) {
+      void sendEmailNotificationAndCalendarSync({
+        recipientEmail: volunteerUser.email,
+        recipientName: volunteerUser.name,
+        subject: `Event Joined & Approved: ${project.title}`,
+        messageText: `Your request to join "${project.title}" has been approved! Event schedule is synced to your calendar.`,
+        eventDetails: {
+          title: project.title,
+          description: project.description || `Volunteer Event for ${project.title}`,
+          startDate: project.startDate,
+          endDate: project.endDate,
+          location: project.location?.address || 'NVC Community Location',
+        },
+      });
+    }
+  }
 }
 
 export async function notifyVolunteerAboutTaskUnassignment(params: {

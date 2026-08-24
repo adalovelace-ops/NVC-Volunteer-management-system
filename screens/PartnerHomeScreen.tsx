@@ -15,18 +15,45 @@ import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import type { VolunteerTabParamList } from '../navigation/VolunteerNavigator';
+import type { PartnerTabParamList } from '../navigation/PartnerNavigator';
+import { getPartnerDashboardSnapshot, subscribeToStorageChanges } from '../models/storage';
+import { Partner } from '../models/types';
 import AppLogo from '../components/AppLogo';
 
-type VolunteerNavProp = BottomTabNavigationProp<VolunteerTabParamList>;
+type PartnerNavProp = BottomTabNavigationProp<PartnerTabParamList>;
 
-export default function VolunteerHomeScreen() {
+export default function PartnerHomeScreen() {
   const { user } = useAuth();
-  const navigation = useNavigation<VolunteerNavProp>();
+  const navigation = useNavigation<PartnerNavProp>();
   const insets = useSafeAreaInsets();
+  const [partner, setPartner] = React.useState<Partner | null>(null);
+
+  React.useEffect(() => {
+    if (!user?.id) return;
+    
+    const loadPartner = async () => {
+      try {
+        const snapshot = await getPartnerDashboardSnapshot();
+        const owned = snapshot.partners.find((p: Partner) => 
+          p.ownerUserId === user.id || 
+          (p.contactEmail && p.contactEmail.toLowerCase() === user.email?.toLowerCase())
+        );
+        setPartner(owned || null);
+      } catch (e) {}
+    };
+    
+    loadPartner();
+    const unsub = subscribeToStorageChanges(['partners'], loadPartner);
+    
+    return () => unsub?.();
+  }, [user]);
 
   const handleSeeMission = () => {
-    navigation.navigate('Events');
+    navigation.navigate('Programs');
+  };
+
+  const handleSubmitProposal = () => {
+    navigation.navigate('Dashboard', { openProposalModule: 'Nutrition' });
   };
 
   const handleDonate = () => {
@@ -63,15 +90,7 @@ export default function VolunteerHomeScreen() {
         {/* Header App Bar */}
         <View style={styles.appbar}>
           <View style={styles.brand}>
-            <View style={styles.brandMark}>
-              <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-                <Path
-                  d="M12 3C9 7 6 9 6 13a6 6 0 0 0 12 0c0-4-3-6-6-10Z"
-                  fill="#E8A33D"
-                />
-              </Svg>
-            </View>
-              <AppLogo width={64} />
+            <AppLogo width={64} />
           </View>
           <TouchableOpacity
             style={styles.iconBtn}
@@ -84,13 +103,12 @@ export default function VolunteerHomeScreen() {
 
         {/* HERO */}
         <View style={styles.hero}>
-          <Text style={styles.heroEyebrow}>A Nation Free From Hunger</Text>
+          <Text style={styles.heroEyebrow}>Partner Space</Text>
           <Text style={styles.heroTitle}>
-            Nutrition, education, and livelihood, built by people who show up.
+            Hi {partner?.name || user?.name || 'Partner'}
           </Text>
           <Text style={styles.heroSub}>
-            Founded in Bacolod City in 2010, NVC Foundation turns everyday
-            volunteers into lasting change.
+            Registration: {partner?.status || 'Pending'}
           </Text>
           <TouchableOpacity
             style={styles.heroCta}
@@ -273,17 +291,17 @@ export default function VolunteerHomeScreen() {
 
         {/* GIVE */}
         <View style={styles.giveCard}>
-          <Text style={styles.giveTitle}>Volunteer now</Text>
+          <Text style={styles.giveTitle}>Share with us</Text>
           <Text style={styles.giveDesc}>
-            Volunteer now will go to events.
+            Submit your program proposal for review.
           </Text>
           <View style={styles.giveActions}>
             <TouchableOpacity
               style={[styles.btnSolid, { marginRight: 0 }]}
-              onPress={handleSeeMission}
+              onPress={handleSubmitProposal}
               activeOpacity={0.85}
             >
-              <Text style={styles.btnSolidText}>Volunteer now</Text>
+              <Text style={styles.btnSolidText}>Submit proposal</Text>
             </TouchableOpacity>
           </View>
         </View>

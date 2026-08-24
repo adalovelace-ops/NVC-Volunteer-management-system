@@ -868,7 +868,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   viewModeTabButtonActive: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#166534',
   },
   viewModeTabText: {
     fontSize: 13,
@@ -876,7 +876,8 @@ const styles = StyleSheet.create({
     color: '#64748b',
   },
   viewModeTabTextActive: {
-    color: '#166534',
+    color: '#ffffff',
+    fontWeight: '800',
   },
   weekdayLabelsRow: {
     flexDirection: 'row',
@@ -912,8 +913,9 @@ const styles = StyleSheet.create({
   },
   bigDayCellSelected: {
     borderColor: '#166534',
-    borderWidth: 1.5,
+    borderWidth: 2,
     borderRadius: 8,
+    backgroundColor: '#f0fdf4',
   },
   bigDayHeader: {
     alignItems: 'flex-start',

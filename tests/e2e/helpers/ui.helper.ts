@@ -3,8 +3,7 @@ import { Page, expect } from '@playwright/test';
 // ── Page readiness ────────────────────────────────────────────────────────────
 
 export async function waitForPageReady(page: Page, timeout = 8000): Promise<void> {
-  await page.waitForLoadState('networkidle', { timeout }).catch(() => undefined);
-  await page.waitForTimeout(400);
+  await page.waitForLoadState('domcontentloaded', { timeout }).catch(() => undefined);
 }
 
 export async function waitForBackendOnline(page: Page): Promise<void> {
@@ -20,16 +19,38 @@ export async function waitForBackendOnline(page: Page): Promise<void> {
  * Login as admin on the web portal (normal web mode).
  */
 export async function loginAsAdmin(page: Page, email: string, password: string): Promise<void> {
-  await page.goto('/');
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
   await waitForPageReady(page);
-  await waitForBackendOnline(page);
 
-  await page.fill('input[placeholder="Email, Username, or Phone"]', email);
-  await page.fill('input[placeholder="Password"]', password);
-  await page.click('text=Log In');
+  // Check if admin dashboard is already visible
+  const dashboard = page.getByText(/Negrense Volunteers for Change \(NVC\)/i).first();
+  const alreadyInDashboard = await dashboard.isVisible().catch(() => false);
+  if (alreadyInDashboard) {
+    return;
+  }
 
-  await page.waitForURL(/.*\//, { timeout: 10000 }).catch(() => undefined);
-  await waitForPageReady(page);
+  // Click Quick Admin Sign In card
+  const quickAdminCard = page.getByText('Tap to sign in instantly').first();
+  if (await quickAdminCard.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await quickAdminCard.click();
+  } else {
+    const emailInput = page.locator('input[placeholder="Email, Username, or Phone"]').first();
+    if (await emailInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await emailInput.fill(email);
+      await page.fill('input[placeholder="Password"]', password);
+      await page.getByText('Log In', { exact: true }).first().click();
+    }
+  }
+
+  // Wait for login transition into admin workspace
+  try {
+    await dashboard.waitFor({ state: 'visible', timeout: 10000 });
+  } catch {
+    const loginError = await page.locator('[role="alert"]').first().textContent().catch(() => undefined);
+    throw new Error(
+      `Admin login did not reach the dashboard${loginError ? `: ${loginError.trim()}` : '.'}`,
+    );
+  }
 }
 
 /**
@@ -47,22 +68,34 @@ export async function loginAsMobile(
   await waitForPageReady(page);
   await waitForBackendOnline(page);
 
-  // Click the role card (Volunteer or Partner Organization)
-  if (role === 'volunteer') {
-    await page.getByText('Continue as Volunteer').click();
-  } else {
-    await page.getByText('Continue as Partner Organization').click();
-  }
-  await waitForPageReady(page);
+  // If already in mobile dashboard, return
+  const isDashboard = await page.getByText(/Activities|Browse Projects|Volunteer/i).first().isVisible({ timeout: 1000 }).catch(() => false);
+  if (isDashboard) return;
 
-  // Fill credentials
-  await page.fill('input[placeholder="Email, Username, or Phone"]', email);
-  await page.fill('input[placeholder="Password"]', password);
-  await page.getByText('Log In').click();
+  // Click the role card (Volunteer or Partner Organization)
+  const roleCard = role === 'volunteer'
+    ? page.getByText(/Continue as Volunteer/i)
+    : page.getByText(/Continue as Partner Organization/i);
+  
+  if (await roleCard.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await roleCard.click();
+    await waitForPageReady(page);
+  }
+
+  // Fill mobile credentials
+  const emailInput = page.locator('input[placeholder="you@example.com"]').or(page.locator('input[placeholder="Email, Username, or Phone"]')).first();
+  await emailInput.fill(email);
+
+  const passInput = page.locator('input[placeholder="••••••••"]').or(page.locator('input[placeholder="Password"]')).first();
+  await passInput.fill(password);
+
+  // Click Log in
+  const loginButton = page.getByText('Log in', { exact: true }).or(page.getByText('Log In', { exact: true })).first();
+  await loginButton.click();
 
   // Wait for dashboard to load
-  await waitForPageReady(page);
   await page.waitForTimeout(1500);
+  await waitForPageReady(page);
 }
 
 // ── Navigation ────────────────────────────────────────────────────────────────
@@ -98,52 +131,30 @@ export async function clickNav(page: Page, label: string | RegExp): Promise<void
     'map': 5,
     'messages': 6,
     'reports': 7,
-    'analytics': 8,
-    'user management': 9,
-    'users': 9,
-    'admin profile': 10,
-    'profile': 10,
-    // Volunteer tabs (VolunteerNavigator): Dashboard, Projects, Tasks, Map, Messages, Reports, Profile
-    'volunteer dashboard': 0,
-    'my tasks': 2,
-    'tasks': 2,
-    'impact map': 3,
-    'my reports': 5,
-    'my profile': 6,
-    // Partner tabs (PartnerNavigator): Dashboard, Programs, Projects, Map, Messages, Reports, Profile
-    'partner dashboard': 0,
-    'program management': 1,
-    'programs': 1,
-    'my projects': 2,
-    'partner messages': 4,
-    'partner reports': 5,
-    'partner profile': 6,
+    'settings': 8,
+    'profile': 9,
+
+    // Volunteer tabs (VolunteerNavigator)
+    'my activities': 0,
+    'browse projects': 1,
+    'emergency & map': 2,
+    'my time logs': 3,
+
+    // Partner tabs (PartnerNavigator)
+    'my proposals': 1,
+    'proposals': 1,
+    'partner messages': 3,
   };
 
-  const labelStr = typeof label === 'string' ? label.toLowerCase() : '';
-  const tabIndex = TAB_ORDER[labelStr];
-
-  if (tabIndex !== undefined) {
-    // The tab bar items are the first N consecutive tabindex=0 divs at the same x position
-    // (they form a vertical sidebar). Find them by looking for divs clustered at the left edge.
-    const allTabs = page.locator('div[tabindex="0"]');
-    const count = await allTabs.count();
-
-    // Collect bounding boxes to find the sidebar tabs (small, same x, stacked vertically)
-    const boxes: Array<{ index: number; box: { x: number; y: number; width: number; height: number } }> = [];
-    for (let i = 0; i < Math.min(count, 30); i++) {
-      const box = await allTabs.nth(i).boundingBox().catch(() => null);
-      if (box && box.width < 80 && box.height < 60) {
-        boxes.push({ index: i, box });
+  const key = (typeof label === 'string' ? label : label.source).toLowerCase();
+  for (const [tabKey, index] of Object.entries(TAB_ORDER)) {
+    if (key.includes(tabKey) || tabKey.includes(key)) {
+      const tabItem = page.locator(`[role="tab"], [tabindex="0"]`).nth(index);
+      if (await tabItem.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await tabItem.click();
+        await waitForPageReady(page);
+        return;
       }
-    }
-
-    // Sort by y position and pick the nth one
-    boxes.sort((a, b) => a.box.y - b.box.y);
-    if (tabIndex < boxes.length) {
-      await allTabs.nth(boxes[tabIndex].index).click();
-      await waitForPageReady(page);
-      return;
     }
   }
 

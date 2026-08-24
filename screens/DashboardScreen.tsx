@@ -442,7 +442,16 @@ export default function DashboardScreen({ navigation }: any) {
       setUserStats({ total: users.length });
 
       const projectNamesById = new Map(projects.map(project => [project.id, project.title]));
-      const allUpdates = statusUpdates
+      const embeddedUpdates = projects.flatMap(project =>
+        (project.statusUpdates || []).map(update => ({
+          ...update,
+          projectId: update.projectId || project.id,
+        }))
+      );
+      const uniqueUpdates = new Map(
+        [...statusUpdates, ...embeddedUpdates].map(update => [update.id, update])
+      );
+      const allUpdates = Array.from(uniqueUpdates.values())
         .map(update => ({
           ...update,
           projectName: projectNamesById.get(update.projectId) || 'Unknown Project',
@@ -905,10 +914,10 @@ export default function DashboardScreen({ navigation }: any) {
   const totalPartnersSector = ngoCount + hospitalCount + privateCount + institutionCount || 1;
 
   // 4. Project Status count calculations
-  const planningCount = projectsData.filter(p => p.status === 'Planning').length;
-  const inProgressCount = projectsData.filter(p => p.status === 'In Progress').length;
-  const completedCount = projectsData.filter(p => p.status === 'Completed').length;
-  const onHoldCount = projectsData.filter(p => p.status === 'On Hold').length;
+  const planningCount = projectsData.filter(p => getProjectDisplayStatus(p) === 'Planning').length;
+  const inProgressCount = projectsData.filter(p => getProjectDisplayStatus(p) === 'In Progress').length;
+  const completedCount = projectsData.filter(p => getProjectDisplayStatus(p) === 'Completed').length;
+  const onHoldCount = projectsData.filter(p => getProjectDisplayStatus(p) === 'On Hold').length;
 
   // 5. System Aligned Analytics Calculations:
   // a) Skills Contributed (exact counts of normalization/top skills)
@@ -960,19 +969,6 @@ export default function DashboardScreen({ navigation }: any) {
           </TouchableOpacity>
         </View>
       ) : null}
-
-      {/* Welcome Header */}
-      <View style={styles.welcomeRow}>
-        <View style={styles.welcomeLeft}>
-          <Text style={styles.welcomeTitle}>Welcome back, Admin! 👋</Text>
-          <Text style={styles.welcomeSubtitle}>Here's what's happening with your community impact today.</Text>
-        </View>
-        <TouchableOpacity style={styles.addProjectBtn} onPress={() => openProjects()} activeOpacity={0.85}>
-          <MaterialIcons name="add" size={18} color="#ffffff" />
-          <Text style={styles.addProjectBtnText}>Add Project</Text>
-        </TouchableOpacity>
-      </View>
-
 
       {/* Calendar Row */}
       <View style={[styles.middleGrid, !isDesktop && styles.stackGrid]}>
@@ -1193,7 +1189,9 @@ export default function DashboardScreen({ navigation }: any) {
           <ScrollView style={styles.row3Scroll} showsVerticalScrollIndicator={false}>
             {upcomingEventGroups.length > 0 ? (
               upcomingEventGroups.flatMap(g => g.projects).slice(0, 4).map((project, idx) => {
-                const partnerName = partnersData.find(p => p.id === project.partnerId)?.name || 'NVC Partner';
+                const partnerName = partnersData.find(
+                  partner => partner.id === project.partnerId || partner.ownerUserId === project.partnerId
+                )?.name || 'NVC Partner';
                 return (
                   <View key={project.id + idx} style={styles.upcomingEventItem}>
                     <View style={styles.timelineCol}>
@@ -1333,7 +1331,11 @@ export default function DashboardScreen({ navigation }: any) {
       {/* Row 4: Analytics Overview and News & Announcements */}
       <View style={[styles.row4Grid, !isDesktop && styles.stackGrid]}>
         {/* Analytics Overview */}
-        <View style={styles.analyticsCard}>
+        <TouchableOpacity
+          style={styles.analyticsCard}
+          activeOpacity={0.9}
+          onPress={() => navigateToAvailableRoute(navigation, 'Reports')}
+        >
           <View style={styles.row3Header}>
             <Text style={styles.row3Title}>Analytics Overview</Text>
             <MaterialIcons name="info-outline" size={16} color="#64748b" />
@@ -1449,7 +1451,7 @@ export default function DashboardScreen({ navigation }: any) {
               <Text style={styles.miniChartLabel}>Project Status</Text>
               </View>
             </View>
-          </View>
+          </TouchableOpacity>
         </View>
 
       {/* Footer */}

@@ -687,16 +687,6 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
 
   return (
     <View style={styles.container}>
-      <View style={styles.pageHeader}>
-        <View>
-          <Text style={styles.title}>Partner Management</Text>
-          <Text style={styles.subtitle}>Review partner applications, verify organizations, and manage collaborations.</Text>
-        </View>
-        <View style={styles.headerAccent}>
-          <MaterialIcons name="handshake" size={22} color="#166534" />
-        </View>
-      </View>
-
       {actionNotice ? (
         <View style={styles.noticeBanner}>
           <MaterialIcons name="check-circle" size={18} color="#166534" />

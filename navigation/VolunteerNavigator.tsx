@@ -117,7 +117,7 @@ export default function VolunteerNavigator() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        headerShown: true,
+        headerShown: route.name !== 'Messages',
         header: ({ options, navigation }) => (
           <ScreenBrandHeader
             title={options.title || route.name}

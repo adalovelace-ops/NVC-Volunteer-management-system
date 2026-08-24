@@ -439,29 +439,6 @@ export default function VolunteerDashboardScreen() {
     <View style={[styles.rootContainer, { paddingTop: Math.max(insets.top, 12) }]}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
-        {/* HEADER */}
-        <View style={styles.header}>
-          <View style={styles.headerTop}>
-            <View>
-              <Text style={styles.greetingLabel}>Volunteer Workspace</Text>
-              <Text style={styles.greetingName}>Hello, {user?.name || 'Volunteer'}</Text>
-            </View>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{user?.name?.charAt(0) || 'V'}</Text>
-            </View>
-          </View>
-          <Text style={styles.headerSub}>Track your service, schedule, tasks, and messages in one place.</Text>
-          <View style={styles.statusPill}>
-            <View style={styles.statusDot} />
-            <View style={styles.statusText}>
-              <Text style={styles.statusTitle}>
-                Account status: {volunteerProfile?.registrationStatus || 'Approved'}
-              </Text>
-              <Text style={styles.statusDesc}>Your service dashboard is ready.</Text>
-            </View>
-          </View>
-        </View>
-
         {/* STATS */}
         <View style={styles.statsRow}>
           <View style={styles.statCard}>

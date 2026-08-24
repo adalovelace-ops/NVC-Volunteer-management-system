@@ -16,6 +16,7 @@ import {
   ImageBackground,
   ActivityIndicator,
   Platform,
+  Share,
   useWindowDimensions,
   Linking,
 } from 'react-native';
@@ -1739,7 +1740,7 @@ const InlineProjectForm = React.memo(({
 export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const { user, isAdmin } = useAuth();
   const { width } = useWindowDimensions();
-  const isDesktop = getPlatformOS() === 'web' || width >= 1100;
+  const isDesktop = width >= 1100;
   const listScrollViewRef = React.useRef<ScrollView | null>(null);
   const listScrollOffsetRef = React.useRef(0);
   const windowScrollOffsetRef = React.useRef(0);
@@ -1910,6 +1911,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const [programSuiteView, setProgramSuiteView] = useState<ProgramSuiteView>(
     () => getProgramSuiteViewFromRoute(route)
   );
+  const [programSort, setProgramSort] = useState<'Recently Updated' | 'Program Name' | 'Project Count'>('Recently Updated');
+  const [projectSort, setProjectSort] = useState<'Recently Updated' | 'Project Name' | 'Start Date'>('Recently Updated');
   // Status filter for the projects view — null means show all
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [calendarTabFilter, setCalendarTabFilter] = useState<'All' | 'Scheduled' | 'Drafts'>('All');
@@ -8379,9 +8382,20 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     [activeProgramTracks, allPartnerApplications, projects]
   );
 
+  const sortedProgramSections = useMemo(() => {
+    const list = [...programSections];
+    if (programSort === 'Program Name') {
+      return list.sort((a, b) => a.title.localeCompare(b.title));
+    }
+    if (programSort === 'Project Count') {
+      return list.sort((a, b) => b.totalPrograms - a.totalPrograms);
+    }
+    return list; // default Recently Updated
+  }, [programSections, programSort]);
+
   const selectedProgramWebSection = useMemo(
-    () => programSections.find(section => section.module === selectedProgramWebModule) || null,
-    [programSections, selectedProgramWebModule]
+    () => sortedProgramSections.find(section => section.module === selectedProgramWebModule) || null,
+    [sortedProgramSections, selectedProgramWebModule]
   );
 
   const eventProjectSections = useMemo(
@@ -8427,6 +8441,17 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   }, [expandedProgramModules, programSections]);
 
   const activeSelectedProject = getCurrentSelectedProject();
+  const isDetailsAdmin = useMemo(() => {
+    if (isAdmin) return true;
+    if (user?.role === 'partner' && activeSelectedProject?.partnerId) {
+      return partners.some(p => 
+        (p.ownerUserId === user.id || (p.contactEmail && p.contactEmail.toLowerCase() === user.email?.toLowerCase())) && 
+        p.id === activeSelectedProject.partnerId
+      );
+    }
+    return false;
+  }, [isAdmin, user, activeSelectedProject, partners]);
+
   const isProjectReadOnly = activeSelectedProject
     ? (getProjectDisplayStatus(activeSelectedProject) === 'Completed' || getProjectDisplayStatus(activeSelectedProject) === 'Cancelled')
     : false;
@@ -9105,7 +9130,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       activeSelectedProject.endDate
     );
     const volunteerSlotsFilled = volunteerEntries.length;
-    const volunteerSlotsNeeded = activeSelectedProject.volunteersNeeded;
+    const volunteerSlotsNeeded = activeSelectedProject.volunteersNeeded || 0;
     const remainingVolunteerSlots = Math.max(volunteerSlotsNeeded - volunteerSlotsFilled, 0);
     const pendingVolunteerRequestCount = pendingVolunteerRequestEntries.length;
     const latestTimeActivityLabel = projectTimeLogEntries[0]
@@ -9198,10 +9223,29 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     const volunteersCount = volunteerEntries.length;
     const projectAuthorName =
       partners.find(partner => partner.id === activeSelectedProject.partnerId)?.name ||
-      (isAdmin && user?.name ? user.name : 'NVC Admin');
+      (isDetailsAdmin && user?.name ? user.name : 'NVC Admin');
     const projectDocumentAttachment = (activeSelectedProject as any).attachments?.find(
       (attachment: any) => attachment?.type === 'document' && attachment?.url
     );
+
+    const handleShareProject = async () => {
+      const projectUrl = typeof window !== 'undefined'
+        ? `${window.location.origin}/projects?projectId=${encodeURIComponent(activeSelectedProject.id)}`
+        : `Project ID: ${activeSelectedProject.id}`;
+      const shareMessage = `Join ${activeSelectedProject.title}\n${projectUrl}`;
+
+      try {
+        if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.share) {
+          await navigator.share({ title: activeSelectedProject.title, text: shareMessage, url: projectUrl });
+        } else {
+          await Share.share({ message: shareMessage });
+        }
+      } catch (error) {
+        if ((error as { name?: string })?.name !== 'AbortError') {
+          Alert.alert('Share Project', 'Unable to open the sharing options.');
+        }
+      }
+    };
 
     const getEventDateParts = (dateString: string) => {
       try {
@@ -10238,6 +10282,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                           <View style={{ flex: 1 }}>
                             <Text style={{ fontSize: 14, fontWeight: '800', color: '#0f172a' }}>{volunteer.name}</Text>
                             <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }} numberOfLines={1}>{assignedRoles}</Text>
+                            <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }} numberOfLines={1}>
+                              {volunteer.homeAddress || 'Home address not set'}
+                            </Text>
                           </View>
                         </View>
                         <View style={{ flex: 1.2, alignItems: 'flex-start' }}>
@@ -10413,7 +10460,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
               <View style={premiumDetailsStyles.heroActionsRow}>
                 {/* Non-event: Create Event button */}
-                {!activeSelectedProject.isEvent && isAdmin && (
+                {!activeSelectedProject.isEvent && isDetailsAdmin && (
                   <TouchableOpacity
                     style={premiumDetailsStyles.heroBtnGreen}
                     onPress={() => openCreateEventModal(activeSelectedProject)}
@@ -10424,7 +10471,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 )}
 
                 {/* Edit button */}
-                {isAdmin && (
+                {isDetailsAdmin && (
                   <TouchableOpacity
                     style={premiumDetailsStyles.heroBtnOutline}
                     onPress={() => openEditProjectModal(activeSelectedProject)}
@@ -10468,7 +10515,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                       {...({} as any)}
                     >
                       {/* Event-only options */}
-                      {activeSelectedProject.isEvent && isAdmin && (
+                      {activeSelectedProject.isEvent && isDetailsAdmin && (
                         <>
                           <TouchableOpacity
                             onPress={() => {
@@ -10486,7 +10533,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                               setShowMoreDropdown(false);
                               setShowAttendanceTasks(true);
                             }}
-                            style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: isAdmin ? 1 : 0, borderBottomColor: '#f1f5f9' }}
+                            style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: isDetailsAdmin ? 1 : 0, borderBottomColor: '#f1f5f9' }}
                           >
                             <MaterialIcons name="assignment-turned-in" size={18} color="#166534" style={{ marginRight: 12 }} />
                             <Text style={{ fontSize: 14, fontWeight: '600', color: '#0f172a' }}>Attendance & Tasks</Text>
@@ -10494,7 +10541,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                         </>
                       )}
 
-                      {isAdmin && (
+                      {isDetailsAdmin && (
                         <TouchableOpacity
                           onPress={() => { setShowMoreDropdown(false); handleDeleteProjectRecord(); }}
                           style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 }}
@@ -10520,13 +10567,13 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               {/* About Card */}
               <View style={premiumDetailsStyles.card}>
                 <Text style={[premiumDetailsStyles.cardTitle, { marginBottom: 16 }]}>About This Project</Text>
-                <View style={premiumDetailsStyles.aboutContainer}>
-                  <Text style={premiumDetailsStyles.aboutText}>{detailsDescription}</Text>
+                <View style={[premiumDetailsStyles.aboutContainer, { flexDirection: isDesktop ? 'row' : 'column', gap: isDesktop ? 24 : 16 }]}>
+                  <Text style={[premiumDetailsStyles.aboutText, { flex: isDesktop ? 1.4 : undefined }]}>{detailsDescription}</Text>
 
                   {/* Stats Box */}
                   {activeSelectedProject.isEvent ? (
-                    <View style={premiumDetailsStyles.statsBox}>
-                      <View style={premiumDetailsStyles.statCell}>
+                    <View style={[premiumDetailsStyles.statsBox, { flex: isDesktop ? 1 : undefined, padding: isDesktop ? 16 : 12, gap: isDesktop ? 16 : 8 }]}>
+                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
                         <View style={premiumDetailsStyles.statIconRow}>
                           <MaterialIcons name="people" size={16} color="#166534" />
                         </View>
@@ -10535,14 +10582,14 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                         </Text>
                         <Text style={premiumDetailsStyles.statLabel}>Volunteer Applications</Text>
                       </View>
-                      <View style={premiumDetailsStyles.statCell}>
+                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
                         <View style={premiumDetailsStyles.statIconRow}>
                           <MaterialIcons name="description" size={16} color="#166534" />
                         </View>
                         <Text style={premiumDetailsStyles.statValue}>{projectReports.length}</Text>
                         <Text style={premiumDetailsStyles.statLabel}>Submitted Reports</Text>
                       </View>
-                      <View style={premiumDetailsStyles.statCell}>
+                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
                         <View style={premiumDetailsStyles.statIconRow}>
                           <MaterialIcons name="assignment-turned-in" size={16} color="#166534" />
                         </View>
@@ -10551,7 +10598,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                         </Text>
                         <Text style={premiumDetailsStyles.statLabel}>Assigned Tasks</Text>
                       </View>
-                      <View style={premiumDetailsStyles.statCell}>
+                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
                         <View style={premiumDetailsStyles.statIconRow}>
                           <MaterialIcons name="assignment" size={16} color="#166534" />
                         </View>
@@ -10562,29 +10609,29 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                       </View>
                     </View>
                   ) : (
-                    <View style={premiumDetailsStyles.statsBox}>
-                      <View style={premiumDetailsStyles.statCell}>
+                    <View style={[premiumDetailsStyles.statsBox, { flex: isDesktop ? 1 : undefined, padding: isDesktop ? 16 : 12, gap: isDesktop ? 16 : 8 }]}>
+                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
                         <View style={premiumDetailsStyles.statIconRow}>
                           <MaterialIcons name="account-circle" size={16} color="#166534" />
                         </View>
                         <Text style={premiumDetailsStyles.statValue} numberOfLines={1} ellipsizeMode="tail">{projectAuthorName}</Text>
                         <Text style={premiumDetailsStyles.statLabel}>Author</Text>
                       </View>
-                      <View style={premiumDetailsStyles.statCell}>
+                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
                         <View style={premiumDetailsStyles.statIconRow}>
                           <MaterialIcons name="person" size={16} color="#166534" />
                         </View>
                         <Text style={premiumDetailsStyles.statValue}>{volunteersCount}</Text>
                         <Text style={premiumDetailsStyles.statLabel}>Volunteers</Text>
                       </View>
-                      <View style={premiumDetailsStyles.statCell}>
+                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
                         <View style={premiumDetailsStyles.statIconRow}>
                           <MaterialIcons name="event" size={16} color="#166534" />
                         </View>
                         <Text style={premiumDetailsStyles.statValue}>{linkedEvents.length}</Text>
                         <Text style={premiumDetailsStyles.statLabel}>Events</Text>
                       </View>
-                      <View style={premiumDetailsStyles.statCell}>
+                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
                         <View style={premiumDetailsStyles.statIconRow}>
                           <MaterialIcons name="description" size={16} color="#166534" />
                         </View>
@@ -10642,8 +10689,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                       const dateParts = getEventDateParts(event.startDate);
                       const eventVolunteers = getProjectVolunteerEntries(event);
                       return (
-                        <View key={event.id} style={premiumDetailsStyles.eventItem}>
-                          <View style={premiumDetailsStyles.dateBadge}>
+                        <View key={event.id} style={[premiumDetailsStyles.eventItem, { flexDirection: isDesktop ? 'row' : 'column', alignItems: isDesktop ? 'center' : 'stretch', gap: isDesktop ? 16 : 12 }]}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', flex: isDesktop ? 1 : undefined, gap: 12 }}>
+                            <View style={premiumDetailsStyles.dateBadge}>
                             <Text style={premiumDetailsStyles.dateBadgeMonth}>{dateParts.month}</Text>
                             <Text style={premiumDetailsStyles.dateBadgeDay}>{dateParts.day}</Text>
                           </View>
@@ -10657,17 +10705,20 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                               {event.location.address || 'Alangilan Covered Court'}
                             </Text>
                           </View>
+                          </View>
 
-                          <Text style={premiumDetailsStyles.eventRatio}>
-                            {eventVolunteers.length}/{event.volunteersNeeded} Volunteers
-                          </Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: isDesktop ? 'flex-end' : 'space-between', gap: 16 }}>
+                            <Text style={premiumDetailsStyles.eventRatio}>
+                              {eventVolunteers.length}/{event.volunteersNeeded} Volunteers
+                            </Text>
 
-                          <TouchableOpacity
+                            <TouchableOpacity
                             style={premiumDetailsStyles.eventViewBtn}
                             onPress={() => handleSelectProject(event)}
                           >
                             <Text style={premiumDetailsStyles.eventViewBtnText}>View</Text>
                           </TouchableOpacity>
+                          </View>
                         </View>
                       );
                     })
@@ -10822,7 +10873,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
                 <TouchableOpacity
                   style={premiumDetailsStyles.actionBtnOutline}
-                  onPress={() => Alert.alert('Invite', 'Volunteers notification invites sent.')}
+                  onPress={() => navigateToAvailableRoute(navigation, 'Volunteers', { projectId: activeSelectedProject.id })}
                 >
                   <MaterialIcons name="person-add" size={16} color="#475569" />
                   <Text style={premiumDetailsStyles.actionBtnOutlineText}>Invite Volunteers</Text>
@@ -10830,7 +10881,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
                 <TouchableOpacity
                   style={premiumDetailsStyles.actionBtnOutline}
-                  onPress={() => Alert.alert('Reports', 'Redirecting to program reports review.')}
+                  onPress={() => navigateToAvailableRoute(navigation, 'Reports', { projectId: activeSelectedProject.id })}
                 >
                   <MaterialIcons name="description" size={16} color="#475569" />
                   <Text style={premiumDetailsStyles.actionBtnOutlineText}>View Reports</Text>
@@ -10846,7 +10897,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
                 <TouchableOpacity
                   style={premiumDetailsStyles.actionBtnOutline}
-                  onPress={() => Alert.alert('Share Link', 'Project link copied to clipboard.')}
+                  onPress={handleShareProject}
                 >
                   <MaterialIcons name="link" size={16} color="#475569" />
                   <Text style={premiumDetailsStyles.actionBtnOutlineText}>Share Project Link</Text>
@@ -10986,8 +11037,17 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                       </TouchableOpacity>
                     </View>
 
-                    <TouchableOpacity style={styles.sortDropdownButton}>
-                      <Text style={styles.sortDropdownText}>Sort by: Recently Updated</Text>
+                    <TouchableOpacity
+                      style={styles.sortDropdownButton}
+                      onPress={() => {
+                        Alert.alert('Sort Programs', 'Choose sort option:', [
+                          { text: 'Recently Updated', onPress: () => setProgramSort('Recently Updated') },
+                          { text: 'Program Name', onPress: () => setProgramSort('Program Name') },
+                          { text: 'Project Count', onPress: () => setProgramSort('Project Count') },
+                        ]);
+                      }}
+                    >
+                      <Text style={styles.sortDropdownText}>Sort by: {programSort}</Text>
                       <MaterialIcons name="arrow-drop-down" size={16} color="#475569" />
                     </TouchableOpacity>
                   </View>
@@ -10995,7 +11055,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
                 {/* Programs Grid */}
                 <View style={styles.programGrid}>
-                  {programSections.map(section => {
+                  {sortedProgramSections.map(section => {
                     const track = activeProgramTracks.find(t => t.id === section.module);
                     const overview = getProgramWebOverview(section.title);
                     return (
@@ -11108,13 +11168,13 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   <TouchableOpacity
                     style={styles.projectsFilterDropdown}
                     onPress={() => {
-                      const options = ['All Programs', ...programSections.map(s => s.title)];
+                      const options = ['All Programs', ...sortedProgramSections.map(s => s.title)];
                       Alert.alert('Select Program', 'Filter projects by program:',
                         options.map((opt, i) => ({
                           text: opt,
                           onPress: () => {
                             if (i === 0) setProjectProgramFilter(null);
-                            else setProjectProgramFilter(programSections[i - 1].module);
+                            else setProjectProgramFilter(sortedProgramSections[i - 1].module);
                           }
                         }))
                       );
@@ -11122,7 +11182,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   >
                     <Text style={styles.projectsFilterDropdownText}>
                       {projectProgramFilter
-                        ? programSections.find(s => s.module === projectProgramFilter)?.title || 'All Programs'
+                        ? sortedProgramSections.find(s => s.module === projectProgramFilter)?.title || 'All Programs'
                         : 'All Programs'}
                     </Text>
                     <MaterialIcons name="arrow-drop-down" size={16} color="#475569" />
@@ -11167,25 +11227,26 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                     style={styles.projectsSortDropdown}
                     onPress={() => {
                       Alert.alert('Sort Projects', 'Choose sort option:', [
-                        { text: 'Recently Updated', onPress: () => { } },
-                        { text: 'Project Name', onPress: () => { } },
+                        { text: 'Recently Updated', onPress: () => setProjectSort('Recently Updated') },
+                        { text: 'Project Name', onPress: () => setProjectSort('Project Name') },
+                        { text: 'Start Date', onPress: () => setProjectSort('Start Date') },
                       ]);
                     }}
                   >
-                    <Text style={styles.projectsSortDropdownText}>Sort by: Recently Updated</Text>
+                    <Text style={styles.projectsSortDropdownText}>Sort by: {projectSort}</Text>
                     <MaterialIcons name="arrow-drop-down" size={16} color="#475569" />
                   </TouchableOpacity>
                 </View>
 
                 {/* Collapsible/Accordion Program Panels */}
                 <View style={styles.projectsAccordionList}>
-                  {programSections
+                  {sortedProgramSections
                     .filter(section => !projectProgramFilter || section.module === projectProgramFilter)
                     .map(section => {
                       const isExpanded = expandedProgramModules.has(section.module);
 
                       // Filter projects inside this program section based on search query and status filter
-                      let sectionProjects = section.projects;
+                      let sectionProjects = [...section.projects];
                       if (statusFilter) {
                         sectionProjects = sectionProjects.filter(p => getProjectDisplayStatus(p) === statusFilter);
                       }
@@ -11195,6 +11256,11 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                           p.title.toLowerCase().includes(query) ||
                           (p.description && p.description.toLowerCase().includes(query))
                         );
+                      }
+                      if (projectSort === 'Project Name') {
+                        sectionProjects.sort((a, b) => a.title.localeCompare(b.title));
+                      } else if (projectSort === 'Start Date') {
+                        sectionProjects.sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
                       }
 
                       // Count projects

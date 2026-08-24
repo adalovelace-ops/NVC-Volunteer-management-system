@@ -1260,10 +1260,6 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
 
   return (
     <View style={styles.container}>
-      <View style={styles.titleRow}>
-        <Text style={styles.title}>Volunteer Management</Text>
-      </View>
-      <Text style={styles.managementSubtitle}>Manage volunteer applications, approvals, and profiles.</Text>
       <View style={styles.managementStats}>
         {[
           { icon: 'description', value: pendingApplications, label: 'New Applications', color: '#8b5cf6', filter: 'Pending' },
@@ -1297,7 +1293,6 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
         })}
       </View>
       <View style={styles.managementPanel}>
-        <Text style={styles.managementPanelTitle}>Volunteer Management</Text>
         <View style={styles.managementActions}>
           {[
             { icon: 'assignment', title: 'Volunteer Applications', body: 'Review and manage new volunteer applications.', color: '#8b5cf6', action: 'View Applications', filter: 'Pending' },

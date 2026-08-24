@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ScreenBrandHeader from '../components/ScreenBrandHeader';
 import { useAuth } from '../contexts/AuthContext';
 import { getMessagesForUser, subscribeToMessages, getAllUsers, subscribeToStorageChanges, markMessageAsRead } from '../models/storage';
+import PartnerHomeScreen from '../screens/PartnerHomeScreen';
 import PartnerDashboardScreen from '../screens/PartnerDashboardScreen';
 import PartnerProgramManagementScreen from '../screens/PartnerProgramManagementScreen';
 import PartnerProjectsScreen from '../screens/PartnerProjectsScreen';
@@ -12,8 +13,10 @@ import MappingScreen from '../screens/MappingScreen';
 import CommunicationHubScreen from '../screens/CommunicationHubScreen';
 import PartnerReportsScreen from '../screens/PartnerReportsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
+import ProjectLifecycleScreen from '../screens/ProjectLifecycleScreen';
 
 export type PartnerTabParamList = {
+  Home: undefined;
   Dashboard: { openProposalModule?: string } | undefined;
   Programs: { programModule?: string; projectId?: string } | undefined;
   Projects: { projectId?: string } | undefined;
@@ -27,6 +30,7 @@ export type PartnerTabParamList = {
       }
     | undefined;
   Reports: { projectId?: string } | undefined;
+  ProjectLifecycle: { projectId?: string } | undefined;
   Profile: undefined;
 };
 
@@ -34,6 +38,7 @@ const Tab = createBottomTabNavigator<PartnerTabParamList>();
 
 const getIconName = (routeName: keyof PartnerTabParamList) => {
   switch (routeName) {
+    case 'Home': return 'home';
     case 'Dashboard': return 'dashboard';
     case 'Programs': return 'business-center';
     case 'Projects': return 'assignment';
@@ -96,7 +101,7 @@ export default function PartnerNavigator() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        headerShown: true,
+        headerShown: route.name !== 'Messages',
         header: ({ options, navigation }) => (
           <ScreenBrandHeader
             title={options.title || route.name}
@@ -121,12 +126,14 @@ export default function PartnerNavigator() {
         },
       })}
     >
+      <Tab.Screen name="Home" component={PartnerHomeScreen} options={{ title: 'Home', headerShown: false }} />
       <Tab.Screen name="Dashboard" component={PartnerDashboardScreen} options={{ title: 'Partner Dashboard' }} />
       <Tab.Screen name="Programs" component={PartnerProgramManagementScreen} options={{ title: 'Program Management' }} />
       <Tab.Screen name="Projects" component={PartnerProjectsScreen} options={{ title: 'My Projects', tabBarLabel: 'Projects' }} />
       <Tab.Screen name="Map" component={MappingScreen} options={{ title: 'Impact Map' }} />
       <Tab.Screen name="Messages" component={CommunicationHubScreen} options={{ title: 'Messages', tabBarBadge: messageUnreadCount > 0 ? messageUnreadCount : undefined }} />
       <Tab.Screen name="Reports" component={PartnerReportsScreen} options={{ title: 'Reports' }} />
+      <Tab.Screen name="ProjectLifecycle" component={ProjectLifecycleScreen} options={{ title: 'Project Details', tabBarButton: () => null }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ title: 'Partner Profile' }} />
     </Tab.Navigator>
   );

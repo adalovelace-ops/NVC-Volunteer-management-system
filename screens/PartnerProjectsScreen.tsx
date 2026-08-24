@@ -48,7 +48,7 @@ function formatDateRange(startDate: string, endDate: string) {
   return startLabel === endLabel ? startLabel : `${startLabel} - ${endLabel}`;
 }
 
-export default function PartnerProjectsScreen({ route }: any) {
+export default function PartnerProjectsScreen({ route, navigation }: any) {
   const { user } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [partnerApplications, setPartnerApplications] = useState<PartnerProjectApplication[]>([]);
@@ -425,7 +425,15 @@ export default function PartnerProjectsScreen({ route }: any) {
                     {selectedProjectMetrics.project.description || 'No project description yet.'}
                   </Text>
 
-                  <Text style={styles.eventSectionTitle}>Inside This Project</Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, marginTop: 16 }}>
+                    <Text style={[styles.eventSectionTitle, { marginBottom: 0, marginTop: 0 }]}>Inside This Project</Text>
+                    <TouchableOpacity onPress={() => {
+                      setSelectedProjectId(null);
+                      navigation.navigate('ProjectLifecycle', { projectId: selectedProjectMetrics.project.id });
+                    }}>
+                      <Text style={{ color: '#166534', fontWeight: 'bold', fontSize: 13 }}>More here</Text>
+                    </TouchableOpacity>
+                  </View>
                   {selectedProjectMetrics.linkedEvents.length === 0 ? (
                     <View style={styles.eventEmptyCard}>
                       <Text style={styles.eventEmptyText}>

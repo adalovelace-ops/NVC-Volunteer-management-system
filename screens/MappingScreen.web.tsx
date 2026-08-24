@@ -40,7 +40,7 @@ const MAP_FIT_PADDING_PX = 64;
 const MAP_MAX_FIT_ZOOM = 12;
 const MAP_SINGLE_MARKER_ZOOM = 10;
 
-type MapStylePresetKey = 'admin-overview' | 'volunteer-view' | 'partner-view';
+type MapStylePresetKey = 'projects-view' | 'events-view' | 'volunteers-view' | 'partners-view';
 
 type MapStylePreset = {
   key: MapStylePresetKey;
@@ -74,9 +74,9 @@ function escapeHtml(value: string): string {
 
 const MAP_STYLE_PRESETS: MapStylePreset[] = [
   {
-    key: 'admin-overview',
-    label: 'Admin overview',
-    description: 'Neutral roadmap for command-center use.',
+    key: 'projects-view',
+    label: 'Projects',
+    description: 'Overview of all active community projects across the Philippines.',
     mapTypeId: 'roadmap',
     accentColor: '#1d4ed8',
     chipBg: '#eff6ff',
@@ -87,9 +87,22 @@ const MAP_STYLE_PRESETS: MapStylePreset[] = [
     errorBorder: '#bfdbfe',
   },
   {
-    key: 'volunteer-view',
-    label: 'Volunteer view',
-    description: 'Green roadmap styling like the volunteer side.',
+    key: 'events-view',
+    label: 'Events',
+    description: 'Inspect scheduled volunteer events and field activities.',
+    mapTypeId: 'roadmap',
+    accentColor: '#b45309',
+    chipBg: '#fffbeb',
+    chipBorder: '#fde68a',
+    shellBg: '#fef3c7',
+    shellBorder: '#fde68a',
+    errorBg: 'rgba(254, 243, 199, 0.92)',
+    errorBorder: '#fde68a',
+  },
+  {
+    key: 'volunteers-view',
+    label: 'Volunteers',
+    description: 'Green roadmap styling and volunteer event participation.',
     mapTypeId: 'roadmap',
     accentColor: '#166534',
     chipBg: '#f0fdf4',
@@ -100,9 +113,9 @@ const MAP_STYLE_PRESETS: MapStylePreset[] = [
     errorBorder: '#bbf7d0',
   },
   {
-    key: 'partner-view',
-    label: 'Partner view',
-    description: 'Blue roadmap styling for partner planning.',
+    key: 'partners-view',
+    label: 'Partners',
+    description: 'Blue roadmap styling for partner planning and project footprints.',
     mapTypeId: 'roadmap',
     accentColor: '#0f766e',
     chipBg: '#ecfeff',
@@ -152,7 +165,7 @@ export default function MappingScreen({ navigation }: any) {
   const [showDetails, setShowDetails] = useState(false);
   const [showMapStyleMenu, setShowMapStyleMenu] = useState(false);
   const [showVolunteerMenu, setShowVolunteerMenu] = useState(false);
-  const [selectedMapStyleKey, setSelectedMapStyleKey] = useState<MapStylePresetKey>('partner-view');
+  const [selectedMapStyleKey, setSelectedMapStyleKey] = useState<MapStylePresetKey>('projects-view');
   const [selectedVolunteerId, setSelectedVolunteerId] = useState<string | null>(null);
   const [volunteerJoinRecords, setVolunteerJoinRecords] = useState<VolunteerProjectJoinRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -230,14 +243,23 @@ export default function MappingScreen({ navigation }: any) {
       : availableVolunteerMapAccounts[0] || null;
 
   const displayProjects = React.useMemo(() => {
-    if (selectedMapStyleKey !== 'volunteer-view') {
+    if (selectedMapStyleKey === 'projects-view') {
+      return projects.filter(p => !p.isEvent);
+    }
+    if (selectedMapStyleKey === 'events-view') {
+      return projects.filter(p => p.isEvent);
+    }
+    if (selectedMapStyleKey === 'volunteers-view') {
+      if (!selectedVolunteerAccount) {
+        return projects.filter(p => p.isEvent);
+      }
+      const allowedProjectIds = new Set(selectedVolunteerAccount.projectIds);
+      return projects.filter(project => allowedProjectIds.has(project.id));
+    }
+    if (selectedMapStyleKey === 'partners-view') {
       return projects;
     }
-    if (!selectedVolunteerAccount) {
-      return [];
-    }
-    const allowedProjectIds = new Set(selectedVolunteerAccount.projectIds);
-    return projects.filter(project => allowedProjectIds.has(project.id));
+    return projects;
   }, [projects, selectedMapStyleKey, selectedVolunteerAccount]);
 
   const mappedProjects = React.useMemo(() => {
@@ -708,7 +730,7 @@ export default function MappingScreen({ navigation }: any) {
           </View>
           <TouchableOpacity style={styles.workspaceButton} onPress={() => setShowMapStyleMenu(true)}>
             <MaterialIcons name="business" size={28} color="#5A8F52" />
-            <Text style={styles.workspaceButtonText}>Philippine Business for Social Progress</Text>
+            <Text style={styles.workspaceButtonText}>Negrense Volunteers for Change (NVC)</Text>
             <MaterialIcons name="keyboard-arrow-down" size={24} color="#334155" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.viewButton} onPress={() => setShowMapStyleMenu(true)}>
@@ -719,7 +741,7 @@ export default function MappingScreen({ navigation }: any) {
         </View>
       </View>
 
-      {selectedMapStyleKey === 'volunteer-view' && availableVolunteerMapAccounts.length > 0 ? (
+      {selectedMapStyleKey === 'volunteers-view' && availableVolunteerMapAccounts.length > 0 ? (
         <View style={styles.volunteerPickerRow}>
           <TouchableOpacity
             style={[

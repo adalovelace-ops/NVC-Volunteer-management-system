@@ -27,13 +27,19 @@ const isMobileModeOnWeb = (() => {
 if (typeof document !== "undefined") {
   const link = document.createElement("link");
   link.href =
-    "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap";
+    "https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700;800;900&display=swap";
   link.rel = "stylesheet";
   document.head.appendChild(link);
 
-  // Apply DM Sans globally to the body for web
-  document.body.style.fontFamily =
-    "'DM Sans', sans-serif";
+  document.body.style.fontFamily = "'Nunito', sans-serif";
+  const nunitoStyle = document.createElement("style");
+  nunitoStyle.textContent = `
+    body, #root, #root input, #root textarea, #root button,
+    body [dir="auto"]:not([style*="MaterialIcons"]):not([style*="MaterialCommunityIcons"]):not([style*="Ionicons"]) {
+      font-family: 'Nunito', sans-serif !important;
+    }
+  `;
+  document.head.appendChild(nunitoStyle);
 
   // When running in ?mode=mobile, inject a <style> tag that constrains the
   // entire app AND all modal portals to a phone-sized frame.  React Native

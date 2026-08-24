@@ -972,60 +972,62 @@ export default function UserManagementScreen() {
               <View style={styles.reviewDetailsSection}>
                 <Text style={styles.reviewSectionTitle}>Account Information</Text>
                 
-                <View style={styles.reviewDetailRow}>
-                  <Text style={styles.reviewDetailLabel}>User ID</Text>
-                  <Text style={styles.reviewDetailValue}>{reviewTarget.record.id}</Text>
-                </View>
-
-                <View style={styles.reviewDetailRow}>
-                  <Text style={styles.reviewDetailLabel}>Role</Text>
-                  <View style={[styles.reviewRolePill, { 
-                    backgroundColor: reviewTarget.record.role === 'admin' ? '#eff6ff' : 
-                                     reviewTarget.record.role === 'partner' ? '#f3e8ff' : '#fff7ed',
-                  }]}>
-                    <Text style={[styles.reviewRolePillText, {
-                      color: reviewTarget.record.role === 'admin' ? '#2563eb' : 
-                             reviewTarget.record.role === 'partner' ? '#9333ea' : '#ea580c',
-                    }]}>
-                      {reviewTarget.record.role.charAt(0).toUpperCase() + reviewTarget.record.role.slice(1)}
-                    </Text>
+                <View style={styles.reviewDetailsGrid}>
+                  <View style={styles.reviewDetailRow}>
+                    <Text style={styles.reviewDetailLabel}>User ID</Text>
+                    <Text style={styles.reviewDetailValue}>{reviewTarget.record.id}</Text>
                   </View>
-                </View>
 
-                <View style={styles.reviewDetailRow}>
-                  <Text style={styles.reviewDetailLabel}>Status</Text>
-                  <View style={[styles.reviewStatusPill, { 
-                    backgroundColor: reviewTarget.record.approvalStatus === 'pending' ? '#fffbeb' : '#f0fdf4',
-                  }]}>
-                    <View style={[styles.reviewStatusDot, { 
-                      backgroundColor: reviewTarget.record.approvalStatus === 'pending' ? '#d97706' : '#16a34a',
-                    }]} />
-                    <Text style={[styles.reviewStatusText, {
-                      color: reviewTarget.record.approvalStatus === 'pending' ? '#b45309' : '#15803d',
+                  <View style={styles.reviewDetailRow}>
+                    <Text style={styles.reviewDetailLabel}>Role</Text>
+                    <View style={[styles.reviewRolePill, { 
+                      backgroundColor: reviewTarget.record.role === 'admin' ? '#eff6ff' : 
+                                       reviewTarget.record.role === 'partner' ? '#f3e8ff' : '#fff7ed',
                     }]}>
-                      {reviewTarget.record.approvalStatus === 'pending' ? 'Pending' : 'Active'}
-                    </Text>
+                      <Text style={[styles.reviewRolePillText, {
+                        color: reviewTarget.record.role === 'admin' ? '#2563eb' : 
+                               reviewTarget.record.role === 'partner' ? '#9333ea' : '#ea580c',
+                      }]}>
+                        {reviewTarget.record.role.charAt(0).toUpperCase() + reviewTarget.record.role.slice(1)}
+                      </Text>
+                    </View>
                   </View>
-                </View>
 
-                <View style={styles.reviewDetailRow}>
-                  <Text style={styles.reviewDetailLabel}>Phone</Text>
-                  <Text style={styles.reviewDetailValue}>{reviewTarget.record.phone || 'Not provided'}</Text>
-                </View>
+                  <View style={styles.reviewDetailRow}>
+                    <Text style={styles.reviewDetailLabel}>Status</Text>
+                    <View style={[styles.reviewStatusPill, { 
+                      backgroundColor: reviewTarget.record.approvalStatus === 'pending' ? '#fffbeb' : '#f0fdf4',
+                    }]}>
+                      <View style={[styles.reviewStatusDot, { 
+                        backgroundColor: reviewTarget.record.approvalStatus === 'pending' ? '#d97706' : '#16a34a',
+                      }]} />
+                      <Text style={[styles.reviewStatusText, {
+                        color: reviewTarget.record.approvalStatus === 'pending' ? '#b45309' : '#15803d',
+                      }]}>
+                        {reviewTarget.record.approvalStatus === 'pending' ? 'Pending' : 'Active'}
+                      </Text>
+                    </View>
+                  </View>
 
-                <View style={styles.reviewDetailRow}>
-                  <Text style={styles.reviewDetailLabel}>User Type</Text>
-                  <Text style={styles.reviewDetailValue}>{reviewTarget.record.userType || 'Adult'}</Text>
-                </View>
+                  <View style={styles.reviewDetailRow}>
+                    <Text style={styles.reviewDetailLabel}>Phone</Text>
+                    <Text style={styles.reviewDetailValue}>{reviewTarget.record.phone || 'Not provided'}</Text>
+                  </View>
 
-                <View style={styles.reviewDetailRow}>
-                  <Text style={styles.reviewDetailLabel}>Organization</Text>
-                  <Text style={styles.reviewDetailValue}>{getLinkedPartnerForUser(reviewTarget.record)?.name || (reviewTarget.record.role === 'admin' ? 'NVC' : '—')}</Text>
-                </View>
+                  <View style={styles.reviewDetailRow}>
+                    <Text style={styles.reviewDetailLabel}>User Type</Text>
+                    <Text style={styles.reviewDetailValue}>{reviewTarget.record.userType || 'Adult'}</Text>
+                  </View>
 
-                <View style={styles.reviewDetailRow}>
-                  <Text style={styles.reviewDetailLabel}>Joined</Text>
-                  <Text style={styles.reviewDetailValue}>{format(new Date(reviewTarget.record.createdAt || Date.now()), 'MMM dd, yyyy HH:mm')}</Text>
+                  <View style={styles.reviewDetailRow}>
+                    <Text style={styles.reviewDetailLabel}>Organization</Text>
+                    <Text style={styles.reviewDetailValue}>{getLinkedPartnerForUser(reviewTarget.record)?.name || (reviewTarget.record.role === 'admin' ? 'NVC' : '-')}</Text>
+                  </View>
+
+                  <View style={styles.reviewDetailRow}>
+                    <Text style={styles.reviewDetailLabel}>Joined</Text>
+                    <Text style={styles.reviewDetailValue}>{format(new Date(reviewTarget.record.createdAt || Date.now()), 'MMM dd, yyyy HH:mm')}</Text>
+                  </View>
                 </View>
 
                 {reviewTarget.record.pillarsOfInterest && reviewTarget.record.pillarsOfInterest.length > 0 && (
@@ -1780,9 +1782,16 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     marginBottom: 16,
   },
+  reviewDetailsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
   reviewDetailRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    width: '48%',
+    flexDirection: 'column',
+    justifyContent: 'flex-start',
     alignItems: 'flex-start',
     paddingVertical: 12,
     borderBottomWidth: 1,
@@ -1791,14 +1800,13 @@ const styles = StyleSheet.create({
   reviewDetailLabel: {
     fontSize: 14,
     color: '#64748b',
-    flex: 1,
+    marginBottom: 4,
   },
   reviewDetailValue: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#0f172a',
-    flex: 1.5,
-    textAlign: 'right',
+    textAlign: 'left',
   },
   reviewRolePill: {
     paddingHorizontal: 10,

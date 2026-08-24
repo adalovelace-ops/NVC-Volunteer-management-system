@@ -57,6 +57,12 @@ type SkillSlice = {
   color: string;
 };
 
+type PartnerSectorQuarter = {
+  label: string;
+  total: number;
+  counts: Record<Partner['sectorType'], number>;
+};
+
 const SKILL_COLORS = [
   '#243f1f',
   '#477f39',
@@ -77,6 +83,30 @@ function safeDate(value?: string): Date | null {
 
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function buildPartnerSectorQuarters(partners: Partner[]): PartnerSectorQuarter[] {
+  const now = new Date();
+  const currentQuarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
+  const sectors: Partner['sectorType'][] = ['NGO', 'Hospital', 'Institution', 'Private'];
+
+  return Array.from({ length: 4 }, (_, index) => {
+    const quarterStart = new Date(now.getFullYear(), currentQuarterStartMonth - (3 - index) * 3, 1);
+    const quarterEnd = new Date(quarterStart.getFullYear(), quarterStart.getMonth() + 3, 1);
+    const counts = sectors.reduce((result, sector) => {
+      result[sector] = partners.filter(partner => {
+        const createdAt = safeDate(partner.createdAt);
+        return partner.sectorType === sector && createdAt !== null && createdAt >= quarterStart && createdAt < quarterEnd;
+      }).length;
+      return result;
+    }, {} as Record<Partner['sectorType'], number>);
+
+    return {
+      label: `Q${Math.floor(quarterStart.getMonth() / 3) + 1} ${quarterStart.getFullYear()}`,
+      total: sectors.reduce((sum, sector) => sum + counts[sector], 0),
+      counts,
+    };
+  });
 }
 
 function startOfMonth(date: Date): Date {
@@ -437,6 +467,20 @@ export default function AdminAnalyticsScreen() {
     () => buildSkillSlices(volunteers, projects, timeLogs, volunteerJoinRecords),
     [projects, timeLogs, volunteerJoinRecords, volunteers]
   );
+  const partnerSectorAnalytics = useMemo(() => {
+    const sectorNames: Partner['sectorType'][] = ['NGO', 'Hospital', 'Institution', 'Private'];
+    const total = partners.length;
+    return sectorNames.map((sector, index) => ({
+      sector,
+      count: partners.filter(partner => partner.sectorType === sector).length,
+      percent: total > 0 ? Math.round((partners.filter(partner => partner.sectorType === sector).length / total) * 100) : 0,
+      color: ['#3f7a54', '#d97706', '#2563eb', '#be185d'][index],
+    }));
+  }, [partners]);
+  const partnerSectorQuarters = useMemo(
+    () => buildPartnerSectorQuarters(partners),
+    [partners]
+  );
 
   const completedHours = useMemo(
     () => Math.round(timeLogs.reduce((sum, log) => sum + getCompletedVolunteerHours(log), 0)),
@@ -790,6 +834,27 @@ export default function AdminAnalyticsScreen() {
                   ))
                 )}
               </View>
+            </View>
+          </View>
+
+          <View style={[styles.skillsCard, isCompact && styles.fullWidthCard]}>
+            <Text style={styles.cardTitle}>PARTNER SECTORS BY QUARTER</Text>
+            <Text style={styles.cardSubtitle}>New partner organizations grouped by creation quarter</Text>
+            <View style={styles.sectorTable}>
+              <View style={styles.sectorTableRow}>
+                <Text style={[styles.sectorTableLabel, styles.sectorTableHeader]}>Quarter</Text>
+                {partnerSectorAnalytics.map(item => (
+                  <Text key={item.sector} style={[styles.sectorTableValue, styles.sectorTableHeader]}>{item.sector}</Text>
+                ))}
+              </View>
+              {partnerSectorQuarters.map(quarter => (
+                <View key={quarter.label} style={styles.sectorTableRow}>
+                  <Text style={styles.sectorTableLabel}>{quarter.label}</Text>
+                  {partnerSectorAnalytics.map(item => (
+                    <Text key={item.sector} style={styles.sectorTableValue}>{quarter.counts[item.sector]}</Text>
+                  ))}
+                </View>
+              ))}
             </View>
           </View>
         </View>
@@ -1358,6 +1423,34 @@ const styles = StyleSheet.create({
   skillValue: {
     fontSize: 12,
     color: '#6a7182',
+    fontWeight: '900',
+  },
+  sectorTable: {
+    marginTop: 20,
+    gap: 10,
+  },
+  sectorTableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#edf1eb',
+    paddingVertical: 8,
+  },
+  sectorTableLabel: {
+    flex: 1.2,
+    fontSize: 11,
+    color: '#344051',
+    fontWeight: '800',
+  },
+  sectorTableValue: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 11,
+    color: '#6a7182',
+    fontWeight: '800',
+  },
+  sectorTableHeader: {
+    color: '#3f7a54',
     fontWeight: '900',
   },
   footerStats: {

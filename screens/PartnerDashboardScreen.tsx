@@ -1559,32 +1559,6 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
 
-      <View style={styles.header}>
-
-        <View style={styles.avatar}>
-
-          <Text style={styles.avatarText}>{user?.name?.charAt(0) || 'P'}</Text>
-
-        </View>
-
-        <View style={{ flex: 1 }}>
-
-          <Text style={styles.greeting}>Welcome, {user?.name}</Text>
-
-          <Text style={styles.role}>Partner Dashboard</Text>
-
-        </View>
-
-        <TouchableOpacity onPress={handleLogout}>
-
-          <MaterialIcons name="logout" size={22} color="#475569" />
-
-        </TouchableOpacity>
-
-      </View>
-
-
-
       {loadError ? (
 
         <InlineLoadError

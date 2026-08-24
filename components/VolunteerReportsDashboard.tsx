@@ -10,6 +10,7 @@ import {
   FlatList,
   RefreshControl,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import type {
@@ -18,6 +19,7 @@ import type {
 } from '../screens/ReportsScreen';
 import type { Project } from '../models/types';
 import { buildTextPdf, downloadPdfFile } from '../utils/pdfDownload';
+import { getAttachmentUris, isImageMediaUri } from '../utils/media';
 import Svg, { Circle, Path, G } from 'react-native-svg';
 
 function EmptyReportsIllustration() {
@@ -72,6 +74,8 @@ type MaterialIconName = keyof typeof MaterialIcons.glyphMap;
 interface VolunteerReportsDashboardProps {
   reports: SubmittedReport[];
   projects: Project[];
+  volunteerTimeLogs?: { projectId: string; timeIn?: string; timeOut?: string }[];
+  volunteerJoinRecords?: { projectId: string; joinedAt?: string }[];
   onUploadReport: () => void;
   onViewReport: (report: SubmittedReport) => void;
   loading: boolean;
@@ -83,6 +87,8 @@ interface VolunteerReportsDashboardProps {
 export function VolunteerReportsDashboard({
   reports,
   projects,
+  volunteerTimeLogs = [],
+  volunteerJoinRecords = [],
   onUploadReport,
   onViewReport,
   loading,
@@ -107,6 +113,30 @@ export function VolunteerReportsDashboard({
 
     return { submitted, volunteerEventJoins, linkedProjects };
   }, [visibleReports]);
+
+  const eventFolders = useMemo(() => {
+    const eventIds = new Set<string>([
+      ...volunteerJoinRecords.map(record => record.projectId),
+      ...volunteerTimeLogs.map(log => log.projectId),
+      ...visibleReports.map(report => report.projectId).filter((id): id is string => Boolean(id)),
+    ]);
+
+    return projects
+      .filter(project => project.isEvent && eventIds.has(project.id))
+      .map(event => ({
+        event,
+        reports: visibleReports.filter(report => report.projectId === event.id),
+        photos: Array.from(
+          new Set(
+            visibleReports
+              .filter(report => report.projectId === event.id)
+              .flatMap(report => getAttachmentUris([report.mediaFile || '', ...(report.attachments || [])]))
+              .filter(isImageMediaUri)
+          )
+        ),
+      }))
+      .sort((left, right) => new Date(right.event.startDate || '').getTime() - new Date(left.event.startDate || '').getTime());
+  }, [projects, volunteerJoinRecords, volunteerTimeLogs, visibleReports]);
 
   const renderReportItem = ({ item }: { item: SubmittedReport }) => (
     <TouchableOpacity
@@ -202,31 +232,28 @@ export function VolunteerReportsDashboard({
           </View>
         </View>
 
-        {/* Reports List */}
+        {/* Joined event folders */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Report History</Text>
-            {visibleReports.length > 0 ? (
+            <Text style={styles.sectionTitle}>Joined Event Folders</Text>
+            {eventFolders.length > 0 ? (
               <TouchableOpacity style={styles.filterButton} activeOpacity={0.8}>
                 <MaterialIcons name="filter-list" size={16} color="#22201B" style={{ marginRight: 6 }} />
-                <Text style={styles.filterButtonText}>Filter ({visibleReports.length})</Text>
+                <Text style={styles.filterButtonText}>{eventFolders.length} events</Text>
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity style={styles.filterButton} activeOpacity={0.8}>
-                <MaterialIcons name="filter-list" size={16} color="#22201B" style={{ marginRight: 6 }} />
-                <Text style={styles.filterButtonText}>Filter</Text>
-              </TouchableOpacity>
+              <Text style={styles.reportItemDate}>No joined events</Text>
             )}
           </View>
 
-          {visibleReports.length === 0 ? (
+          {eventFolders.length === 0 ? (
             <View style={styles.emptyCardContainer}>
               <View style={styles.emptyIllustrationWrap}>
                 <EmptyReportsIllustration />
               </View>
               <Text style={styles.emptyTitle}>No reports yet</Text>
               <Text style={styles.emptyText}>
-                Your submitted event reports will appear here. Reports help coordinators verify completed volunteer activities.
+                Events you joined will appear here with their reports and photos organized together.
               </Text>
               <TouchableOpacity style={styles.emptyButton} onPress={onUploadReport} activeOpacity={0.8}>
                 <MaterialIcons name="add" size={16} color="#fff" style={{ marginRight: 6 }} />
@@ -234,13 +261,44 @@ export function VolunteerReportsDashboard({
               </TouchableOpacity>
             </View>
           ) : (
-            <FlatList
-              data={visibleReports}
-              renderItem={renderReportItem}
-              keyExtractor={item => item.id}
-              scrollEnabled={false}
-              ItemSeparatorComponent={() => <View style={styles.separator} />}
-            />
+            eventFolders.map(folder => (
+              <View key={folder.event.id} style={styles.eventFolder}>
+                <View style={styles.eventFolderHeader}>
+                  <View style={styles.eventFolderIcon}>
+                    <MaterialIcons name="event" size={20} color="#166534" />
+                  </View>
+                  <View style={styles.reportItemContent}>
+                    <Text style={styles.reportItemTitle}>{folder.event.title}</Text>
+                    <Text style={styles.reportItemType}>
+                      {folder.reports.length} report{folder.reports.length === 1 ? '' : 's'} • {folder.photos.length} photo{folder.photos.length === 1 ? '' : 's'}
+                    </Text>
+                    <Text style={styles.reportItemDate}>
+                      {folder.event.startDate ? new Date(folder.event.startDate).toLocaleDateString() : 'Event date not set'}
+                    </Text>
+                  </View>
+                </View>
+                {folder.photos.length > 0 ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.eventPhotoStrip}>
+                    {folder.photos.map(uri => (
+                      <TouchableOpacity key={uri} onPress={() => folder.reports[0] && onViewReport(folder.reports[0])} activeOpacity={0.85}>
+                        <Image source={{ uri }} style={styles.eventPhoto} resizeMode="cover" />
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                ) : null}
+                {folder.reports.length > 0 ? (
+                  <FlatList
+                    data={folder.reports}
+                    renderItem={renderReportItem}
+                    keyExtractor={item => item.id}
+                    scrollEnabled={false}
+                    ItemSeparatorComponent={() => <View style={styles.separator} />}
+                  />
+                ) : (
+                  <Text style={styles.eventFolderEmpty}>No report submitted for this event yet.</Text>
+                )}
+              </View>
+            ))
           )}
         </View>
 
@@ -919,6 +977,42 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#e2e8f0',
+  },
+  eventFolder: {
+    marginBottom: 14,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#dbe4ee',
+  },
+  eventFolderHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  eventFolderIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e4eee7',
+  },
+  eventPhotoStrip: {
+    gap: 8,
+    paddingVertical: 12,
+  },
+  eventPhoto: {
+    width: 104,
+    height: 84,
+    borderRadius: 10,
+    backgroundColor: '#e2e8f0',
+  },
+  eventFolderEmpty: {
+    paddingVertical: 8,
+    fontSize: 12,
+    color: '#64748b',
   },
   reportItemLeft: {
     flex: 1,

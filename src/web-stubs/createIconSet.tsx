@@ -23,6 +23,7 @@ export function createIconSet(glyphMap: Record<string, number>, fontName: string
     const glyph = codePoint ? String.fromCodePoint(codePoint) : '?';
     return (
       <Text
+        className={`rnv-icon rnv-icon-${fontName}`}
         style={[
           {
             fontFamily: fontName,

@@ -2449,27 +2449,36 @@ async def approve_user(user_id: str, payload: UserApprovalPayload, admin_id: str
                 "read": False,
                 "attachments": []
             }
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    insert into public.messages (
-                      id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
+            try:
+                ensure_message_storage()
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        insert into public.messages (
+                          id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
+                        )
+                        values (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            notification["id"],
+                            notification["senderId"],
+                            notification["recipientId"],
+                            notification["projectId"],
+                            notification["content"],
+                            notification["timestamp"],
+                            notification["read"],
+                            json.dumps(notification["attachments"]),
+                        ),
                     )
-                    values (%s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        notification["id"],
-                        notification["senderId"],
-                        notification["recipientId"],
-                        notification["projectId"],
-                        notification["content"],
-                        notification["timestamp"],
-                        notification["read"],
-                        json.dumps(notification["attachments"]),
-                    ),
-                )
-            connection.commit()
-            changed_keys.append("messages")
+                connection.commit()
+                changed_keys.append("messages")
+            except Exception as msg_err:
+                print(f"[WARN] Failed to insert approval notification message: {msg_err}")
+                try:
+                    connection.rollback()
+                except Exception:
+                    pass
+
             _invalidate_collection_cache(changed_keys)
             _projects_snapshot_cache.clear()
             await connection_manager.broadcast_storage_event(changed_keys)
