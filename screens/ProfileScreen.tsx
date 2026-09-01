@@ -592,12 +592,19 @@ export default function ProfileScreen() {
     if (!project.isEvent) return false;
     
     const isJoinedByUser = (project.joinedUserIds || []).includes(user?.id || '');
-    const isJoinedByVolunteer = volunteerProfile ? project.volunteers.includes(volunteerProfile.id) : false;
+    const isJoinedByVolunteer = volunteerProfile ? (project.volunteers || []).includes(volunteerProfile.id) : false;
     const isAssignedToTask = (project.internalTasks || []).some(
-      task => task.assignedVolunteerId === volunteerProfile?.id
+      task =>
+        task.assignedVolunteerId === volunteerProfile?.id ||
+        (Array.isArray(task.assignedVolunteerIds) && task.assignedVolunteerIds.includes(volunteerProfile?.id || ''))
+    );
+    const hasTimeLog = (volunteerTimeLogs || []).some(
+      log =>
+        log.projectId === project.id &&
+        (log.volunteerId === volunteerProfile?.id || log.volunteerId === user?.id)
     );
     
-    return isJoinedByUser || isJoinedByVolunteer || isAssignedToTask;
+    return isJoinedByUser || isJoinedByVolunteer || isAssignedToTask || hasTimeLog;
   });
   const completedEvents = joinedEventProjects
     .filter(project => getProjectDisplayStatus(project) === 'Completed')
@@ -1127,7 +1134,7 @@ export default function ProfileScreen() {
           </View>
           <View style={styles.profileMapCard}>
             <VolunteerImpactMap
-              projects={projects}
+              projects={joinedEventProjects}
               volunteerAccounts={[
                 {
                   id: volunteerProfile.id,
