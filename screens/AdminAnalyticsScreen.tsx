@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Modal,
   Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TouchableOpacity,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -22,6 +25,7 @@ import {
 } from '../models/storage';
 import type { Partner, PartnerProjectApplication, PartnerReport, Project, Volunteer, VolunteerProjectJoinRecord, VolunteerTimeLog } from '../models/types';
 import ModernTheme from '../utils/modernTheme';
+import { buildTextPdf, downloadPdfFile } from '../utils/pdfDownload';
 
 type MonthPoint = {
   key: string;
@@ -395,6 +399,245 @@ function getCompletedVolunteerHours(log: VolunteerTimeLog): number {
   return (end.getTime() - start.getTime()) / 3_600_000;
 }
 
+export type AnalyticsReportSection = 
+  | 'all'
+  | 'total_volunteers'
+  | 'volunteers_per_event'
+  | 'skills_contributed'
+  | 'partner_sectors'
+  | 'project_status';
+
+function generateAnalyticsPdf(
+  section: AnalyticsReportSection,
+  volunteers: Volunteer[],
+  projects: Project[],
+  partners: Partner[],
+  joinRecords: VolunteerProjectJoinRecord[],
+  timeLogs: VolunteerTimeLog[],
+  monthPoints: MonthPoint[],
+  heatmapRows: HeatmapRow[],
+  skillAnalytics: { slices: SkillSlice[]; volunteerCount: number; contributionCount: number },
+  partnerSectorQuarters: PartnerSectorQuarter[],
+  currentTotal: number,
+  monthlyDelta: number
+): { title: string; filename: string; content: string } {
+  const events = projects.filter(p => p.isEvent);
+  const regularProjects = projects.filter(p => !p.isEvent);
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const timestampStr = new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' });
+
+  const volunteersById = new Map(volunteers.map(v => [v.id, v]));
+  const volunteersByUserId = new Map(volunteers.map(v => [v.userId, v]));
+
+  let sectionTitle = 'COMPREHENSIVE ANALYTICS REPORT';
+  let filename = `Analytics_Report_${dateStr}.pdf`;
+  let body = '';
+
+  const buildTotalVolunteersSection = () => {
+    let s = '================================================================================\n';
+    s += '1. TOTAL VOLUNTEERS & 12-MONTH CUMULATIVE GROWTH\n';
+    s += '================================================================================\n';
+    s += `Total Registered Volunteers: ${currentTotal}\n`;
+    s += `Monthly Growth Delta: ${monthlyDelta >= 0 ? '+' : ''}${monthlyDelta} volunteers vs last month\n\n`;
+    s += '12-MONTH CUMULATIVE GROWTH & VOLUNTEER ROSTER:\n';
+    s += '--------------------------------------------------------------------------------\n';
+    monthPoints.forEach((pt, idx) => {
+      const prevVal = idx > 0 ? monthPoints[idx - 1].value : 0;
+      const newCount = Math.max(0, pt.value - prevVal);
+      s += `\n[${pt.label}] Cumulative Total: ${pt.value} (+${newCount} new)\n`;
+      if (pt.names.length > 0) {
+        s += `  Volunteers (${pt.names.length}):\n`;
+        for (let i = 0; i < pt.names.length; i += 3) {
+          s += `    - ${pt.names.slice(i, i + 3).join(', ')}\n`;
+        }
+      } else {
+        s += '  No volunteers registered up to this period.\n';
+      }
+    });
+    s += '\n';
+    return s;
+  };
+
+  const buildVolunteersPerEventSection = () => {
+    let s = '================================================================================\n';
+    s += '2. VOLUNTEERS PER EVENT (EVENT PARTICIPATION)\n';
+    s += '================================================================================\n';
+    s += `Total Events Tracked: ${events.length}\n\n`;
+    s += 'EVENTS & JOINED VOLUNTEER LIST:\n';
+    s += '--------------------------------------------------------------------------------\n';
+    if (events.length === 0) {
+      s += 'No events recorded in the system.\n\n';
+    } else {
+      events.forEach((ev, idx) => {
+        const joinedIds = getEventVolunteerIds(ev, timeLogs, joinRecords, volunteersById, volunteersByUserId);
+        const joinedNames = Array.from(joinedIds)
+          .map(id => volunteersById.get(id)?.name || volunteersByUserId.get(id)?.name || id)
+          .filter(Boolean)
+          .sort((a, b) => a.localeCompare(b));
+
+        s += `\n[EVENT ${idx + 1}] ${ev.title}\n`;
+        s += `  * Status: ${ev.status || 'Active'}\n`;
+        s += `  * Dates: ${ev.startDate ? new Date(ev.startDate).toLocaleDateString() : 'N/A'} - ${ev.endDate ? new Date(ev.endDate).toLocaleDateString() : 'N/A'}\n`;
+        s += `  * Location: ${ev.location?.address || 'N/A'}\n`;
+        s += `  * Total Volunteers Joined: ${joinedNames.length} (Estimated Needed: ${ev.volunteersNeeded || 'N/A'})\n`;
+        if (joinedNames.length > 0) {
+          s += `  * Joined Volunteers (${joinedNames.length}):\n`;
+          for (let i = 0; i < joinedNames.length; i += 3) {
+            s += `      ${joinedNames.slice(i, i + 3).join(', ')}\n`;
+          }
+        } else {
+          s += '  * Joined Volunteers: None joined yet\n';
+        }
+      });
+      s += '\n';
+    }
+    return s;
+  };
+
+  const buildSkillsContributedSection = () => {
+    let s = '================================================================================\n';
+    s += '3. SKILLS CONTRIBUTED BY VOLUNTEERS\n';
+    s += '================================================================================\n';
+    s += `Total Identified Skills: ${skillAnalytics.slices.length}\n`;
+    s += `Total Volunteers Contributing: ${skillAnalytics.volunteerCount}\n`;
+    s += `Total Skill Contributions: ${skillAnalytics.contributionCount}\n\n`;
+    s += 'SKILL DISTRIBUTION BREAKDOWN:\n';
+    s += '--------------------------------------------------------------------------------\n';
+    skillAnalytics.slices.forEach(slice => {
+      s += `  * ${slice.name.padEnd(28, ' ')} : ${String(slice.count).padStart(3, ' ')} volunteers (${slice.percent}%)\n`;
+    });
+    s += '\nVOLUNTEER SKILLS DIRECTORY:\n';
+    s += '--------------------------------------------------------------------------------\n';
+    volunteers.forEach(v => {
+      const vSkills = (v.skills && v.skills.length > 0) 
+        ? v.skills.join(', ') 
+        : (v.skillsDescription || 'General Support');
+      s += `  * ${v.name || 'Volunteer'} (${v.email || 'No email'})\n`;
+      s += `      Skills: ${vSkills}\n`;
+      if (v.availability) {
+        s += `      Availability: ${v.availability}\n`;
+      }
+    });
+    s += '\n';
+    return s;
+  };
+
+  const buildPartnerSectorsSection = () => {
+    let s = '================================================================================\n';
+    s += '4. PARTNER SECTORS BY QUARTER\n';
+    s += '================================================================================\n';
+    s += `Total Partner Organizations: ${partners.length}\n\n`;
+    s += 'QUARTERLY SUMMARY:\n';
+    s += '--------------------------------------------------------------------------------\n';
+    s += 'Quarter     | NGO | Hospital | Institution | Private | Total\n';
+    s += '------------+-----+----------+-------------+---------+------\n';
+    partnerSectorQuarters.forEach(q => {
+      const qCol = q.label.padEnd(11, ' ');
+      const ngoCol = String(q.counts.NGO || 0).padStart(3, ' ');
+      const hospCol = String(q.counts.Hospital || 0).padStart(8, ' ');
+      const instCol = String(q.counts.Institution || 0).padStart(11, ' ');
+      const privCol = String(q.counts.Private || 0).padStart(7, ' ');
+      const totCol = String(q.total).padStart(5, ' ');
+      s += `${qCol} | ${ngoCol} | ${hospCol} | ${instCol} | ${privCol} | ${totCol}\n`;
+    });
+    s += '\nPARTNER ORGANIZATIONS DIRECTORY:\n';
+    s += '--------------------------------------------------------------------------------\n';
+    if (partners.length === 0) {
+      s += 'No partner organizations recorded in the system.\n\n';
+    } else {
+      partners.forEach((p, idx) => {
+        s += `[${idx + 1}] ${p.name || 'Partner Org'}\n`;
+        s += `    * Sector Type: ${p.sectorType || 'NGO'}\n`;
+        s += `    * Contact: ${p.contactPerson || 'N/A'} (${p.contactEmail || 'N/A'})\n`;
+        s += `    * Phone: ${p.contactPhone || 'N/A'}\n`;
+        s += `    * Location: ${p.location?.address || 'N/A'}\n`;
+        s += `    * Joined: ${p.createdAt ? new Date(p.createdAt).toLocaleDateString() : 'N/A'}\n\n`;
+      });
+    }
+    return s;
+  };
+
+  const buildProjectStatusOverviewSection = () => {
+    let s = '================================================================================\n';
+    s += '5. PROJECT STATUS OVERVIEW (FILTERED PROJECT REPORTS)\n';
+    s += '================================================================================\n';
+    s += `Total Projects: ${regularProjects.length}\n\n`;
+    const statusMeta = [
+      { status: 'Planning' as const, label: 'PLANNING (Draft / Upcoming)' },
+      { status: 'In Progress' as const, label: 'IN PROGRESS (Active)' },
+      { status: 'On Hold' as const, label: 'ON HOLD (Not Active Yet / Paused)' },
+      { status: 'Completed' as const, label: 'COMPLETED (Closed Projects)' },
+      { status: 'Cancelled' as const, label: 'CANCELLED (Cancel Project)' },
+    ];
+    statusMeta.forEach(({ status, label }) => {
+      const statusProjects = regularProjects.filter(p => p.status === status);
+      s += `--------------------------------------------------------------------------------\n`;
+      s += `STATUS: ${label} (${statusProjects.length} Projects)\n`;
+      s += `--------------------------------------------------------------------------------\n`;
+      if (statusProjects.length === 0) {
+        s += `  No projects currently in ${status} status.\n\n`;
+      } else {
+        statusProjects.forEach((p, pIdx) => {
+          s += `  ${pIdx + 1}. ${p.title}\n`;
+          s += `     - Module: ${p.programModule || p.category || 'General'}\n`;
+          s += `     - Dates: ${p.startDate ? new Date(p.startDate).toLocaleDateString() : 'N/A'} to ${p.endDate ? new Date(p.endDate).toLocaleDateString() : 'N/A'}\n`;
+          s += `     - Location: ${p.location?.address || 'N/A'}\n`;
+          s += `     - Volunteers Joined: ${p.volunteers?.length || 0} / ${p.volunteersNeeded || 'N/A'}\n`;
+          if (p.description) {
+            s += `     - Description: ${p.description.replace(/\n/g, ' ').slice(0, 140)}...\n`;
+          }
+          s += '\n';
+        });
+      }
+    });
+    return s;
+  };
+
+  if (section === 'total_volunteers') {
+    sectionTitle = 'TOTAL VOLUNTEERS GROWTH REPORT';
+    filename = `Total_Volunteers_Report_${dateStr}.pdf`;
+    body = buildTotalVolunteersSection();
+  } else if (section === 'volunteers_per_event') {
+    sectionTitle = 'VOLUNTEERS PER EVENT PARTICIPATION REPORT';
+    filename = `Volunteers_Per_Event_Report_${dateStr}.pdf`;
+    body = buildVolunteersPerEventSection();
+  } else if (section === 'skills_contributed') {
+    sectionTitle = 'SKILLS CONTRIBUTED REPORT';
+    filename = `Skills_Contributed_Report_${dateStr}.pdf`;
+    body = buildSkillsContributedSection();
+  } else if (section === 'partner_sectors') {
+    sectionTitle = 'PARTNER SECTORS & DIRECTORY REPORT';
+    filename = `Partner_Sectors_Report_${dateStr}.pdf`;
+    body = buildPartnerSectorsSection();
+  } else if (section === 'project_status') {
+    sectionTitle = 'PROJECT STATUS OVERVIEW REPORT';
+    filename = `Project_Status_Overview_${dateStr}.pdf`;
+    body = buildProjectStatusOverviewSection();
+  } else {
+    // all
+    sectionTitle = 'NVC SYSTEM ANALYTICS & IMPACT REPORT';
+    filename = `NVC_System_Analytics_Report_${dateStr}.pdf`;
+    body = [
+      buildTotalVolunteersSection(),
+      buildVolunteersPerEventSection(),
+      buildSkillsContributedSection(),
+      buildPartnerSectorsSection(),
+      buildProjectStatusOverviewSection(),
+    ].join('\n\n');
+  }
+
+  let header = 'NEGRENSE VOLUNTEERS FOR CHANGE (NVC) FOUNDATION\n';
+  header += `${sectionTitle}\n`;
+  header += `Report Generated: ${timestampStr}\n`;
+  header += '================================================================================\n\n';
+
+  return {
+    title: sectionTitle,
+    filename,
+    content: header + body,
+  };
+}
+
 export default function AdminAnalyticsScreen() {
   const { width } = useWindowDimensions();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -515,6 +758,43 @@ export default function AdminAnalyticsScreen() {
   } | null>(null);
   const hoverClearTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [selectedExportSection, setSelectedExportSection] = useState<AnalyticsReportSection>('all');
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleGenerateAnalyticsReport = async (section: AnalyticsReportSection = selectedExportSection) => {
+    setIsExporting(true);
+    try {
+      const report = generateAnalyticsPdf(
+        section,
+        volunteers,
+        projects,
+        partners,
+        volunteerJoinRecords,
+        timeLogs,
+        monthPoints,
+        heatmapRows,
+        skillAnalytics,
+        partnerSectorQuarters,
+        currentTotal,
+        monthlyDelta
+      );
+
+      const pdfContent = buildTextPdf(report.title, report.content);
+      await downloadPdfFile(report.filename, pdfContent, 'Unable to download report PDF.');
+      setShowExportModal(false);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(`✅ Report Generated!\n\n${report.filename} downloaded successfully.`);
+      } else {
+        Alert.alert('✅ Report Generated', `${report.filename} generated and saved successfully.`);
+      }
+    } catch (error: any) {
+      Alert.alert('Export Failed', error?.message || 'Unable to generate analytics PDF report.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const cancelHoverClear = useCallback(() => {
     if (hoverClearTimeoutRef.current) {
       clearTimeout(hoverClearTimeoutRef.current);
@@ -561,15 +841,44 @@ export default function AdminAnalyticsScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
+        {/* TOP ACTION BAR */}
+        <View style={styles.topActionBar}>
+          <View style={styles.topActionBarInfo}>
+            <Text style={styles.screenHeaderTitle}>System Analytics & Impact</Text>
+            <Text style={styles.screenHeaderSubtitle}>Real-time metrics, growth trajectory, and organization reports</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.exportPdfButton}
+            onPress={() => {
+              setSelectedExportSection('all');
+              setShowExportModal(true);
+            }}
+            activeOpacity={0.85}
+          >
+            <MaterialIcons name="picture-as-pdf" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+            <Text style={styles.exportPdfButtonText}>Generate PDF Report</Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.chartCard}>
           <View style={styles.cardHeader}>
             <View>
               <Text style={styles.cardTitle}>TOTAL VOLUNTEERS</Text>
               <Text style={styles.cardSubtitle}>Cumulative growth across the last 12 months</Text>
             </View>
-            <View style={styles.legendItem}>
-              <View style={styles.legendDot} />
-              <Text style={styles.legendText}>Volunteers</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <TouchableOpacity
+                onPress={() => void handleGenerateAnalyticsReport('total_volunteers')}
+                style={styles.cardExportIconBtn}
+                title="Download Total Volunteers PDF"
+              >
+                <MaterialIcons name="picture-as-pdf" size={16} color="#166534" />
+                <Text style={styles.cardExportIconText}>Export PDF</Text>
+              </TouchableOpacity>
+              <View style={styles.legendItem}>
+                <View style={styles.legendDot} />
+                <Text style={styles.legendText}>Volunteers</Text>
+              </View>
             </View>
           </View>
 
@@ -685,12 +994,22 @@ export default function AdminAnalyticsScreen() {
                 <Text style={styles.cardTitle}>VOLUNTEERS PER EVENT</Text>
                 <Text style={styles.cardSubtitle}>Weekly distribution of volunteer activity across top events</Text>
               </View>
-              <View style={styles.heatLegend}>
-                <Text style={styles.heatLegendText}>Low</Text>
-                {HEAT_COLORS.slice(1).map(color => (
-                  <View key={color} style={[styles.heatLegendSwatch, { backgroundColor: color }]} />
-                ))}
-                <Text style={styles.heatLegendText}>High</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <TouchableOpacity
+                  onPress={() => void handleGenerateAnalyticsReport('volunteers_per_event')}
+                  style={styles.cardExportIconBtn}
+                  title="Download Volunteers Per Event PDF"
+                >
+                  <MaterialIcons name="picture-as-pdf" size={16} color="#166534" />
+                  <Text style={styles.cardExportIconText}>Export PDF</Text>
+                </TouchableOpacity>
+                <View style={styles.heatLegend}>
+                  <Text style={styles.heatLegendText}>Low</Text>
+                  {HEAT_COLORS.slice(1).map(color => (
+                    <View key={color} style={[styles.heatLegendSwatch, { backgroundColor: color }]} />
+                  ))}
+                  <Text style={styles.heatLegendText}>High</Text>
+                </View>
               </View>
             </View>
             <Text style={styles.previewHint}>
@@ -789,8 +1108,20 @@ export default function AdminAnalyticsScreen() {
           </View>
 
           <View style={[styles.skillsCard, isCompact && styles.fullWidthCard]}>
-            <Text style={styles.cardTitle}>SKILLS CONTRIBUTED</Text>
-            <Text style={styles.cardSubtitle}>All skills brought by volunteers joined to events</Text>
+            <View style={styles.cardHeader}>
+              <View>
+                <Text style={styles.cardTitle}>SKILLS CONTRIBUTED</Text>
+                <Text style={styles.cardSubtitle}>All skills brought by volunteers joined to events</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => void handleGenerateAnalyticsReport('skills_contributed')}
+                style={styles.cardExportIconBtn}
+                title="Download Skills Contributed PDF"
+              >
+                <MaterialIcons name="picture-as-pdf" size={16} color="#166534" />
+                <Text style={styles.cardExportIconText}>Export PDF</Text>
+              </TouchableOpacity>
+            </View>
             <View style={styles.skillsBody}>
               <View style={styles.donutWrap}>
                 <View
@@ -838,8 +1169,20 @@ export default function AdminAnalyticsScreen() {
           </View>
 
           <View style={[styles.skillsCard, isCompact && styles.fullWidthCard]}>
-            <Text style={styles.cardTitle}>PARTNER SECTORS BY QUARTER</Text>
-            <Text style={styles.cardSubtitle}>New partner organizations grouped by creation quarter</Text>
+            <View style={styles.cardHeader}>
+              <View>
+                <Text style={styles.cardTitle}>PARTNER SECTORS BY QUARTER</Text>
+                <Text style={styles.cardSubtitle}>New partner organizations grouped by creation quarter</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => void handleGenerateAnalyticsReport('partner_sectors')}
+                style={styles.cardExportIconBtn}
+                title="Download Partner Sectors PDF"
+              >
+                <MaterialIcons name="picture-as-pdf" size={16} color="#166534" />
+                <Text style={styles.cardExportIconText}>Export PDF</Text>
+              </TouchableOpacity>
+            </View>
             <View style={styles.sectorTable}>
               <View style={styles.sectorTableRow}>
                 <Text style={[styles.sectorTableLabel, styles.sectorTableHeader]}>Quarter</Text>
@@ -866,23 +1209,40 @@ export default function AdminAnalyticsScreen() {
               <Text style={styles.cardTitle}>PROJECT STATUS OVERVIEW</Text>
               <Text style={styles.cardSubtitle}>Engage projects are sorted by current status</Text>
             </View>
+            <TouchableOpacity
+              onPress={() => void handleGenerateAnalyticsReport('project_status')}
+              style={styles.cardExportIconBtn}
+              title="Download Project Status Overview PDF"
+            >
+              <MaterialIcons name="picture-as-pdf" size={16} color="#166534" />
+              <Text style={styles.cardExportIconText}>Export PDF</Text>
+            </TouchableOpacity>
           </View>
 
           <View style={styles.statusList}>
-            {(['Planning', 'In Progress', 'On Hold', 'Completed', 'Cancelled'] as const).map(status => {
-              const count = projects.filter(p => !p.isEvent && p.status === status).length;
+            {[
+              { status: 'Planning', label: 'Planning', tag: 'Draft / Upcoming' },
+              { status: 'In Progress', label: 'In Progress', tag: 'Active' },
+              { status: 'On Hold', label: 'On Hold', tag: 'Not Active Yet / Paused' },
+              { status: 'Completed', label: 'Completed', tag: 'Closed Projects' },
+              { status: 'Cancelled', label: 'Cancelled', tag: 'Cancel Project' },
+            ].map(item => {
+              const count = projects.filter(p => !p.isEvent && p.status === item.status).length;
               const statusColor = 
-                status === 'Planning' ? ModernTheme.colors.status.planning :
-                status === 'In Progress' ? ModernTheme.colors.status.inProgress :
-                status === 'On Hold' ? ModernTheme.colors.status.onHold :
-                status === 'Completed' ? ModernTheme.colors.status.completed :
+                item.status === 'Planning' ? ModernTheme.colors.status.planning :
+                item.status === 'In Progress' ? ModernTheme.colors.status.inProgress :
+                item.status === 'On Hold' ? ModernTheme.colors.status.onHold :
+                item.status === 'Completed' ? ModernTheme.colors.status.completed :
                 ModernTheme.colors.status.cancelled;
               
               return (
-                <View key={status} style={styles.statusRow}>
+                <View key={item.status} style={styles.statusRow}>
                   <View style={styles.statusLeft}>
                     <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-                    <Text style={styles.statusLabel}>{status}</Text>
+                    <Text style={styles.statusLabel}>{item.label}</Text>
+                    <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: `${statusColor}18`, marginLeft: 8 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: statusColor }}>{item.tag}</Text>
+                    </View>
                   </View>
                   <Text style={styles.statusCount}>{count}</Text>
                 </View>
@@ -907,11 +1267,17 @@ export default function AdminAnalyticsScreen() {
                     <View style={[styles.filterChip, styles.filterChipActive]}>
                       <Text style={[styles.filterChipText, styles.filterChipTextActive]}>All ({partnerProjects.length})</Text>
                     </View>
-                    {(['Planning', 'In Progress', 'On Hold', 'Completed', 'Cancelled'] as const).map(status => {
-                      const count = partnerProjects.filter(p => p.status === status).length;
+                    {[
+                      { status: 'Planning', tag: 'Draft' },
+                      { status: 'In Progress', tag: 'Active' },
+                      { status: 'On Hold', tag: 'Not Active' },
+                      { status: 'Completed', tag: 'Closed' },
+                      { status: 'Cancelled', tag: 'Cancelled' },
+                    ].map(item => {
+                      const count = partnerProjects.filter(p => p.status === item.status).length;
                       return (
-                        <View key={status} style={styles.filterChip}>
-                          <Text style={styles.filterChipText}>{status} ({count})</Text>
+                        <View key={item.status} style={styles.filterChip}>
+                          <Text style={styles.filterChipText}>{item.status} ({item.tag}) • {count}</Text>
                         </View>
                       );
                     })}
@@ -998,6 +1364,118 @@ export default function AdminAnalyticsScreen() {
           <Text style={styles.footerStat}>Tracked events: {projects.filter(project => project.isEvent).length}</Text>
         </View>
       </ScrollView>
+
+      {/* EXPORT PDF REPORT MODAL */}
+      <Modal
+        visible={showExportModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowExportModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View style={styles.modalPdfIcon}>
+                  <MaterialIcons name="picture-as-pdf" size={24} color="#dc2626" />
+                </View>
+                <View>
+                  <Text style={styles.modalTitle}>Generate Analytics PDF Report</Text>
+                  <Text style={styles.modalSubtitle}>Select the sections to include in your generated report</Text>
+                </View>
+              </View>
+              <TouchableOpacity onPress={() => setShowExportModal(false)} style={{ padding: 4 }}>
+                <MaterialIcons name="close" size={22} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.reportOptionsList}>
+              {[
+                {
+                  key: 'all',
+                  title: 'Full Executive Analytics Report',
+                  desc: 'All 5 sections including volunteer roster, event participation, skills directory, partner sectors, and project status.',
+                  icon: 'analytics',
+                },
+                {
+                  key: 'total_volunteers',
+                  title: '1. Total Volunteers Growth',
+                  desc: '12-month cumulative growth curve with complete names of registered volunteers per period.',
+                  icon: 'groups',
+                },
+                {
+                  key: 'volunteers_per_event',
+                  title: '2. Volunteers Per Event',
+                  desc: 'All tracked events and full list of joined volunteer names for each event.',
+                  icon: 'event',
+                },
+                {
+                  key: 'skills_contributed',
+                  title: '3. Skills Contributed',
+                  desc: 'Skill distribution metrics and complete volunteer-to-skill directory.',
+                  icon: 'psychology',
+                },
+                {
+                  key: 'partner_sectors',
+                  title: '4. Partner Sectors by Quarter',
+                  desc: 'Quarterly breakdown of NGO, Hospital, Institution, Private partners and full organization directory.',
+                  icon: 'business',
+                },
+                {
+                  key: 'project_status',
+                  title: '5. Project Status Overview',
+                  desc: 'Filtered project breakdown across Planning, In Progress, On Hold, Completed, and Cancelled.',
+                  icon: 'folder-special',
+                },
+              ].map(opt => {
+                const isSelected = selectedExportSection === opt.key;
+                return (
+                  <TouchableOpacity
+                    key={opt.key}
+                    style={[styles.reportOptionItem, isSelected && styles.reportOptionItemSelected]}
+                    onPress={() => setSelectedExportSection(opt.key as AnalyticsReportSection)}
+                    activeOpacity={0.75}
+                  >
+                    <View style={[styles.reportOptionRadio, isSelected && styles.reportOptionRadioSelected]}>
+                      {isSelected && <View style={styles.reportOptionRadioDot} />}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.reportOptionTitle, isSelected && styles.reportOptionTitleSelected]}>
+                        {opt.title}
+                      </Text>
+                      <Text style={styles.reportOptionDesc}>{opt.desc}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={styles.modalActionButtons}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setShowExportModal(false)}
+                disabled={isExporting}
+              >
+                <Text style={styles.modalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalDownloadBtn}
+                onPress={() => void handleGenerateAnalyticsReport()}
+                disabled={isExporting}
+              >
+                {isExporting ? (
+                  <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />
+                ) : (
+                  <MaterialIcons name="file-download" size={18} color="#ffffff" style={{ marginRight: 6 }} />
+                )}
+                <Text style={styles.modalDownloadBtnText}>
+                  {isExporting ? 'Generating PDF...' : 'Download PDF Report'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1655,5 +2133,201 @@ const styles = StyleSheet.create({
     color: ModernTheme.colors.text.secondary,
     fontWeight: ModernTheme.typography.fontWeight.medium,
     textAlign: 'center',
+  },
+  // Top Action Bar and PDF export styles
+  topActionBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  topActionBarInfo: {
+    flex: 1,
+    minWidth: 240,
+  },
+  screenHeaderTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  screenHeaderSubtitle: {
+    fontSize: 13,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  exportPdfButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#166534',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    shadowColor: '#166534',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  exportPdfButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  cardExportIconBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#f0fdf4',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  cardExportIconText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  // Modal styles
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    padding: 24,
+    maxWidth: 640,
+    width: '100%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    paddingBottom: 14,
+  },
+  modalPdfIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: '#fef2f2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  reportOptionsList: {
+    gap: 10,
+    marginVertical: 12,
+  },
+  reportOptionItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
+    gap: 12,
+  },
+  reportOptionItemSelected: {
+    borderColor: '#166534',
+    backgroundColor: '#f0fdf4',
+  },
+  reportOptionRadio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#cbd5e1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  reportOptionRadioSelected: {
+    borderColor: '#166534',
+  },
+  reportOptionRadioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#166534',
+  },
+  reportOptionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  reportOptionTitleSelected: {
+    color: '#166534',
+  },
+  reportOptionDesc: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  modalActionButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 18,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    paddingTop: 16,
+  },
+  modalCancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#ffffff',
+  },
+  modalCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  modalDownloadBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#166534',
+  },
+  modalDownloadBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
   },
 });

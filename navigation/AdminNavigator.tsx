@@ -221,7 +221,8 @@ function SidebarCapture({ onPropsChange, ...tabBarProps }: BottomTabBarProps & {
     String(tabBarProps.state.index),
     ...tabBarProps.state.routes.map(route => {
       const options = tabBarProps.descriptors[route.key]?.options;
-      return `${options?.title || route.name}:${String(options?.tabBarBadge || '')}`;
+      const paramsString = route.params ? JSON.stringify(route.params) : '';
+      return `${options?.title || route.name}:${String(options?.tabBarBadge || '')}:${paramsString}`;
     }),
   ].join('|');
   useEffect(() => { onPropsChange(tabBarProps, signature); }, [signature]);

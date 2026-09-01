@@ -66,6 +66,26 @@ export async function getTimeLogs(): Promise<any[]> {
   return apiCall('/storage/volunteerTimeLogs');
 }
 
+export async function clearProjects(): Promise<any> {
+  return apiCall('/storage/projects', 'DELETE');
+}
+
+export async function clearVolunteers(): Promise<any> {
+  return apiCall('/storage/volunteers', 'DELETE');
+}
+
+export async function clearPartnerApplications(): Promise<any> {
+  return apiCall('/storage/partnerProjectApplications', 'DELETE');
+}
+
+export async function clearProjectsVolunteersAndProposals(): Promise<void> {
+  await Promise.all([
+    clearProjects(),
+    clearVolunteers(),
+    clearPartnerApplications(),
+  ]);
+}
+
 export async function getMessages(userId: string): Promise<any[]> {
   const res = await apiCall(`/messages?user_id=${encodeURIComponent(userId)}`) as any;
   if (Array.isArray(res)) return res;

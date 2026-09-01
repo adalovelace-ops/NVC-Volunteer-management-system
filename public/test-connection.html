@@ -34,7 +34,7 @@
             
             // Test 2: Calculate API URL (same logic as app)
             const protocol = document.location.protocol || 'http:';
-            const host = document.location.hostname || '127.0.0.1';
+            const host = document.location.hostname || 'YOUR_SYSTEM_IP';
             const apiUrl = `${protocol}//${host}:8000`;
             
             html += `<div class="result success">
@@ -88,7 +88,7 @@
                     <p>The backend is working correctly.</p>
                     <p><strong>Next steps:</strong></p>
                     <ol>
-                        <li>Go back to your app at <a href="http://localhost:8081">http://localhost:8081</a></li>
+                        <li>Go back to your app at your system web URL</li>
                         <li>Open browser console (F12)</li>
                         <li>Run: <code>localStorage.clear(); sessionStorage.clear(); location.reload();</code></li>
                     </ol>
@@ -103,13 +103,13 @@
                     <ul>
                         <li>Backend not running on port 8000</li>
                         <li>CORS blocking the request</li>
-                        <li>Firewall blocking localhost connections</li>
+                        <li>Firewall blocking system network connections</li>
                     </ul>
                     <h4>To fix:</h4>
                     <ol>
                         <li>Make sure backend is running: <code>npm run backend</code></li>
                         <li>Check backend terminal for errors</li>
-                        <li>Try: <code>curl http://127.0.0.1:8000/health</code></li>
+                        <li>Try: <code>curl http://YOUR_SYSTEM_IP:8000/health</code></li>
                     </ol>
                 </div>`;
             }

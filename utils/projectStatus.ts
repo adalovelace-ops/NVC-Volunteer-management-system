@@ -97,6 +97,7 @@ export function getProjectDisplayStatus(
 }
 
 // Maps project lifecycle states to the colors used across the UI.
+// Maps project lifecycle states to the colors used across the UI.
 export function getProjectStatusColor(
   projectOrStatus?: StatusProjectLike | Project['status'] | string | null
 ) {
@@ -106,14 +107,54 @@ export function getProjectStatusColor(
     case 'Planning':
       return '#2563EB';
     case 'In Progress':
-      return '#0F766E';
+      return '#16A34A';
     case 'On Hold':
       return '#D97706';
     case 'Completed':
-      return '#16A34A';
+      return '#7C3AED';
     case 'Cancelled':
       return '#DC2626';
     default:
       return '#2563EB';
+  }
+}
+
+export function getProjectStatusLabel(
+  projectOrStatus?: StatusProjectLike | Project['status'] | string | null
+): string {
+  const normalized = getProjectDisplayStatus(projectOrStatus);
+  switch (normalized) {
+    case 'Planning':
+      return 'Planning (Draft)';
+    case 'In Progress':
+      return 'In Progress (Active)';
+    case 'On Hold':
+      return 'On Hold (Not Active Yet)';
+    case 'Completed':
+      return 'Completed (Closed)';
+    case 'Cancelled':
+      return 'Cancelled';
+    default:
+      return 'Planning (Draft)';
+  }
+}
+
+export function getProjectStatusTag(
+  projectOrStatus?: StatusProjectLike | Project['status'] | string | null
+): string {
+  const normalized = getProjectDisplayStatus(projectOrStatus);
+  switch (normalized) {
+    case 'Planning':
+      return 'Draft / Upcoming';
+    case 'In Progress':
+      return 'Active';
+    case 'On Hold':
+      return 'Not Active Yet / Paused';
+    case 'Completed':
+      return 'Closed Projects';
+    case 'Cancelled':
+      return 'Cancel Project';
+    default:
+      return 'Draft';
   }
 }

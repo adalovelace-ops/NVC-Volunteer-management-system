@@ -31,7 +31,7 @@ function getPlatformOS(): string {
  * Returns true when running in a real web browser BUT the user has NOT
  * requested mobile-emulation mode via the `?mode=mobile` query param.
  *
- * Visiting  http://localhost:8081/?mode=mobile  (or any URL with that param)
+ * Visiting  the system web URL with ?mode=mobile  (or any URL with that param)
  * makes the web app behave exactly like the mobile app – volunteer and partner
  * accounts can log in, the role-selection screen appears, and the signup flow
  * is fully accessible.  This is useful for:
@@ -54,6 +54,7 @@ function getIsWeb(): boolean {
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { Picker } from "@react-native-picker/picker";
 import {
+  cancelUserRegistration,
   createUserAccount,
   getAllProjects,
   getAllUsers,
@@ -123,6 +124,7 @@ type SignupPartnerApplicationState = {
   sectorType: PartnerSectorType;
   dswdAccreditationNo: string;
   secRegistrationNo: string;
+  validIdPhoto: string;
   advocacyFocus: AdvocacyFocus[];
 };
 
@@ -145,26 +147,6 @@ const ADMIN_DEMO_ACCOUNT: DemoLoginAccount = {
   badge: "ADMIN",
 };
 
-const VOLUNTEER_DEMO_ACCOUNT: DemoLoginAccount = {
-  id: "demo-volunteer",
-  name: "Volunteer Account",
-  identifier: "volunteer@example.com",
-  password: "volunteer123",
-  badge: "VOLUNTEER",
-  mobileRole: "volunteer",
-};
-
-const PARTNER_DEMO_ACCOUNTS: DemoLoginAccount[] = [
-  {
-    id: "demo-partner-kabankalan",
-    name: "Kabankalan LGU",
-    identifier: "partner@livelihoods.org",
-    password: "partner123",
-    badge: "PARTNER",
-    mobileRole: "partner",
-  },
-];
-
 function getVisibleDemoAccounts(
   isWeb: boolean,
   selectedMobileRole: MobileEntryRole | null,
@@ -173,15 +155,7 @@ function getVisibleDemoAccounts(
     return [ADMIN_DEMO_ACCOUNT];
   }
 
-  if (selectedMobileRole === "volunteer") {
-    return [VOLUNTEER_DEMO_ACCOUNT];
-  }
-
-  if (selectedMobileRole === "partner") {
-    return PARTNER_DEMO_ACCOUNTS;
-  }
-
-  return [VOLUNTEER_DEMO_ACCOUNT, ...PARTNER_DEMO_ACCOUNTS];
+  return [ADMIN_DEMO_ACCOUNT];
 }
 
 // Returns a clean volunteer membership form state for the signup modal.
@@ -213,6 +187,7 @@ function createEmptySignupPartnerApplication(): SignupPartnerApplicationState {
     sectorType: "NGO",
     dswdAccreditationNo: "",
     secRegistrationNo: "",
+    validIdPhoto: "",
     advocacyFocus: [],
   };
 }
@@ -415,6 +390,7 @@ export default function LoginScreen() {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [pendingApprovalMessage, setPendingApprovalMessage] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(true);
   const [loginError, setLoginError] = useState<{
     title: string;
@@ -425,6 +401,7 @@ export default function LoginScreen() {
   const [signupLoading, setSignupLoading] = useState(false);
   const [signupValidationError, setSignupValidationError] = useState<string | null>(null);
   const [signupSuccessData, setSignupSuccessData] = useState<{
+    userId: string;
     title: string;
     message: string;
     role: UserRole;
@@ -441,6 +418,21 @@ export default function LoginScreen() {
   const [signupOtpCode, setSignupOtpCode] = useState("");
   const [signupOtpVerifying, setSignupOtpVerifying] = useState(false);
   const [signupOtpSentEmail, setSignupOtpSentEmail] = useState("");
+  // ERROR TRAP: Email changed or OTP refreshed — invalidate previous verification
+  useEffect(() => {
+    const normalized = signupEmail.trim().toLowerCase();
+    if (!normalized) return;
+    if (signupOtpSentEmail && normalized !== signupOtpSentEmail) {
+      if (signupEmailVerified) {
+        setSignupEmailVerified(false);
+        setSignupOtpMessage("Email changed. Previous verification is no longer valid. Please send a new code and verify the new address.");
+        setSignupOtpCode("");
+      } else if (signupOtpSentEmail) {
+        setSignupOtpMessage("Email changed. Previous code is invalid. Please send a new code for this address.");
+        setSignupOtpCode("");
+      }
+    }
+  }, [signupEmail]);
   const [signupAccountPhone, setSignupAccountPhone] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
   const [signupUserType, setSignupUserType] = useState<UserType>("Student");
@@ -776,6 +768,15 @@ export default function LoginScreen() {
     const activeMobileRole = roleOverride ?? selectedMobileRole;
     const showLoginError = (title: string, message: string) => {
       setLoginError({ title, message });
+      const lowerMessage = message.toLowerCase();
+      if (
+        lowerMessage.includes("pending approval") ||
+        lowerMessage.includes("not yet approved") ||
+        lowerMessage.includes("under review")
+      ) {
+        setPendingApprovalMessage(message);
+        return;
+      }
       // Use centralized handler so web and mobile behave consistently
       showError(new Error(message), {
         fallbackTitle: title,
@@ -911,6 +912,12 @@ export default function LoginScreen() {
         return;
       }
 
+      const approvalBlock = getCachedApprovalBlock(user);
+      if (approvalBlock) {
+        showLoginError(approvalBlock.title, approvalBlock.message);
+        return;
+      }
+
       // Update auth context - this triggers state change and navigation
       await login(user);
       setBackendStatus("online");
@@ -1036,6 +1043,7 @@ export default function LoginScreen() {
   // Updates one field in the volunteer membership form without replacing the whole object.
   const handleSendSignupOtp = async () => {
     const normalizedEmail = signupEmail.trim().toLowerCase();
+    const isRefresh = normalizedEmail === signupOtpSentEmail && signupOtpSentEmail !== "";
     if (!normalizedEmail || !normalizedEmail.includes("@")) {
       Alert.alert("Validation Error", "Please enter a valid email address before requesting a code.");
       return;
@@ -1060,7 +1068,7 @@ export default function LoginScreen() {
 
       setSignupEmail(normalizedEmail);
       setSignupOtpSentEmail(normalizedEmail);
-      setSignupOtpMessage("Code sent. Check your email.");
+      setSignupOtpMessage(isRefresh ? "New code sent. Previous code is now invalid. Use the latest code." : "Code sent. Check your email.");
     } catch (error) {
       Alert.alert(
         getRequestErrorTitle(error, "Email Verification Failed"),
@@ -1107,12 +1115,17 @@ export default function LoginScreen() {
 
       setSignupEmailVerified(true);
       setSignupOtpMessage("Email verified.");
-    } catch (error) {
+    } catch (error: any) {
+      const detail = String(error?.message || (error as any)?.detail || "");
+      const isInvalidCode = /invalid|expired|mismatch|not found|incorrect/i.test(detail);
+      const userMessage = isInvalidCode
+        ? "This code is no longer valid. A new code was sent. Please use the latest code."
+        : getRequestErrorMessage(error, "Could not verify the code.", {
+            backendUrl: getApiBaseUrl(),
+          });
       Alert.alert(
-        getRequestErrorTitle(error, "Verification Failed"),
-        getRequestErrorMessage(error, "Could not verify the code.", {
-          backendUrl: getApiBaseUrl(),
-        }),
+        getRequestErrorTitle(error, "Email Verification Failed"),
+        userMessage,
       );
     } finally {
       setSignupOtpVerifying(false);
@@ -1153,6 +1166,23 @@ export default function LoginScreen() {
       }
 
       updateSignupVolunteerSheet("validIdPhoto", selectedImage);
+    } catch (error: any) {
+      Alert.alert(
+        "ID Upload Failed",
+        error?.message ||
+        "Unable to open the photo library for ID upload.",
+      );
+    }
+  };
+
+  const handlePickPartnerValidIdPhoto = async () => {
+    try {
+      const selectedImage = await pickImageFromDevice();
+      if (!selectedImage) {
+        return;
+      }
+
+      updateSignupPartnerApplication("validIdPhoto", selectedImage);
     } catch (error: any) {
       Alert.alert(
         "ID Upload Failed",
@@ -1359,6 +1389,7 @@ export default function LoginScreen() {
                 signupPartnerApplication.sectorType !== "NGO"
                   ? signupPartnerApplication.secRegistrationNo.trim()
                   : "",
+              validIdPhoto: signupPartnerApplication.validIdPhoto.trim(),
               advocacyFocus: signupPartnerApplication.advocacyFocus,
             }
             : undefined,
@@ -1420,6 +1451,7 @@ export default function LoginScreen() {
       const applicantContact = signupEmail.trim() || signupAccountPhone.trim();
 
       setSignupSuccessData({
+        userId: createdUser.id,
         title: successTitle,
         message: successMessage,
         role: signupRole,
@@ -1446,6 +1478,51 @@ export default function LoginScreen() {
     } finally {
       setSignupLoading(false);
     }
+  };
+
+  // Cancels a freshly submitted or pending registration for volunteer or partner.
+  const handleCancelSubmittedRegistration = () => {
+    if (!signupSuccessData) return;
+    const roleLabel = signupSuccessData.role === 'partner' ? 'partner application' : 'volunteer registration';
+    const targetKey = signupSuccessData.userId || signupSuccessData.contact;
+
+    const performCancellation = async () => {
+      try {
+        setSignupLoading(true);
+        if (targetKey) {
+          await cancelUserRegistration(targetKey);
+        }
+        setSignupSuccessData(null);
+        closeSignupModal();
+        setIdentifier("");
+        setPassword("");
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert(`Registration Cancelled\n\nYour ${roleLabel} has been cancelled successfully.`);
+        } else {
+          Alert.alert("Registration Cancelled", `Your ${roleLabel} has been cancelled successfully.`);
+        }
+      } catch (err) {
+        Alert.alert("Cancellation Error", "Unable to cancel registration. Please try again.");
+      } finally {
+        setSignupLoading(false);
+      }
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(`Are you sure you want to cancel your ${roleLabel}? This will withdraw your submitted application.`)) {
+        void performCancellation();
+      }
+      return;
+    }
+
+    Alert.alert(
+      "Cancel Registration",
+      `Are you sure you want to cancel your ${roleLabel}? This will withdraw your submitted application.`,
+      [
+        { text: "No, Keep", style: "cancel" },
+        { text: "Yes, Cancel Registration", style: "destructive", onPress: () => void performCancellation() },
+      ]
+    );
   };
 
   // Signs in immediately with a saved account shown on this device.
@@ -1830,6 +1907,7 @@ export default function LoginScreen() {
                     }}
                     disabled={loading || !identifier || !password}
                     activeOpacity={0.88}
+                    accessibilityLabel="Mobile Log In"
                   >
                     {loading ? (
                       <ActivityIndicator color="#fff" />
@@ -2104,18 +2182,51 @@ export default function LoginScreen() {
                       Got It, Back to Login
                     </Text>
                   </TouchableOpacity>
+
+                  {signupSuccessData.role !== 'admin' && (
+                    <TouchableOpacity
+                      style={{
+                        marginTop: 10,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        paddingVertical: 12,
+                        paddingHorizontal: 20,
+                        borderRadius: 8,
+                        borderWidth: 1.5,
+                        borderColor: '#DC2626',
+                        backgroundColor: '#FEF2F2',
+                        width: '100%',
+                      }}
+                      onPress={handleCancelSubmittedRegistration}
+                    >
+                      <MaterialIcons name="cancel" size={18} color="#DC2626" style={{ marginRight: 6 }} />
+                      <Text style={{ color: '#DC2626', fontWeight: '700', fontSize: 13 }}>
+                        Cancel Registration
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               ) : (
                 <>
-                  <Text style={styles.modalTitle}>
-                    {signupStep === "role"
-                      ? "Choose Account Type"
-                      : signupRole === "admin"
-                        ? "Admin Registration"
-                        : signupRole === "partner"
-                          ? "Partner Registration"
-                          : "Volunteer Registration"}
-                  </Text>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+                    <Text style={[styles.modalTitle, { flex: 1, marginRight: 10 }]}>
+                      {signupStep === "role"
+                        ? "Choose Account Type"
+                        : signupRole === "admin"
+                          ? "Admin Registration"
+                          : signupRole === "partner"
+                            ? "Partner Registration"
+                            : "Volunteer Registration"}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={closeSignupModal}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      style={{ padding: 4 }}
+                    >
+                      <MaterialIcons name="close" size={24} color="#64748b" />
+                    </TouchableOpacity>
+                  </View>
                   <Text style={styles.modalSubtitle}>
                     {signupStep === "role"
                       ? "Choose how you want to sign up. Access after registration will follow the selected role."
@@ -2231,6 +2342,11 @@ export default function LoginScreen() {
                                 {signupOtpMessage}
                               </Text>
                             ) : null}
+                            {signupOtpSentEmail === signupEmail.trim().toLowerCase() && !signupEmailVerified && !signupOtpLoading && !signupOtpVerifying ? (
+                              <TouchableOpacity onPress={handleSendSignupOtp} style={{ marginTop: 6 }}>
+                                <Text style={{ fontSize: 12, color: "#2563eb", fontWeight: "600" }}>Didn't receive code? Send new code</Text>
+                              </TouchableOpacity>
+                            ) : null}
                           </View>
                           <TextInput
                             style={styles.input}
@@ -2313,6 +2429,58 @@ export default function LoginScreen() {
                             }
                             editable={!signupLoading}
                           />
+
+                          <View style={styles.imagePickerSection}>
+                            <Text style={styles.modalSectionLabel}>
+                              Valid ID (Required)
+                            </Text>
+                            {signupPartnerApplication.validIdPhoto ? (
+                              <View style={styles.imagePreviewContainer}>
+                                <Image
+                                  source={{
+                                    uri: signupPartnerApplication.validIdPhoto,
+                                  }}
+                                  style={styles.imagePreview}
+                                  resizeMode="cover"
+                                />
+                                {!signupLoading && (
+                                  <TouchableOpacity
+                                    style={styles.removeImageButton}
+                                    onPress={() =>
+                                      updateSignupPartnerApplication(
+                                        "validIdPhoto",
+                                        "",
+                                      )
+                                    }
+                                  >
+                                    <MaterialIcons
+                                      name="close"
+                                      size={20}
+                                      color="#fff"
+                                    />
+                                  </TouchableOpacity>
+                                )}
+                              </View>
+                            ) : (
+                              <TouchableOpacity
+                                style={styles.imagePickerButton}
+                                onPress={handlePickPartnerValidIdPhoto}
+                                disabled={signupLoading}
+                              >
+                                <MaterialIcons
+                                  name="add-photo-alternate"
+                                  size={24}
+                                  color="#666"
+                                />
+                                <Text style={styles.imagePickerButtonText}>
+                                  Upload Valid ID Image
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                            <Text style={styles.imagePickerHint}>
+                              Please upload a clear image of any government-issued Valid ID representing the organization's representative.
+                            </Text>
+                          </View>
 
                           <Text style={styles.modalSectionSubLabel}>
                             Advocacy Focus (Select at least one)
@@ -2405,6 +2573,11 @@ export default function LoginScreen() {
                                 {signupOtpMessage}
                               </Text>
                             ) : null}
+                            {signupOtpSentEmail === signupEmail.trim().toLowerCase() && !signupEmailVerified && !signupOtpLoading && !signupOtpVerifying ? (
+                              <TouchableOpacity onPress={handleSendSignupOtp} style={{ marginTop: 6 }}>
+                                <Text style={{ fontSize: 12, color: "#2563eb", fontWeight: "600" }}>Didn't receive code? Send new code</Text>
+                              </TouchableOpacity>
+                            ) : null}
                           </View>
                           <TextInput
                             style={styles.input}
@@ -2481,6 +2654,11 @@ export default function LoginScreen() {
                               <Text style={{ color: signupEmailVerified ? "#10b981" : "#ef4444", marginTop: 5, fontSize: 12 }}>
                                 {signupOtpMessage}
                               </Text>
+                            ) : null}
+                            {signupOtpSentEmail === signupEmail.trim().toLowerCase() && !signupEmailVerified && !signupOtpLoading && !signupOtpVerifying ? (
+                              <TouchableOpacity onPress={handleSendSignupOtp} style={{ marginTop: 6 }}>
+                                <Text style={{ fontSize: 12, color: "#2563eb", fontWeight: "600" }}>Didn't receive code? Send new code</Text>
+                              </TouchableOpacity>
                             ) : null}
                           </View>
                           <TextInput
@@ -3034,6 +3212,28 @@ export default function LoginScreen() {
                             {signupRole === "admin" ? "Cancel" : "Back"}
                           </Text>
                         </TouchableOpacity>
+
+                        {signupRole !== "admin" && (
+                          <TouchableOpacity
+                            style={[
+                              styles.modalSecondaryButton,
+                              {
+                                borderColor: "#fca5a5",
+                                backgroundColor: "#fff5f5",
+                              },
+                            ]}
+                            onPress={() => {
+                              setSignupValidationError(null);
+                              closeSignupModal();
+                            }}
+                            disabled={signupLoading}
+                          >
+                            <Text style={[styles.modalSecondaryText, { color: "#dc2626" }]}>
+                              Cancel Registration
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+
                         <TouchableOpacity
                           style={[
                             styles.modalPrimaryButton,
@@ -3263,6 +3463,35 @@ export default function LoginScreen() {
               </View>
             </Modal>
           )}
+        </Modal>
+      ) : null}
+
+      {pendingApprovalMessage ? (
+        <Modal
+          visible
+          animationType="fade"
+          transparent
+          onRequestClose={() => setPendingApprovalMessage(null)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalCard, { flex: 0, minHeight: 280, maxHeight: '80%', padding: 24, justifyContent: 'center', alignItems: 'center', maxWidth: 420, alignSelf: 'center', width: '90%' }]}>
+              <View style={[styles.submissionSuccessBadgeWrap, { backgroundColor: '#fef3c7', borderColor: '#fde68a', marginBottom: 20 }]}>
+                <MaterialIcons name="hourglass-empty" size={32} color="#d97706" />
+              </View>
+              <Text style={[styles.submissionSuccessHeadline, { color: '#b45309', marginBottom: 12, textAlign: 'center' }]}>
+                Account Pending Approval
+              </Text>
+              <Text style={{ fontSize: 14, color: '#475569', textAlign: 'center', lineHeight: 22, marginBottom: 24 }}>
+                {pendingApprovalMessage}
+              </Text>
+              <TouchableOpacity
+                style={[styles.modalPrimaryButton, { width: '100%', backgroundColor: '#d97706', height: 48, justifyContent: 'center', alignItems: 'center', borderRadius: 8 }]}
+                onPress={() => setPendingApprovalMessage(null)}
+              >
+                <Text style={styles.modalPrimaryText}>Understood</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </Modal>
       ) : null}
     </>

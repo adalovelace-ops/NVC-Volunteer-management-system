@@ -104,24 +104,24 @@ export default function PartnerProjectsScreen({ route, navigation }: any) {
   );
 
   const approvedProjectIds = useMemo(
-    () =>
-      new Set(
-        partnerApplications
-          .filter(
-            application =>
-              application.status === 'Approved' &&
-              Boolean(application.projectId) &&
-              !String(application.projectId).startsWith('program:')
-          )
-          .map(application => application.projectId)
-      ),
+    () => new Set(
+      partnerApplications
+        .filter(application => application.status === 'Approved')
+        .map(application => application.projectId)
+        .filter(Boolean)
+    ),
     [partnerApplications]
   );
 
   const trackedProjects = useMemo(
     () =>
       projects
-        .filter(project => !project.isEvent && approvedProjectIds.has(project.id))
+        .filter(project =>
+          !project.isEvent &&
+          approvedProjectIds.has(project.id) &&
+          // Exclude top-level program records (they have no parentProjectId and no proposal-id prefix)
+          (Boolean(project.parentProjectId) || String(project.id || '').startsWith('project-proposal-'))
+        )
         .sort(
           (left, right) =>
             new Date(right.updatedAt || right.createdAt).getTime() -
@@ -231,43 +231,11 @@ export default function PartnerProjectsScreen({ route, navigation }: any) {
       }
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.heroCard}>
-        <View style={styles.heroHeader}>
-          <View style={styles.heroCopy}>
-            <Text style={styles.heroEyebrow}>Partner Tracking</Text>
-            <Text style={styles.heroTitle}>My Projects</Text>
-            <Text style={styles.heroSubtitle}>
-              Tap a project box to open its events, volunteer joins, and current progress.
-            </Text>
-          </View>
-          <View style={styles.heroIcon}>
-            <MaterialIcons name="analytics" size={28} color="#d1fae5" />
-          </View>
-        </View>
-
-        <View style={styles.summaryRow}>
-          <View style={styles.summaryPill}>
-            <Text style={styles.summaryValue}>{summary.totalProjects}</Text>
-            <Text style={styles.summaryLabel}>Projects</Text>
-          </View>
-          <View style={styles.summaryPill}>
-            <Text style={styles.summaryValue}>{summary.totalEvents}</Text>
-            <Text style={styles.summaryLabel}>Events</Text>
-          </View>
-          <View style={styles.summaryPill}>
-            <Text style={styles.summaryValue}>{summary.totalVolunteerJoins}</Text>
-            <Text style={styles.summaryLabel}>Joins</Text>
-          </View>
-          <View style={styles.summaryPill}>
-            <Text style={styles.summaryValue}>{summary.totalVerifiedAttendance}</Text>
-            <Text style={styles.summaryLabel}>Verified</Text>
-          </View>
-          <View style={styles.summaryPill}>
-            <Text style={styles.summaryValue}>{summary.activeProjects}</Text>
-            <Text style={styles.summaryLabel}>Active</Text>
-          </View>
-        </View>
-      </View>
+      {/* Page header */}
+      <Text style={styles.pageTitle}>Partner Tracking</Text>
+      <Text style={styles.pageSubtitle}>
+        Monitor and manage your projects, events, and volunteer engagements.
+      </Text>
 
       {loadError ? (
         <View style={styles.errorCard}>
@@ -276,93 +244,119 @@ export default function PartnerProjectsScreen({ route, navigation }: any) {
         </View>
       ) : null}
 
-      {projectMetrics.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <MaterialIcons name="assignment" size={26} color="#64748b" />
-          <Text style={styles.emptyTitle}>No approved projects yet</Text>
-          <Text style={styles.emptyText}>
-            Approved partner proposal projects will appear here once the admin accepts them.
-          </Text>
+      {/* My Projects summary card */}
+      <View style={styles.summaryCard}>
+        <View style={styles.summaryCardHeader}>
+          <View style={styles.summaryCardIconWrap}>
+            <MaterialIcons name="folder" size={22} color="#166534" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.summaryCardTitle}>My Projects</Text>
+            <Text style={styles.summaryCardSub}>
+              Tap a project box to open its events, volunteer joins, and current progress.
+            </Text>
+          </View>
         </View>
-      ) : (
-        <>
-          <Text style={styles.availableProgramHeader}>Available Program</Text>
-          <View style={styles.boxList}>
-            {projectMetrics.map(({ project, linkedEvents, volunteerJoinCount, verifiedAttendanceCount, activeEventCount }) => {
-              const projectStatus = getProjectDisplayStatus(project);
 
+        <View style={styles.statTileRow}>
+          <View style={styles.statTile}>
+            <View style={styles.statTileIcon}>
+              <MaterialIcons name="folder" size={20} color="#166534" />
+            </View>
+            <Text style={styles.statTileValue}>{summary.totalProjects}</Text>
+            <Text style={styles.statTileLabel}>Projects</Text>
+          </View>
+          <View style={styles.statTile}>
+            <View style={styles.statTileIcon}>
+              <MaterialIcons name="event" size={20} color="#166534" />
+            </View>
+            <Text style={styles.statTileValue}>{summary.totalEvents}</Text>
+            <Text style={styles.statTileLabel}>Events</Text>
+          </View>
+          <View style={styles.statTile}>
+            <View style={styles.statTileIcon}>
+              <MaterialIcons name="groups" size={20} color="#166534" />
+            </View>
+            <Text style={styles.statTileValue}>{summary.totalVolunteerJoins}</Text>
+            <Text style={styles.statTileLabel}>Joins</Text>
+          </View>
+        </View>
+      </View>
+
+      {/* Tracked Projects List */}
+      <View style={styles.sectionBlock}>
+        <Text style={styles.sectionHeader}>Approved & Active Projects</Text>
+        {projectMetrics.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <MaterialIcons name="folder-open" size={48} color="#94a3b8" />
+            <Text style={styles.emptyTitle}>No approved projects yet</Text>
+            <Text style={styles.emptyText}>
+              When your project proposals are approved by the admin, they will appear here with live volunteer tracking and event metrics.
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.boxList}>
+            {projectMetrics.map(entry => {
+              const displayStatus = getProjectDisplayStatus(entry.project);
+              const statusColor = getProjectStatusColor(entry.project);
               return (
                 <TouchableOpacity
-                  key={project.id}
+                  key={entry.project.id}
                   style={styles.projectBox}
-                  activeOpacity={0.9}
-                  onPress={() => setSelectedProjectId(project.id)}
+                  activeOpacity={0.8}
+                  onPress={() => setSelectedProjectId(entry.project.id)}
                 >
                   <View style={styles.projectBoxTopRow}>
                     <View style={styles.projectBoxCopy}>
-                      <Text style={styles.projectBoxTitle} numberOfLines={1}>
-                        {project.title}
-                      </Text>
-                      <Text style={styles.projectBoxMeta} numberOfLines={1}>
-                        {project.programModule || project.category}
+                      <Text style={styles.projectBoxTitle}>{entry.project.title}</Text>
+                      <Text style={styles.projectBoxMeta}>
+                        {entry.project.programModule || entry.project.category} • {formatDateRange(entry.project.startDate, entry.project.endDate)}
                       </Text>
                     </View>
-                    <View
-                      style={[
-                        styles.statusChip,
-                        { backgroundColor: `${getProjectStatusColor(project)}20` },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.statusChipText,
-                          { color: getProjectStatusColor(project) },
-                        ]}
-                      >
-                        {projectStatus}
-                      </Text>
+                    <View style={[styles.statusChip, { backgroundColor: `${statusColor}20` }]}>
+                      <Text style={[styles.statusChipText, { color: statusColor }]}>{displayStatus}</Text>
                     </View>
                   </View>
 
                   <View style={styles.projectStatRow}>
                     <View style={styles.projectStatMini}>
-                      <Text style={styles.projectStatValue}>{linkedEvents.length}</Text>
-                      <Text style={styles.projectStatLabel}>Linked Events</Text>
+                      <Text style={styles.projectStatValue}>{entry.linkedEvents.length}</Text>
+                      <Text style={styles.projectStatLabel}>Events</Text>
                     </View>
                     <View style={styles.projectStatMini}>
-                      <Text style={styles.projectStatValue}>{volunteerJoinCount}</Text>
-                      <Text style={styles.projectStatLabel}>Volunteer Joins</Text>
+                      <Text style={styles.projectStatValue}>{entry.volunteerJoinCount}</Text>
+                      <Text style={styles.projectStatLabel}>Volunteers</Text>
                     </View>
                     <View style={styles.projectStatMini}>
-                      <Text style={styles.projectStatValue}>{verifiedAttendanceCount}</Text>
-                      <Text style={styles.projectStatLabel}>Verified Attendance</Text>
+                      <Text style={styles.projectStatValue}>{entry.verifiedAttendanceCount}</Text>
+                      <Text style={styles.projectStatLabel}>Verified</Text>
                     </View>
                     <View style={styles.projectStatMini}>
-                      <Text style={styles.projectStatValue}>{activeEventCount}</Text>
+                      <Text style={styles.projectStatValue}>{entry.activeEventCount}</Text>
                       <Text style={styles.projectStatLabel}>Active Events</Text>
                     </View>
                   </View>
 
                   <View style={styles.projectBoxFooter}>
                     <Text style={styles.projectBoxFooterText} numberOfLines={1}>
-                      {project.location.address || 'Location to be announced'}
+                      {entry.project.location?.address || 'Negros Occidental'}
                     </Text>
-                    <Text style={styles.projectTapHint}>
-                      Tap to view details
-                    </Text>
-                    <MaterialIcons name="open-in-full" size={18} color="#166534" />
+                    <Text style={styles.projectTapHint}>View Details →</Text>
                   </View>
                 </TouchableOpacity>
               );
             })}
           </View>
-        </>
-      )}
+        )}
+      </View>
+
+
+      {/* Project Details Modal */}
 
       <Modal
         visible={Boolean(selectedProjectMetrics)}
         transparent
-        animationType="fade"
+        animationType="slide"
         onRequestClose={() => setSelectedProjectId(null)}
       >
         <View style={styles.modalBackdrop}>
@@ -516,11 +510,12 @@ export default function PartnerProjectsScreen({ route, navigation }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#edf6ee',
+    backgroundColor: '#f8fafc',
   },
   content: {
     padding: 16,
-    paddingBottom: 32,
+    paddingTop: 20,
+    paddingBottom: 40,
   },
   centerState: {
     flex: 1,
@@ -535,72 +530,159 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#475569',
   },
-  heroCard: {
-    backgroundColor: '#14532d',
-    borderRadius: 24,
-    padding: 20,
-    marginBottom: 16,
+  // Page header
+  pageTitle: {
+    fontSize: 26,
+    fontWeight: '900',
+    color: '#0f172a',
+    marginBottom: 6,
   },
-  heroHeader: {
+  pageSubtitle: {
+    fontSize: 13,
+    color: '#64748b',
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  // My Projects summary card
+  summaryCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#dbe7dc',
+    padding: 16,
+    marginBottom: 20,
+  },
+  summaryCardHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 12,
+    marginBottom: 16,
   },
-  heroCopy: {
-    flex: 1,
-  },
-  heroEyebrow: {
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-    color: '#bbf7d0',
-    marginBottom: 8,
-  },
-  heroTitle: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#ffffff',
-  },
-  heroSubtitle: {
-    marginTop: 8,
-    fontSize: 12,
-    lineHeight: 19,
-    color: '#dcfce7',
-    fontWeight: '600',
-  },
-  heroIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 18,
+  summaryCardIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#f0faf2',
+    borderWidth: 1,
+    borderColor: '#c7e5cc',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.12)',
   },
-  summaryRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 18,
-  },
-  summaryPill: {
-    minWidth: '47%',
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    borderRadius: 18,
-    padding: 12,
-  },
-  summaryValue: {
-    fontSize: 19,
+  summaryCardTitle: {
+    fontSize: 16,
     fontWeight: '900',
-    color: '#ffffff',
+    color: '#166534',
+    marginBottom: 2,
   },
-  summaryLabel: {
-    marginTop: 4,
+  summaryCardSub: {
+    fontSize: 12,
+    color: '#64748b',
+    lineHeight: 17,
+  },
+  statTileRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  statTile: {
+    flex: 1,
+    alignItems: 'center',
+    backgroundColor: '#f8fbf8',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#dbe7dc',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    gap: 4,
+  },
+  statTileIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#f0faf2',
+    borderWidth: 1,
+    borderColor: '#c7e5cc',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  statTileValue: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#166534',
+  },
+  statTileLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#d1fae5',
+    color: '#64748b',
   },
+  // Section
+  sectionBlock: {
+    marginBottom: 16,
+  },
+  sectionHeader: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#0f172a',
+    marginBottom: 10,
+  },
+  programListCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#dbe7dc',
+    overflow: 'hidden',
+  },
+  programRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  programRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9f2ea',
+  },
+  programRowIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#f0faf2',
+    borderWidth: 1,
+    borderColor: '#c7e5cc',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  programRowBody: {
+    flex: 1,
+  },
+  programRowTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 2,
+  },
+  programRowMeta: {
+    fontSize: 12,
+    color: '#64748b',
+    lineHeight: 17,
+  },
+  viewProgramBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#e9f2ea',
+    backgroundColor: '#f0faf2',
+  },
+  viewProgramBtnText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#166534',
+  },
+
   errorCard: {
     backgroundColor: '#fef2f2',
     borderWidth: 1,
@@ -747,6 +829,7 @@ const styles = StyleSheet.create({
   modalCard: {
     maxHeight: '82%',
     width: '100%',
+    maxWidth: 380,
     backgroundColor: '#ffffff',
     borderRadius: 22,
     padding: 16,
@@ -791,10 +874,11 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     marginBottom: 12,
+    justifyContent: 'space-between',
   },
   modalMetricCard: {
     flex: 1,
-    minWidth: '47%',
+    width: '100%',
     borderRadius: 14,
     backgroundColor: '#f8fbf8',
     borderWidth: 1,
@@ -831,7 +915,7 @@ const styles = StyleSheet.create({
   projectDetailText: {
     fontSize: 12,
     lineHeight: 18,
-    color: '#334155',
+    color: '#0f172a',
   },
   eventSectionTitle: {
     marginTop: 4,

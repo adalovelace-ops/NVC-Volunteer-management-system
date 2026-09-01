@@ -17,3 +17,6 @@ web-build/
 .env.local
 
 .dev-pids/
+serviceAccountKey.json
+scratch/
+scratch_plan.md

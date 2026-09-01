@@ -22,12 +22,14 @@ import {
 } from '../models/storage';
 import { AppSettings } from '../models/types';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
+import LogoutConfirmationModal from '../components/LogoutConfirmationModal';
 
 const STARTUP_SCREENS: AppSettings['startupScreen'][] = ['Dashboard', 'Projects', 'Reports', 'Messages'];
 
 // Shows configurable app preferences and a few safe maintenance actions.
 export default function SystemSettingsScreen() {
   const { user, logout, isAdmin } = useAuth();
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
   const [isLoading, setIsLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
@@ -120,18 +122,8 @@ export default function SystemSettingsScreen() {
     }
   };
 
-  const handleLogout = async () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (window.confirm('Are you sure you want to logout?')) {
-        await logout();
-      }
-      return;
-    }
-
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', onPress: async () => await logout() },
-    ]);
+  const handleLogout = () => {
+    setShowLogoutModal(true);
   };
 
   const renderToggleRow = (
@@ -285,6 +277,12 @@ export default function SystemSettingsScreen() {
           <Text style={styles.logoutButtonText}>Logout</Text>
         </TouchableOpacity>
       </View>
+
+      <LogoutConfirmationModal
+        visible={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+        onConfirm={logout}
+      />
     </ScrollView>
   );
 }

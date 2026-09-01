@@ -6,11 +6,13 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
   Modal,
   TextInput,
   ScrollView,
   Image,
   Platform,
+  Linking,
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -32,7 +34,7 @@ import {
   rejectUser,
 } from '../models/storage';
 import { NVCSector, Partner, User, UserRole, UserType, Volunteer } from '../models/types';
-import { isImageMediaUri } from '../utils/media';
+import { isImageMediaUri, openAttachmentUri, getAttachmentLabel } from '../utils/media';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
 
 const roleOptions: UserRole[] = ['admin', 'partner', 'volunteer'];
@@ -49,6 +51,8 @@ export default function UserManagementScreen() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showActionMenuUser, setShowActionMenuUser] = useState<User | null>(null);
+  const [actionLoading, setActionLoading] = useState<'save' | 'delete' | 'add' | null>(null);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
 
   // Form state drafts
   const [nameDraft, setNameDraft] = useState('');
@@ -195,6 +199,7 @@ export default function UserManagementScreen() {
     }
 
     try {
+      setActionLoading('save');
       const updatedUser: User = {
         ...selectedUser,
         name: nameDraft.trim(),
@@ -250,50 +255,35 @@ export default function UserManagementScreen() {
       void loadUsers();
     } catch (error) {
       Alert.alert(getRequestErrorTitle(error), getRequestErrorMessage(error, 'Failed to update user.'));
+    } finally {
+      setActionLoading(null);
     }
   };
 
   // Delete user logic
-  const handleDeleteUser = async (targetUser: User) => {
+  const executeDelete = async (targetUser: User) => {
+    try {
+      setActionLoading('delete');
+      await deleteUser(targetUser.id);
+      setSuccessNotice({
+        title: 'Account Deleted',
+        message: `${targetUser.name}'s account has been removed.`,
+      });
+      void loadUsers();
+    } catch (error) {
+      Alert.alert(getRequestErrorTitle(error), getRequestErrorMessage(error, 'Failed to delete user account.'));
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeleteUser = (targetUser: User) => {
     setShowActionMenuUser(null);
     if (targetUser.id === user?.id) {
       Alert.alert('Restricted', 'You cannot delete the currently signed-in admin account.');
       return;
     }
-
-    const executeDelete = async () => {
-      try {
-        await deleteUser(targetUser.id);
-        setSuccessNotice({
-          title: 'Account Deleted',
-          message: `${targetUser.name}'s account has been removed.`,
-        });
-        void loadUsers();
-      } catch (error) {
-        Alert.alert(getRequestErrorTitle(error), getRequestErrorMessage(error, 'Failed to delete user account.'));
-      }
-    };
-
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (window.confirm(`Are you sure you want to delete ${targetUser.name}'s account? This action cannot be undone.`)) {
-        await executeDelete();
-      }
-    } else {
-      Alert.alert(
-        'Delete Account',
-        `Are you sure you want to delete ${targetUser.name}'s account? This action cannot be undone.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Delete',
-            style: 'destructive',
-            onPress: () => {
-              void executeDelete();
-            },
-          },
-        ]
-      );
-    }
+    setUserToDelete(targetUser);
   };
 
   // CSV Export logic
@@ -931,11 +921,11 @@ export default function UserManagementScreen() {
             </ScrollView>
 
             <View style={styles.modalFooterActions}>
-              <TouchableOpacity style={styles.cancelFormButton} onPress={closeEditModal}>
+              <TouchableOpacity style={styles.cancelFormButton} onPress={closeEditModal} disabled={actionLoading !== null}>
                 <Text style={styles.cancelFormButtonText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.submitFormButton} onPress={handleSaveUser}>
-                <Text style={styles.submitFormButtonText}>Save Changes</Text>
+              <TouchableOpacity style={styles.submitFormButton} onPress={handleSaveUser} disabled={actionLoading !== null}>
+                {actionLoading === 'save' ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.submitFormButtonText}>Save Changes</Text>}
               </TouchableOpacity>
             </View>
           </View>
@@ -1043,9 +1033,279 @@ export default function UserManagementScreen() {
                   </View>
                 )}
               </View>
+
+              {(() => {
+                if (reviewTarget.record.role !== 'volunteer') return null;
+                const volunteerInfo = volunteers.find(v => v.userId === reviewTarget.record.id) || reviewTarget.record.volunteerMembershipSheet;
+                if (!volunteerInfo) return null;
+
+                return (
+                  <View style={[styles.reviewDetailsSection, { marginTop: 20 }]}>
+                    <Text style={styles.reviewSectionTitle}>Volunteer Profile Details</Text>
+                    <View style={styles.reviewDetailsGrid}>
+                      <View style={styles.reviewDetailRow}>
+                        <Text style={styles.reviewDetailLabel}>Gender</Text>
+                        <Text style={styles.reviewDetailValue}>{volunteerInfo.gender || '-'}</Text>
+                      </View>
+                      <View style={styles.reviewDetailRow}>
+                        <Text style={styles.reviewDetailLabel}>Date of Birth</Text>
+                        <Text style={styles.reviewDetailValue}>{volunteerInfo.dateOfBirth || '-'}</Text>
+                      </View>
+                      <View style={styles.reviewDetailRow}>
+                        <Text style={styles.reviewDetailLabel}>Civil Status</Text>
+                        <Text style={styles.reviewDetailValue}>{volunteerInfo.civilStatus || '-'}</Text>
+                      </View>
+                      <View style={styles.reviewDetailRow}>
+                        <Text style={styles.reviewDetailLabel}>Address</Text>
+                        <Text style={styles.reviewDetailValue}>
+                          {[
+                            volunteerInfo.homeAddress,
+                            volunteerInfo.homeAddressBarangay,
+                            volunteerInfo.homeAddressCityMunicipality,
+                            volunteerInfo.homeAddressRegion
+                          ].filter(Boolean).join(', ') || '-'}
+                        </Text>
+                      </View>
+                      <View style={styles.reviewDetailRow}>
+                        <Text style={styles.reviewDetailLabel}>Occupation</Text>
+                        <Text style={styles.reviewDetailValue}>{volunteerInfo.occupation || '-'}</Text>
+                      </View>
+                      <View style={styles.reviewDetailRow}>
+                        <Text style={styles.reviewDetailLabel}>Workplace / School</Text>
+                        <Text style={styles.reviewDetailValue}>{volunteerInfo.workplaceOrSchool || '-'}</Text>
+                      </View>
+                      {volunteerInfo.collegeCourse ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>College Course</Text>
+                          <Text style={styles.reviewDetailValue}>{volunteerInfo.collegeCourse}</Text>
+                        </View>
+                      ) : null}
+                      <View style={styles.reviewDetailRow}>
+                        <Text style={styles.reviewDetailLabel}>Certifications / Trainings</Text>
+                        {isImageMediaUri(volunteerInfo.certificationsOrTrainings) ? (
+                          <Text 
+                            style={[styles.reviewDetailValue, { color: '#16a34a', textDecorationLine: 'underline' }]} 
+                            onPress={() => openAttachmentUri(volunteerInfo.certificationsOrTrainings!)}
+                          >
+                            {getAttachmentLabel(volunteerInfo.certificationsOrTrainings)}
+                          </Text>
+                        ) : (
+                          <Text style={styles.reviewDetailValue}>{volunteerInfo.certificationsOrTrainings || '-'}</Text>
+                        )}
+                      </View>
+                      {volunteerInfo.hobbiesAndInterests ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>Hobbies & Interests</Text>
+                          <Text style={styles.reviewDetailValue}>{volunteerInfo.hobbiesAndInterests}</Text>
+                        </View>
+                      ) : null}
+                      {volunteerInfo.specialSkills ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>Special Skills</Text>
+                          <Text style={styles.reviewDetailValue}>{volunteerInfo.specialSkills}</Text>
+                        </View>
+                      ) : null}
+                      {volunteerInfo.videoBriefingUrl ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>Video Briefing URL</Text>
+                          <Text style={[styles.reviewDetailValue, { color: '#16a34a', textDecorationLine: 'underline' }]} onPress={() => Linking.openURL(volunteerInfo.videoBriefingUrl!)}>{volunteerInfo.videoBriefingUrl}</Text>
+                        </View>
+                      ) : null}
+                      {volunteerInfo.skills && volunteerInfo.skills.length > 0 ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>Skills</Text>
+                          <View style={styles.reviewInterestsWrap}>
+                            {volunteerInfo.skills.map((s: string, i: number) => (
+                              <View key={i} style={styles.reviewInterestChip}>
+                                <Text style={styles.reviewInterestText}>{s}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        </View>
+                      ) : null}
+                      {volunteerInfo.affiliations && volunteerInfo.affiliations.length > 0 ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>Affiliations</Text>
+                          <View style={{ gap: 4 }}>
+                            {volunteerInfo.affiliations.map((aff: any, i: number) => (
+                              <Text key={i} style={styles.reviewDetailValue}>
+                                {aff.position || '-'} at {aff.organization || '-'}
+                              </Text>
+                            ))}
+                          </View>
+                        </View>
+                      ) : (volunteerInfo as any).affiliation ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>Affiliation</Text>
+                          <Text style={styles.reviewDetailValue}>
+                            {(volunteerInfo as any).affiliation.position || '-'} at {(volunteerInfo as any).affiliation.organization || '-'}
+                          </Text>
+                        </View>
+                      ) : null}
+                      {volunteerInfo.validIdPhoto ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>Valid ID Photo</Text>
+                          <TouchableOpacity 
+                            onPress={() => openAttachmentUri(volunteerInfo.validIdPhoto!)} 
+                            style={{ marginTop: 8, width: '100%' }}
+                            activeOpacity={0.8}
+                          >
+                            <Image
+                              source={{ uri: volunteerInfo.validIdPhoto }}
+                              style={{ width: '100%', height: 200, borderRadius: 8, resizeMode: 'contain', backgroundColor: '#f1f5f9' }}
+                            />
+                            <Text style={{ fontSize: 11, color: '#16a34a', textDecorationLine: 'underline', marginTop: 4, textAlign: 'center' }}>
+                              Click to view full image
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
+                    </View>
+                  </View>
+                );
+              })()}
+
+              {(() => {
+                if (reviewTarget.record.role !== 'partner') return null;
+                const partnerInfo = partners.find(p => p.ownerUserId === reviewTarget.record.id) || reviewTarget.record.partnerRegistration || reviewTarget.record.partnerApplication;
+                if (!partnerInfo) return null;
+
+                return (
+                  <View style={[styles.reviewDetailsSection, { marginTop: 20 }]}>
+                    <Text style={styles.reviewSectionTitle}>Partner Application Details</Text>
+                    <View style={styles.reviewDetailsGrid}>
+                      <View style={styles.reviewDetailRow}>
+                        <Text style={styles.reviewDetailLabel}>Organization Name</Text>
+                        <Text style={styles.reviewDetailValue}>{partnerInfo.organizationName || '-'}</Text>
+                      </View>
+                      <View style={styles.reviewDetailRow}>
+                        <Text style={styles.reviewDetailLabel}>Sector Type</Text>
+                        <Text style={styles.reviewDetailValue}>{partnerInfo.sectorType || '-'}</Text>
+                      </View>
+                      {partnerInfo.stakeholderName ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>Stakeholder Name</Text>
+                          <Text style={styles.reviewDetailValue}>{partnerInfo.stakeholderName}</Text>
+                        </View>
+                      ) : null}
+                      {partnerInfo.dswdAccreditationNo ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>DSWD Accreditation No</Text>
+                          <Text style={styles.reviewDetailValue}>{partnerInfo.dswdAccreditationNo}</Text>
+                        </View>
+                      ) : null}
+                      {partnerInfo.secRegistrationNo ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>SEC Registration No</Text>
+                          <Text style={styles.reviewDetailValue}>{partnerInfo.secRegistrationNo}</Text>
+                        </View>
+                      ) : null}
+                      {(partnerInfo.region || partnerInfo.province || partnerInfo.cityMunicipality || partnerInfo.address) ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>Address / Location</Text>
+                          <Text style={styles.reviewDetailValue}>
+                            {[
+                              partnerInfo.address,
+                              partnerInfo.cityMunicipality,
+                              partnerInfo.province,
+                              partnerInfo.region
+                            ].filter(Boolean).join(', ') || '-'}
+                          </Text>
+                        </View>
+                      ) : null}
+                      {partnerInfo.advocacyFocus && partnerInfo.advocacyFocus.length > 0 ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>Advocacy Focus</Text>
+                          <View style={styles.reviewInterestsWrap}>
+                            {partnerInfo.advocacyFocus.map((f: string, i: number) => (
+                              <View key={i} style={styles.reviewInterestChip}>
+                                <Text style={styles.reviewInterestText}>{f}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        </View>
+                      ) : null}
+                      {partnerInfo.validIdPhoto ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>Valid ID Photo</Text>
+                          <TouchableOpacity 
+                            onPress={() => openAttachmentUri(partnerInfo.validIdPhoto!)} 
+                            style={{ marginTop: 8, width: '100%' }}
+                            activeOpacity={0.8}
+                          >
+                            <Image
+                              source={{ uri: partnerInfo.validIdPhoto }}
+                              style={{ width: '100%', height: 200, borderRadius: 8, resizeMode: 'contain', backgroundColor: '#f1f5f9' }}
+                            />
+                            <Text style={{ fontSize: 11, color: '#16a34a', textDecorationLine: 'underline', marginTop: 4, textAlign: 'center' }}>
+                              Click to view full image
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
+                      {partnerInfo.registrationDocuments && partnerInfo.registrationDocuments.length > 0 ? (
+                        <View style={styles.reviewDetailRow}>
+                          <Text style={styles.reviewDetailLabel}>Submitted Documents</Text>
+                          <View style={{ gap: 6, marginTop: 4 }}>
+                            {partnerInfo.registrationDocuments.map((doc: string, i: number) => (
+                              <TouchableOpacity
+                                key={i}
+                                onPress={() => openAttachmentUri(doc)}
+                                style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                              >
+                                <MaterialIcons name="description" size={16} color="#16a34a" />
+                                <Text style={[styles.reviewDetailValue, { color: '#16a34a', textDecorationLine: 'underline', textAlign: 'left', flex: 1 }]}>
+                                  {getAttachmentLabel(doc)}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        </View>
+                      ) : null}
+                    </View>
+                  </View>
+                );
+              })()}
             </ScrollView>
           </View>
         )}
+      </Modal>
+
+      {/* Delete Confirmation Modal */}
+      <Modal visible={Boolean(userToDelete)} animationType="fade" transparent onRequestClose={() => setUserToDelete(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContentCard, { maxWidth: 400 }]}>
+            <View style={styles.modalHeaderBar}>
+              <Text style={styles.modalHeadingTitle}>Delete Account</Text>
+              <TouchableOpacity onPress={() => setUserToDelete(null)}>
+                <MaterialIcons name="close" size={22} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+            <View style={{ padding: 20 }}>
+              <Text style={{ fontSize: 15, color: '#334155', lineHeight: 22 }}>
+                Are you sure to delete <Text style={{ fontWeight: '700', color: '#0f172a' }}>{userToDelete?.name}</Text>'s account? This action cannot be undone.
+              </Text>
+            </View>
+            <View style={styles.modalFooterActions}>
+              <TouchableOpacity style={styles.cancelFormButton} onPress={() => setUserToDelete(null)}>
+                <Text style={styles.cancelFormButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.submitFormButton, { backgroundColor: '#ef4444' }]}
+                onPress={async () => {
+                  if (userToDelete) {
+                    const target = userToDelete;
+                    setUserToDelete(null);
+                    await executeDelete(target);
+                  }
+                }}
+                accessibilityLabel="Confirm Delete"
+              >
+                <Text style={styles.submitFormButtonText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
     </View>
   );
@@ -1095,13 +1355,13 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     color: '#0f172a',
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   pageSubtitle: {
     fontSize: 14,
     color: '#64748b',
     marginTop: 2,
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   headerActions: {
     flexDirection: 'row',
@@ -1125,7 +1385,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 14,
     fontWeight: '600',
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   secondaryExportButton: {
     flexDirection: 'row',
@@ -1142,7 +1402,7 @@ const styles = StyleSheet.create({
     color: '#334155',
     fontSize: 14,
     fontWeight: '600',
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   bannerWrap: {
     marginBottom: 16,
@@ -1207,20 +1467,20 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '800',
     color: '#0f172a',
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   summaryTitle: {
     fontSize: 13,
     fontWeight: '700',
     color: '#334155',
     marginTop: 2,
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   summarySubtext: {
     fontSize: 11,
     color: '#64748b',
     marginTop: 1,
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
 
   // Tabs
@@ -1243,7 +1503,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#64748b',
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   tabButtonTextActive: {
     color: '#16a34a',
@@ -1277,7 +1537,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     color: '#0f172a',
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     outlineStyle: 'none' as any,
   },
   toolbarRight: {
@@ -1300,7 +1560,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#334155',
     fontWeight: '500',
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   refreshIconButton: {
     width: 42,
@@ -1366,7 +1626,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#64748b',
     letterSpacing: 0.5,
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   tableBodyRow: {
     flexDirection: 'row',
@@ -1423,7 +1683,7 @@ const styles = StyleSheet.create({
   avatarText: {
     fontSize: 14,
     fontWeight: '700',
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   userNameMeta: {
     marginLeft: 10,
@@ -1432,13 +1692,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#0f172a',
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   userSubText: {
     fontSize: 12,
     color: '#64748b',
     marginTop: 1,
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
 
   // Pills
@@ -1453,7 +1713,7 @@ const styles = StyleSheet.create({
   rolePillText: {
     fontSize: 12,
     fontWeight: '600',
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   statusPill: {
     flexDirection: 'row',
@@ -1483,7 +1743,7 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 12,
     fontWeight: '600',
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   statusTextActive: {
     color: '#15803d',
@@ -1494,7 +1754,7 @@ const styles = StyleSheet.create({
   tdText: {
     fontSize: 13,
     color: '#334155',
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   actionIconButton: {
     width: 32,
@@ -1545,7 +1805,7 @@ const styles = StyleSheet.create({
   paginationCountText: {
     fontSize: 13,
     color: '#64748b',
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
   },
   paginationControls: {
     flexDirection: 'row',
@@ -1790,7 +2050,6 @@ const styles = StyleSheet.create({
   reviewDetailRow: {
     flexDirection: 'row',
     width: '48%',
-    flexDirection: 'column',
     justifyContent: 'flex-start',
     alignItems: 'flex-start',
     paddingVertical: 12,

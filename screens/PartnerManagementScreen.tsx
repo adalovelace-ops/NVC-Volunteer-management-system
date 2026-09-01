@@ -7,6 +7,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
   Modal,
   TextInput,
 } from 'react-native';
@@ -65,6 +66,7 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
   const [addressDraft, setAddressDraft] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [sectorFilter, setSectorFilter] = useState<PartnerSectorType | 'All'>('All');
+  const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
     if (navigation) {
@@ -308,6 +310,7 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
     const previousSelectedPartner = selectedPartner;
 
     try {
+      setActionLoading(true);
       const updatedPartner: Partner = {
         ...selectedPartner,
         name: nameDraft.trim(),
@@ -334,6 +337,8 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
         getRequestErrorTitle(error),
         getRequestErrorMessage(error, 'Failed to update partner.')
       );
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -351,6 +356,65 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
     if (!selectedPartner) return [];
     return projects.filter(project => project.partnerId === selectedPartner.id);
   };
+
+  const sectorFilters: Array<PartnerSectorType | 'All'> = ['All', ...sectorOptions];
+
+  const pendingPartners = useMemo(() => {
+    return allPartnersList.filter(partner => partner.status === 'Pending');
+  }, [allPartnersList]);
+
+  const approvedPartners = useMemo(() => {
+    return allPartnersList.filter(partner => partner.status === 'Approved');
+  }, [allPartnersList]);
+
+  const pendingProposals = useMemo(() => {
+    return applications.filter(app => app.status === 'Pending');
+  }, [applications]);
+
+  const totalPendingCount = pendingPartners.length + pendingProposals.length;
+
+  const displayList = useMemo(() => {
+    if (activeTab === 'pending') {
+      return pendingPartners;
+    }
+    if (activeTab === 'all') {
+      return allPartnersList;
+    }
+    return approvedPartners;
+  }, [activeTab, pendingPartners, approvedPartners, allPartnersList]);
+
+  const filteredPartners = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    return [...displayList]
+      .filter(partner => sectorFilter === 'All' || partner.sectorType === sectorFilter)
+      .filter(partner => !normalizedSearch || [partner.name, partner.sectorType, partner.dswdAccreditationNo, partner.secRegistrationNo, ...partner.advocacyFocus]
+        .join(' ').toLowerCase().includes(normalizedSearch))
+      .sort((left, right) => {
+        if (activeTab === 'pending') {
+          return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+        }
+        return left.name.localeCompare(right.name);
+      });
+  }, [displayList, searchTerm, sectorFilter, activeTab]);
+
+  const filteredPendingProposals = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    return pendingProposals.filter(proposal => {
+      if (!normalizedSearch) return true;
+      const title = proposal.proposalDetails?.proposedTitle || proposal.projectId || '';
+      const name = proposal.partnerName || '';
+      const module = proposal.proposalDetails?.requestedProgramModule || '';
+      return `${title} ${name} ${module}`.toLowerCase().includes(normalizedSearch);
+    });
+  }, [pendingProposals, searchTerm]);
+
+  const partnerProjectCount = projects.filter(project => allPartnersList.some(partner => partner.id === project.partnerId)).length;
+  const nextSectorFilter = () => {
+    const currentIndex = sectorFilters.indexOf(sectorFilter);
+    setSectorFilter(sectorFilters[(currentIndex + 1) % sectorFilters.length]);
+  };
+  const getPartnerInitials = (name: string) => name.split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
+  const getPartnerSince = (partner: Partner) => format(new Date(partner.validatedAt || partner.createdAt), 'MMM d, yyyy');
 
   if (!isAdmin) {
     return (
@@ -538,12 +602,12 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
           <Modal visible={showEditModal} animationType="slide" onRequestClose={closeEditModal}>
             <View style={styles.modalContainer}>
               <View style={styles.modalHeader}>
-                <TouchableOpacity onPress={closeEditModal}>
+                <TouchableOpacity onPress={closeEditModal} disabled={actionLoading}>
                   <Text style={styles.modalCancel}>Cancel</Text>
                 </TouchableOpacity>
                 <Text style={styles.modalTitle}>Edit Partner</Text>
-                <TouchableOpacity onPress={handleSavePartner}>
-                  <Text style={styles.modalSave}>Save</Text>
+                <TouchableOpacity onPress={handleSavePartner} disabled={actionLoading}>
+                  {actionLoading ? <ActivityIndicator size="small" color="#166534" /> : <Text style={styles.modalSave}>Save</Text>}
                 </TouchableOpacity>
               </View>
 
@@ -626,64 +690,7 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
     );
   }
 
-  const sectorFilters: Array<PartnerSectorType | 'All'> = ['All', ...sectorOptions];
 
-  const pendingPartners = useMemo(() => {
-    return allPartnersList.filter(partner => partner.status === 'Pending');
-  }, [allPartnersList]);
-
-  const approvedPartners = useMemo(() => {
-    return allPartnersList.filter(partner => partner.status === 'Approved');
-  }, [allPartnersList]);
-
-  const pendingProposals = useMemo(() => {
-    return applications.filter(app => app.status === 'Pending');
-  }, [applications]);
-
-  const totalPendingCount = pendingPartners.length + pendingProposals.length;
-
-  const displayList = useMemo(() => {
-    if (activeTab === 'pending') {
-      return pendingPartners;
-    }
-    if (activeTab === 'all') {
-      return allPartnersList;
-    }
-    return approvedPartners;
-  }, [activeTab, pendingPartners, approvedPartners, allPartnersList]);
-
-  const filteredPartners = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
-    return [...displayList]
-      .filter(partner => sectorFilter === 'All' || partner.sectorType === sectorFilter)
-      .filter(partner => !normalizedSearch || [partner.name, partner.sectorType, partner.dswdAccreditationNo, partner.secRegistrationNo, ...partner.advocacyFocus]
-        .join(' ').toLowerCase().includes(normalizedSearch))
-      .sort((left, right) => {
-        if (activeTab === 'pending') {
-          return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
-        }
-        return left.name.localeCompare(right.name);
-      });
-  }, [displayList, searchTerm, sectorFilter, activeTab]);
-
-  const filteredPendingProposals = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
-    return pendingProposals.filter(proposal => {
-      if (!normalizedSearch) return true;
-      const title = proposal.proposalDetails?.proposedTitle || proposal.projectId || '';
-      const name = proposal.partnerName || '';
-      const module = proposal.proposalDetails?.requestedProgramModule || '';
-      return `${title} ${name} ${module}`.toLowerCase().includes(normalizedSearch);
-    });
-  }, [pendingProposals, searchTerm]);
-
-  const partnerProjectCount = projects.filter(project => allPartnersList.some(partner => partner.id === project.partnerId)).length;
-  const nextSectorFilter = () => {
-    const currentIndex = sectorFilters.indexOf(sectorFilter);
-    setSectorFilter(sectorFilters[(currentIndex + 1) % sectorFilters.length]);
-  };
-  const getPartnerInitials = (name: string) => name.split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
-  const getPartnerSince = (partner: Partner) => format(new Date(partner.validatedAt || partner.createdAt), 'MMM d, yyyy');
 
   return (
     <View style={styles.container}>

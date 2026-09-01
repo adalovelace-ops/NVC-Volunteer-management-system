@@ -84,6 +84,7 @@ export interface Partner {
   sectorType: PartnerSectorType;
   dswdAccreditationNo: string;
   secRegistrationNo?: string;
+  validIdPhoto?: string;
   advocacyFocus: AdvocacyFocus[];
   contactEmail?: string;
   contactPhone?: string;
@@ -194,6 +195,7 @@ export interface Project {
   locationRegion?: string;
   locationCity?: string;
   locationBarangay?: string; // Only for events
+  locationVenue?: string; // Specific venue description (only for events)
   volunteersNeeded: number;
   volunteers: string[]; // Volunteer IDs
   joinedUserIds?: string[];
@@ -407,10 +409,12 @@ export interface PartnerProjectApplication {
   partnerName: string;
   partnerEmail: string;
   proposalDetails?: PartnerProjectProposalDetails;
-  status: 'Pending' | 'Approved' | 'Rejected';
+  status: 'Pending' | 'Approved' | 'Rejected' | 'Revision Requested' | 'Needs Revision' | 'Resubmitted';
   requestedAt: string;
+  resubmittedAt?: string;
   reviewedAt?: string;
   reviewedBy?: string;
+  validIdPhoto?: string;
   reviewNotes?: string;
 }
 

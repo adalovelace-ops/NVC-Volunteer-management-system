@@ -11,10 +11,12 @@ import {
   TextInput,
   FlatList,
   Platform,
+  Image,
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { format } from 'date-fns';
 import { Volunteer, Project, VolunteerProjectMatch, VolunteerTimeLog, User, UserType, NVCSector, VolunteerAffiliation } from '../models/types';
+import UserAccountDetailsModal from '../components/UserAccountDetailsModal';
 import {
   assignVolunteerToProject,
   getAllVolunteers,
@@ -35,7 +37,7 @@ import { getProjectDisplayStatus } from '../utils/projectStatus';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
 import { getAttachmentLabel, isImageMediaUri, openAttachmentUri } from '../utils/media';
 
-// Lets admins inspect volunteers, update availability, and assign projects.
+// Lets admins inspect volunteers and assign projects.
 export default function VolunteerManagementScreen({ navigation, route }: any) {
   const { user, isAdmin } = useAuth();
   const insets = useSafeAreaInsets();
@@ -50,13 +52,11 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
   const [selectedVolunteerCompletedProjectIds, setSelectedVolunteerCompletedProjectIds] = useState<string[]>([]);
   const [volunteerMatches, setVolunteerMatches] = useState<VolunteerProjectMatch[]>([]);
   const [volunteerTimeLogs, setVolunteerTimeLogs] = useState<VolunteerTimeLog[]>([]);
-  const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
-  const [daysPerWeek, setDaysPerWeek] = useState('3');
-  const [hoursPerWeek, setHoursPerWeek] = useState('12');
-  const [availableDays, setAvailableDays] = useState<string[]>(['Monday', 'Wednesday', 'Saturday']);
+  const [showAccountDetailsModal, setShowAccountDetailsModal] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'All' | 'Pending' | 'Approved'>('All');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showApproveModal, setShowApproveModal] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
 
   useEffect(() => {
@@ -228,11 +228,6 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
     setView('detail');
   };
 
-  // Closes the availability editor after save or cancel.
-  const closeAvailabilityModal = () => {
-    setShowAvailabilityModal(false);
-  };
-
   const closeRejectModal = () => {
     setShowRejectModal(false);
     setRejectionReason('');
@@ -243,6 +238,7 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
       Alert.alert('Access Restricted', 'Only admin accounts can approve volunteers.');
       return;
     }
+    setShowApproveModal(false);
     if (!selectedVolunteer) return;
     const adminId = user?.id || '';
     const previousVolunteers = volunteers;
@@ -353,56 +349,6 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
       );
     }
   };
-
-  // Saves availability changes for the selected volunteer profile.
-  const handleUpdateAvailability = async () => {
-    if (!isAdmin) {
-      Alert.alert('Access Restricted', 'Only admin accounts can update volunteer availability.');
-      return;
-    }
-
-    if (!selectedVolunteer) return;
-
-    const previousVolunteers = volunteers;
-    const previousSelectedVolunteer = selectedVolunteer;
-
-    try {
-      const updated = {
-        ...selectedVolunteer,
-        availability: {
-          daysPerWeek: parseInt(daysPerWeek, 10),
-          hoursPerWeek: parseFloat(hoursPerWeek),
-          availableDays,
-        },
-      };
-
-      setVolunteers(currentVolunteers =>
-        currentVolunteers.map(volunteer => (volunteer.id === updated.id ? updated : volunteer))
-      );
-      setSelectedVolunteer(updated);
-      closeAvailabilityModal();
-      setActionNotice('Availability updated.');
-
-      await saveVolunteer(updated);
-      void loadVolunteers();
-    } catch (error) {
-      setVolunteers(previousVolunteers);
-      setSelectedVolunteer(previousSelectedVolunteer);
-      Alert.alert(
-        getRequestErrorTitle(error),
-        getRequestErrorMessage(error, 'Failed to update availability.')
-      );
-    }
-  };
-
-  // Adds or removes one selected day from the volunteer availability draft.
-  const toggleAvailableDay = (day: string) => {
-    setAvailableDays(prev =>
-      prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
-    );
-  };
-
-  const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
   // Returns one formatted timestamp for the time-log cards.
   const formatTimestamp = (value?: string) => {
@@ -544,6 +490,7 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
     const eventsFromJoined = new Set(joinedProjects.map(p => p.id));
     const allUniqueEvents = new Set([...eventsFromTimeLogs, ...eventsFromMatches, ...eventsFromJoined]);
     const eventsJoinedCount = allUniqueEvents.size;
+    const joinedEvents = projects.filter(p => p.isEvent && allUniqueEvents.has(p.id));
     const photoReportsCount = selectedVolunteerTimeLogs.filter(log =>
       Boolean(log.attendancePhoto || log.completionPhoto || log.completionReport)
     ).length;
@@ -564,12 +511,18 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
     const pillarsOfInterest = selectedUser?.pillarsOfInterest || [];
     const userType: UserType | undefined = selectedUser?.userType;
     const certificateUri = (membershipSheet?.certificationsOrTrainings || selectedVolunteer.certificationsOrTrainings || '').trim();
+    const validIdPhotoUri = (membershipSheet?.validIdPhoto || (selectedVolunteer as any).validIdPhoto || '').trim();
     const availableDaysLabel = selectedVolunteer.availability?.availableDays?.length
       ? selectedVolunteer.availability.availableDays.join(', ')
       : '-';
 
     return (
       <View style={styles.container}>
+        <UserAccountDetailsModal
+          visible={showAccountDetailsModal}
+          onClose={() => setShowAccountDetailsModal(false)}
+          user={selectedUser || null}
+        />
         <View style={[styles.header, { paddingTop: insets.top, height: 56 + insets.top }]}>
           <TouchableOpacity onPress={() => setView('list')}>
             <MaterialIcons name="arrow-back" size={24} color="#333" />
@@ -609,37 +562,29 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                   </View>
                 </View>
 
-                <View style={styles.applicationActionRow}>
-                  <TouchableOpacity
-                    style={[styles.reviewActionButton, styles.reviewApproveButton]}
-                    onPress={() => {
-                      if (Platform.OS === 'web') {
-                        const ok = window.confirm('Approve this volunteer application?');
-                        if (!ok) return;
-                        void handleApproveVolunteer();
-                      } else {
-                        Alert.alert(
-                          'Approve Application',
-                          'Approve this volunteer application?',
-                          [
-                            { text: 'Cancel', style: 'cancel' },
-                            { text: 'Approve', style: 'default', onPress: () => void handleApproveVolunteer() },
-                          ]
-                        );
-                      }
-                    }}
-                  >
-                    <MaterialIcons name="check-circle" size={18} color="#fff" />
-                    <Text style={styles.reviewActionButtonText}>Approve</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.reviewActionButton, styles.reviewRejectButton]}
-                    onPress={() => setShowRejectModal(true)}
-                  >
-                    <MaterialIcons name="cancel" size={18} color="#fff" />
-                    <Text style={styles.reviewActionButtonText}>Reject</Text>
-                  </TouchableOpacity>
-                </View>
+<View style={styles.applicationActionRow}>
+  <TouchableOpacity
+    style={[styles.reviewActionButton, styles.reviewApproveButton]}
+    onPress={() => setShowApproveModal(true)}
+  >
+    <MaterialIcons name="check-circle" size={18} color="#fff" />
+    <Text style={styles.reviewActionButtonText}>Approve</Text>
+  </TouchableOpacity>
+  <TouchableOpacity
+    style={[styles.reviewActionButton, styles.reviewRejectButton]}
+    onPress={() => setShowRejectModal(true)}
+  >
+    <MaterialIcons name="cancel" size={18} color="#fff" />
+    <Text style={styles.reviewActionButtonText}>Reject</Text>
+  </TouchableOpacity>
+  <TouchableOpacity
+    style={[styles.reviewActionButton, { backgroundColor: '#166534', marginLeft: 8 }]}
+    onPress={() => setShowAccountDetailsModal(true)}
+  >
+    <MaterialIcons name="visibility" size={18} color="#fff" />
+    <Text style={styles.reviewActionButtonText}>Details</Text>
+  </TouchableOpacity>
+</View>
               </View>
 
               <View style={styles.applicationCardDivider} />
@@ -778,6 +723,31 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                         </View>
                       </View>
                     ) : null}
+
+                    {validIdPhotoUri ? (
+                      <View style={{ marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#e2e8f0' }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <Text style={styles.applicationFieldLabel}>Valid ID Photo</Text>
+                          <TouchableOpacity
+                            onPress={async () => {
+                              try {
+                                await openAttachmentUri(validIdPhotoUri);
+                              } catch (error: any) {
+                                Alert.alert('Unable to Open ID', error?.message || 'Valid ID could not be opened.');
+                              }
+                            }}
+                            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, backgroundColor: '#f0fdf4', borderRadius: 6 }}
+                          >
+                            <MaterialIcons name="visibility" size={14} color="#166534" />
+                            <Text style={{ fontSize: 12, color: '#166534', fontWeight: '700' }}>View Full</Text>
+                          </TouchableOpacity>
+                        </View>
+                        <Image
+                          source={{ uri: validIdPhotoUri }}
+                          style={{ width: '100%', height: 160, borderRadius: 8, resizeMode: 'contain', backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0' }}
+                        />
+                      </View>
+                    ) : null}
                   </View>
                 </View>
 
@@ -801,15 +771,15 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
 
                 <View style={styles.applicationPanel}>
                   <View style={styles.applicationPanelHeader}>
-                    <MaterialIcons name="event-available" size={16} color="#166534" />
-                    <Text style={styles.applicationPanelTitle}>Available Events</Text>
+                    <MaterialIcons name="event" size={16} color="#166534" />
+                    <Text style={styles.applicationPanelTitle}>Events Joined</Text>
                   </View>
-                  <Text style={styles.applicationStatValue}>{availableProjects.length}</Text>
-                  {availableProjects.length === 0 ? (
-                    <Text style={styles.applicationAvailableEmpty}>No available events</Text>
+                  <Text style={styles.applicationStatValue}>{eventsJoinedCount}</Text>
+                  {eventsJoinedCount === 0 ? (
+                    <Text style={styles.applicationAvailableEmpty}>None yet</Text>
                   ) : (
                     <View style={{ marginTop: 8, gap: 6 }}>
-                      {availableProjects.slice(0, 3).map(projectEntry => (
+                      {joinedEvents.slice(0, 3).map(projectEntry => (
                         <Text key={projectEntry.id} style={styles.applicationAvailableItem}>
                           {projectEntry.title}
                         </Text>
@@ -829,7 +799,6 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                     { label: 'Events Joined', icon: 'event', value: eventsJoinedCount },
                     { label: 'Photo Reports', icon: 'photo-camera', value: photoReportsCount },
                     { label: 'Completed Events', icon: 'check-circle', value: completedEventsCount },
-                    { label: 'Available Events', icon: 'event-available', value: availableProjects.length },
                   ].map(row => (
                     <View key={row.label} style={styles.applicationOverviewRow}>
                       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -866,17 +835,6 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                   </View>
                 </View>
 
-                <TouchableOpacity
-                  style={[styles.editButton, { padding: 10, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10 }]}
-                  onPress={() => {
-                    setDaysPerWeek(selectedVolunteer.availability.daysPerWeek.toString());
-                    setHoursPerWeek(selectedVolunteer.availability.hoursPerWeek.toString());
-                    setAvailableDays([...selectedVolunteer.availability.availableDays]);
-                    setShowAvailabilityModal(true);
-                  }}
-                >
-                  <MaterialIcons name="edit" size={18} color="#166534" />
-                </TouchableOpacity>
               </View>
 
               <View style={styles.applicationCardDivider} />
@@ -1018,6 +976,31 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                         </View>
                       </View>
                     ) : null}
+
+                    {validIdPhotoUri ? (
+                      <View style={{ marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#e2e8f0' }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <Text style={styles.applicationFieldLabel}>Valid ID Photo</Text>
+                          <TouchableOpacity
+                            onPress={async () => {
+                              try {
+                                await openAttachmentUri(validIdPhotoUri);
+                              } catch (error: any) {
+                                Alert.alert('Unable to Open ID', error?.message || 'Valid ID could not be opened.');
+                              }
+                            }}
+                            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, backgroundColor: '#f0fdf4', borderRadius: 6 }}
+                          >
+                            <MaterialIcons name="visibility" size={14} color="#166534" />
+                            <Text style={{ fontSize: 12, color: '#166534', fontWeight: '700' }}>View Full</Text>
+                          </TouchableOpacity>
+                        </View>
+                        <Image
+                          source={{ uri: validIdPhotoUri }}
+                          style={{ width: '100%', height: 160, borderRadius: 8, resizeMode: 'contain', backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0' }}
+                        />
+                      </View>
+                    ) : null}
                   </View>
                 </View>
 
@@ -1044,21 +1027,17 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
 
                 <View style={styles.applicationPanel}>
                   <View style={styles.applicationPanelHeader}>
-                    <MaterialIcons name="event-available" size={16} color="#166534" />
-                    <Text style={styles.applicationPanelTitle}>Available Events</Text>
-                    <MaterialIcons name="chevron-right" size={16} color="#94a3b8" style={{ marginLeft: 'auto' }} />
+                    <MaterialIcons name="event" size={16} color="#166534" />
+                    <Text style={styles.applicationPanelTitle}>Events Joined</Text>
                   </View>
-                  <Text style={styles.applicationStatValue}>{availableProjects.length}</Text>
-                  {availableProjects.length === 0 ? (
-                    <Text style={styles.applicationAvailableEmpty}>No available events</Text>
+                  <Text style={styles.applicationStatValue}>{eventsJoinedCount}</Text>
+                  {eventsJoinedCount === 0 ? (
+                    <Text style={styles.applicationAvailableEmpty}>None yet</Text>
                   ) : (
                     <View style={{ marginTop: 8, gap: 6 }}>
-                      {availableProjects.slice(0, 3).map(projectEntry => (
+                      {joinedEvents.slice(0, 3).map(projectEntry => (
                         <View key={projectEntry.id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <Text style={styles.applicationAvailableItem}>{projectEntry.title}</Text>
-                          <TouchableOpacity onPress={() => handleMatchVolunteer(projectEntry.id)}>
-                            <MaterialIcons name="add-circle" size={20} color="#4CAF50" />
-                          </TouchableOpacity>
+                          <Text style={[styles.applicationAvailableItem, { flex: 1 }]}>{projectEntry.title}</Text>
                         </View>
                       ))}
                     </View>
@@ -1077,7 +1056,6 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                     { label: 'Events Joined', icon: 'event', value: eventsJoinedCount },
                     { label: 'Photo Reports', icon: 'photo-camera', value: photoReportsCount },
                     { label: 'Completed Events', icon: 'check-circle', value: completedEventsCount },
-                    { label: 'Available Events', icon: 'event-available', value: availableProjects.length },
                   ].map(row => (
                     <View key={row.label} style={styles.applicationOverviewRow}>
                       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -1089,34 +1067,39 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                   ))}
                 </View>
 
-                {/* Match Records */}
+                {/* Events Joined */}
                 <View style={styles.applicationPanel}>
                   <View style={styles.applicationPanelHeader}>
-                    <MaterialIcons name="assignment" size={16} color="#166534" />
-                    <Text style={styles.applicationPanelTitle}>Match Records</Text>
+                    <MaterialIcons name="event" size={16} color="#166534" />
+                    <Text style={styles.applicationPanelTitle}>Events Joined</Text>
+                    <Text style={[styles.applicationInfoLabel, { marginLeft: 'auto' }]}>{joinedEvents.length} total</Text>
+                  </View>
+                  {joinedEvents.length === 0 ? (
+                    <Text style={styles.applicationAvailableEmpty}>None yet</Text>
+                  ) : (
+                    joinedEvents.slice(0, 4).map(projectEntry => (
+                      <View key={projectEntry.id} style={styles.applicationOverviewRow}>
+                        <Text style={[styles.applicationOverviewLabel, { flex: 1 }]} numberOfLines={1}>{projectEntry.title}</Text>
+                      </View>
+                    ))
+                  )}
+                </View>
+
+                {/* Available Events */}
+                <View style={styles.applicationPanel}>
+                  <View style={styles.applicationPanelHeader}>
+                    <MaterialIcons name="event-available" size={16} color="#166534" />
+                    <Text style={styles.applicationPanelTitle}>Available Events</Text>
                     <Text style={[styles.applicationInfoLabel, { marginLeft: 'auto' }]}>{matchRecords.length} total</Text>
                   </View>
                   {matchRecords.length === 0 ? (
-                    <Text style={styles.applicationAvailableEmpty}>No match records yet</Text>
+                    <Text style={styles.applicationAvailableEmpty}>None yet</Text>
                   ) : (
-                    matchRecords.slice(0, 4).map(match => {
-                      const statusStyle =
-                        match.status === 'Matched'
-                          ? styles.matchRecordStatusMatched
-                          : match.status === 'Requested'
-                          ? styles.matchRecordStatusRequested
-                          : match.status === 'Completed'
-                          ? styles.matchRecordStatusCompleted
-                          : styles.matchRecordStatusInactive;
-                      return (
-                        <View key={match.id} style={styles.applicationOverviewRow}>
-                          <Text style={[styles.applicationOverviewLabel, { flex: 1 }]} numberOfLines={1}>{match.projectTitle}</Text>
-                          <View style={[styles.matchRecordStatusBadge, statusStyle]}>
-                            <Text style={styles.matchRecordStatusText}>{match.status}</Text>
-                          </View>
-                        </View>
-                      );
-                    })
+                    matchRecords.slice(0, 4).map(match => (
+                      <View key={match.id} style={styles.applicationOverviewRow}>
+                        <Text style={[styles.applicationOverviewLabel, { flex: 1 }]} numberOfLines={1}>{match.projectTitle}</Text>
+                      </View>
+                    ))
                   )}
                 </View>
               </View>
@@ -1125,82 +1108,6 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
 
           </>
         )}
-
-        <Modal
-          visible={showAvailabilityModal}
-          animationType="slide"
-          onRequestClose={closeAvailabilityModal}
-        >
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={closeAvailabilityModal}>
-                <MaterialIcons name="close" size={24} color="#333" />
-              </TouchableOpacity>
-              <Text style={styles.modalTitle}>Update Availability</Text>
-              <View style={{ width: 24 }} />
-            </View>
-
-            <ScrollView style={styles.modalContent}>
-              <View style={styles.formRow}>
-                <TextInput
-                  style={[styles.input, styles.inputWithLabel]}
-                  placeholder="Number of days"
-                  placeholderTextColor="#999"
-                  keyboardType="number-pad"
-                  value={daysPerWeek}
-                  onChangeText={setDaysPerWeek}
-                />
-                <Text style={[styles.label, styles.labelRight]}>Days per week</Text>
-              </View>
-
-              <View style={styles.formRow}>
-                <TextInput
-                  style={[styles.input, styles.inputWithLabel]}
-                  placeholder="Total hours"
-                  placeholderTextColor="#999"
-                  keyboardType="decimal-pad"
-                  value={hoursPerWeek}
-                  onChangeText={setHoursPerWeek}
-                />
-                <Text style={[styles.label, styles.labelRight]}>Hours per week</Text>
-              </View>
-
-              <View style={[styles.formRow, styles.formRowTop]}>
-                <View style={[styles.daysGrid, styles.daysGridCard]}>
-                  {daysOfWeek.map(day => (
-                    <TouchableOpacity
-                      key={day}
-                      style={[
-                        styles.dayButton,
-                        availableDays.includes(day) && styles.dayButtonSelected,
-                      ]}
-                      onPress={() => toggleAvailableDay(day)}
-                    >
-                      <Text
-                        style={[
-                          styles.dayButtonText,
-                          availableDays.includes(day) && styles.dayButtonTextSelected,
-                        ]}
-                      >
-                        {day.substring(0, 3)}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <Text style={[styles.label, styles.labelRight, styles.labelTop]}>
-                  Available days
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                style={styles.submitButton}
-                onPress={handleUpdateAvailability}
-              >
-                <Text style={styles.submitButtonText}>Update Availability</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </Modal>
 
         <Modal
           visible={showRejectModal}
@@ -1238,6 +1145,49 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                   onPress={() => void handleRejectVolunteer()}
                 >
                   <Text style={styles.submitButtonText}>Confirm Reject</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </Modal>
+
+        <Modal
+          visible={showApproveModal}
+          animationType="slide"
+          onRequestClose={() => setShowApproveModal(false)}
+        >
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={() => setShowApproveModal(false)}>
+                <MaterialIcons name="close" size={24} color="#333" />
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Approve Application</Text>
+              <View style={{ width: 24 }} />
+            </View>
+            <ScrollView style={styles.modalContent}>
+              <View style={{ alignItems: 'center', marginVertical: 24, gap: 16 }}>
+                <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#f0fdf4', alignItems: 'center', justifyContent: 'center' }}>
+                  <MaterialIcons name="check-circle" size={40} color="#166534" />
+                </View>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f172a', textAlign: 'center' }}>
+                  Approve this volunteer application?
+                </Text>
+                <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', lineHeight: 18, paddingHorizontal: 16 }}>
+                  Approving this volunteer will grant them login credentials and full volunteer access to the system.
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
+                <TouchableOpacity
+                  style={[styles.submitButton, { flex: 1, backgroundColor: '#94a3b8' }]}
+                  onPress={() => setShowApproveModal(false)}
+                >
+                  <Text style={styles.submitButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.submitButton, { flex: 1, backgroundColor: '#166534' }]}
+                  onPress={() => void handleApproveVolunteer()}
+                >
+                  <Text style={styles.submitButtonText}>Confirm Approve</Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -1653,9 +1603,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontFamily: 'Nunito',
   },
-  editButton: {
-    padding: 8,
-  },
   reviewActionRow: {
     flexDirection: 'row',
     gap: 8,
@@ -1826,50 +1773,8 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     fontFamily: 'Nunito',
-  },
-  matchRecordCard: {
-    backgroundColor: '#f8fafc',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  matchRecordHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-  },
-  matchRecordStatusBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  matchRecordStatusMatched: {
-    backgroundColor: '#dcfce7',
-  },
-  matchRecordStatusRequested: {
-    backgroundColor: '#fef3c7',
-  },
-  matchRecordStatusCompleted: {
-    backgroundColor: '#dbeafe',
-  },
-  matchRecordStatusInactive: {
-    backgroundColor: '#e5e7eb',
-  },
-  matchRecordStatusText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#1f2937',
-    fontFamily: 'Nunito',
-  },
-  matchRecordMeta: {
-    fontSize: 12,
-    color: '#475569',
-    marginTop: 6,
-    fontFamily: 'Nunito',
-  },
-  emptyText: {
+   },
+   emptyText: {
     color: '#999',
     fontSize: 13,
     textAlign: 'center',
@@ -2012,31 +1917,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     fontFamily: 'Nunito',
   },
-  labelRight: {
-    marginBottom: 0,
-    minWidth: 140,
-    textAlign: 'right',
-    backgroundColor: '#e8f5e9',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 12,
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#14532d',
-    fontFamily: 'Nunito',
-  },
-  labelTop: {
-    marginTop: 4,
-  },
-  formRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 18,
-  },
-  formRowTop: {
-    alignItems: 'flex-start',
-  },
   input: {
     backgroundColor: '#fff',
     borderRadius: 8,
@@ -2047,47 +1927,6 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 20,
     fontFamily: 'Nunito',
-  },
-  inputWithLabel: {
-    flex: 1,
-    marginBottom: 0,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  daysGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 0,
-  },
-  daysGridCard: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  dayButton: {
-    flex: 0.3,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: '#f0f0f0',
-    alignItems: 'center',
-  },
-  dayButtonSelected: {
-    backgroundColor: '#4CAF50',
-  },
-  dayButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#666',
-    fontFamily: 'Nunito',
-  },
-  dayButtonTextSelected: {
-    color: '#fff',
   },
   submitButton: {
     backgroundColor: '#4CAF50',

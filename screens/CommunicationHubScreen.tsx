@@ -30,6 +30,8 @@ import {
 
   Linking,
 
+  Animated,
+
 } from 'react-native';
 
 import { MaterialIcons, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -54,9 +56,15 @@ import {
 
 } from '../utils/philippineAddressData';
 
+import ProposalMessageTemplate from '../components/ProposalMessageTemplate';
+
 import {
 
   deleteProjectGroupChat,
+
+  deleteMessage,
+
+  deleteProjectGroupMessage,
 
   getAllPartnerProjectApplications,
 
@@ -90,9 +98,10 @@ import {
   subscribeToStorageChanges,
 
   submitPartnerProgramProposal,
-
   reviewPartnerProjectApplication,
-
+  getProgramModuleFromProposalProjectId,
+  setTypingStatus,
+  subscribeToTypingStatus,
 } from '../models/storage';
 
 import {
@@ -121,6 +130,8 @@ import { getRequestErrorMessage } from '../utils/requestErrors';
 
 import ProposalCard from '../components/ProposalCard';
 import AppLogo from '../components/AppLogo';
+
+const QUICK_EMOJIS = ['😊','😂','❤️','👍','👏','🙏','😍','🔥','💪','🎉','😁','🤔','😮','😢','🙌','✅','⭐','🌟','💚','💙','😅','🥰','🤩','👌','💯','🙂'];
 
 
 
@@ -223,8 +234,80 @@ type ProjectChatItem = {
   participantCount: number;
 
   members: ProjectChatMember[];
-
 };
+
+function ThreeDotsTypingIndicator() {
+  const dot1 = useRef(new Animated.Value(0)).current;
+  const dot2 = useRef(new Animated.Value(0)).current;
+  const dot3 = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const createAnimation = (dot: Animated.Value, delay: number) => {
+      return Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(dot, {
+            toValue: -5,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+          Animated.timing(dot, {
+            toValue: 0,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+          Animated.delay(400),
+        ])
+      );
+    };
+
+    const a1 = createAnimation(dot1, 0);
+    const a2 = createAnimation(dot2, 150);
+    const a3 = createAnimation(dot3, 300);
+
+    a1.start();
+    a2.start();
+    a3.start();
+
+    return () => {
+      a1.stop();
+      a2.stop();
+      a3.stop();
+    };
+  }, [dot1, dot2, dot3]);
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 4, height: 16 }}>
+      <Animated.View
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: 3.5,
+          backgroundColor: '#166534',
+          transform: [{ translateY: dot1 }],
+        }}
+      />
+      <Animated.View
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: 3.5,
+          backgroundColor: '#166534',
+          transform: [{ translateY: dot2 }],
+        }}
+      />
+      <Animated.View
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: 3.5,
+          backgroundColor: '#166534',
+          transform: [{ translateY: dot3 }],
+        }}
+      />
+    </View>
+  );
+}
 
 const PROPOSAL_PREFIX = '___PROPOSAL_CARD___:';
 
@@ -483,6 +566,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   const [proposalChats, setProposalChats] = useState<ProposalChatItem[]>([]);
 
   const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [systemPrograms, setSystemPrograms] = useState<{ id: string; title: string; module: AdvocacyFocus }[]>([]);
 
 
 
@@ -499,10 +583,12 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isMessagesLoading, setIsMessagesLoading] = useState(false);
+  const loadMessagesInFlightRef = useRef(false);
 
   const [messageText, setMessageText] = useState('');
 
-  const pendingAttachments = useState<string[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<string[]>([]);
 
   const [searchText, setSearchText] = useState('');
 
@@ -530,8 +616,13 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   const [pendingRejectApp, setPendingRejectApp] = useState<PartnerProjectApplication | null>(null);
 
+  const [isRecipientTyping, setIsRecipientTyping] = useState(false);
+  const typingTimeoutRef = useRef<any>(null);
+
 
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
+
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   const [showConversationMenu, setShowConversationMenu] = useState(false);
   const [showAddMemberModal, setShowAddMemberModal] = useState(false);
@@ -541,6 +632,18 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   const [conversationMenuAction, setConversationMenuAction] = useState<string | null>(null);
 
+  // Inline draft proposal card state (shown inside the message thread, not a separate screen)
+  const [inlineDraftProposal, setInlineDraftProposal] = useState<ProposalFormState | null>(null);
+  const [inlineDraftModule, setInlineDraftModule] = useState<string>('Nutrition');
+  const [inlineDraftProjectId, setInlineDraftProjectId] = useState<string>('new');
+  const [inlineStartDatePicker, setInlineStartDatePicker] = useState(false);
+  const [inlineEndDatePicker, setInlineEndDatePicker] = useState(false);
+  const [inlineRegionCode, setInlineRegionCode] = useState('');
+  const [inlineCityCode, setInlineCityCode] = useState('');
+  const [inlineFilteredCities, setInlineFilteredCities] = useState<PHCityMunicipality[]>([]);
+  const [inlineDraftDocAttachment, setInlineDraftDocAttachment] = useState<string>('');
+  const [isSubmittingInlineDraft, setIsSubmittingInlineDraft] = useState(false);
+
 
 
   const scrollRef = useRef<ScrollView>(null);
@@ -548,6 +651,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   const selectedUserRef = useRef<User | null>(null);
 
   const selectedProjectChatRef = useRef<ProjectChatItem | null>(null);
+
+  const loadDataInFlightRef = useRef<Promise<void> | null>(null);
 
 
 
@@ -583,9 +688,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   }, [view, isWide, navigation]);
 
   const availableSections: SidebarSection[] = isVolunteer
-    ? ['projects', 'contacts']
+    ? ['messages', 'projects', 'contacts']
     : isPartner
-    ? ['messages', 'projects', 'proposals']
+    ? ['messages', 'projects', 'proposals', 'contacts']
     : ['messages', 'projects', 'contacts'];
 
 
@@ -594,73 +699,129 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     if (!user) return;
 
+    if (loadDataInFlightRef.current) {
+      return loadDataInFlightRef.current;
+    }
+
+    const run = (async () => {
+
+    const t0 = Date.now();
     try {
 
-      const [usersResult, snapshotResult, messagesResult, partnerApplicationsResult] = await Promise.allSettled([
+      // Start all fetches in parallel, snapshot limited to fields needed for messages
+      const t_users = Date.now();
+      const t_snapshot = Date.now();
+      const t_messages = Date.now();
+      const t_apps = Date.now();
 
-        getAllUsers(),
+      const usersP = getAllUsers().then(r => { console.log(`[COM-HUB] getAllUsers ${Date.now() - t_users}ms`); return r; });
+      const snapshotP = getProjectsScreenSnapshot(user, ['projects', 'partnerApplications', 'volunteerProfile', 'volunteerJoinRecords']).then(r => { console.log(`[COM-HUB] getProjectsScreenSnapshot ${Date.now() - t_snapshot}ms`); return r; });
+      const messagesP = getMessagesForUser(user.id).then(r => { console.log(`[COM-HUB] getMessagesForUser ${Date.now() - t_messages}ms`); return r; });
+      const partnerAppsP = (user.role === 'volunteer' ? Promise.resolve([] as PartnerProjectApplication[]) : getAllPartnerProjectApplications()).then(r => { console.log(`[COM-HUB] getAllPartnerProjectApplications ${Date.now() - t_apps}ms`); return r; });
 
-        getProjectsScreenSnapshot(user),
-
-        getMessagesForUser(user.id),
-
-        user.role === 'volunteer'
-
-          ? Promise.resolve([] as PartnerProjectApplication[])
-
-          : getAllPartnerProjectApplications(),
-
-      ]);
-
-
+      // FAST PATH: render DM conversations without waiting for heavy snapshot
+      const [usersResult, messagesResult, partnerApplicationsResult] = await Promise.allSettled([usersP, messagesP, partnerAppsP]);
+      console.log(`[COM-HUB] fast path (users+messages) done in ${Date.now() - t_users}ms`);
 
       const users = usersResult.status === 'fulfilled' ? usersResult.value : [];
-
-      const snapshot =
-
-        snapshotResult.status === 'fulfilled'
-
-          ? snapshotResult.value
-
-          : {
-
-              projects: [],
-
-              partnerApplications: [],
-
-              volunteerJoinRecords: [],
-
-              volunteerProfile: null,
-
-            };
-
       const msgs = messagesResult.status === 'fulfilled' ? messagesResult.value : [];
-
-      const directPartnerApplications =
-
-        partnerApplicationsResult.status === 'fulfilled' ? partnerApplicationsResult.value : [];
-
-
+      const directPartnerApplications = partnerApplicationsResult.status === 'fulfilled' ? partnerApplicationsResult.value : [];
 
       const others = users.filter(u => u.id !== user.id);
+      let adminUsers = users.filter(candidate => candidate.role === 'admin' || (candidate as any).isAdmin);
+      if (adminUsers.length === 0) {
+        adminUsers = [{
+          id: 'admin-1',
+          name: 'NVC Admin',
+          email: 'admin@nvc.org',
+          role: 'admin',
+          status: 'Active',
+          createdAt: new Date().toISOString(),
+        } as User];
+      }
 
       const allowedDirectUsers = user.role === 'volunteer' || user.role === 'partner'
-
-        ? others.filter(u => u.role === 'admin')
-
+        ? (others.filter(u => u.role === 'admin' || (u as any).isAdmin).length > 0
+            ? others.filter(u => u.role === 'admin' || (u as any).isAdmin)
+            : adminUsers)
         : others;
-
       const allowedDirectUserIds = new Set(allowedDirectUsers.map(u => u.id));
+      setAllUsers(allowedDirectUsers);
+      // Immediate DM conversation list for sidebar
+      {
+        const fastConvMap = new Map<string, ConversationItem>();
+        allowedDirectUsers.forEach(u => {
+          fastConvMap.set(u.id, { user: u, unreadCount: 0 });
+        });
+        msgs.forEach(m => {
+          const otherId = m.senderId === user.id ? m.recipientId : m.senderId;
+          if (!allowedDirectUserIds.has(otherId)) return;
+          const otherUser = allowedDirectUsers.find(u => u.id === otherId);
+          if (!otherUser) return;
+          const entry = fastConvMap.get(otherId) || { user: otherUser, unreadCount: 0 };
+          if (!entry.lastMessage || new Date(m.timestamp) > new Date(entry.lastMessage.timestamp)) {
+            entry.lastMessage = m;
+          }
+          if (!m.read && m.recipientId === user.id) {
+            entry.unreadCount++;
+          }
+          fastConvMap.set(otherId, entry as ConversationItem);
+        });
+        const convList = Array.from(fastConvMap.values()).sort((a, b) =>
+          new Date(b.lastMessage?.timestamp || 0).getTime() - new Date(a.lastMessage?.timestamp || 0).getTime()
+        );
+        setConversations(convList);
+
+        // Preselect admin conversation if on wide screen and none selected
+        if (isWide && (user.role === 'volunteer' || user.role === 'partner') && allowedDirectUsers.length > 0) {
+          if (!selectedUserRef.current && !selectedProjectChatRef.current) {
+            setSelectedUser(allowedDirectUsers[0]);
+            setView('detail');
+          }
+        }
+
+        // Show messages immediately — don't wait for heavy project snapshot
+        setLoading(false);
+      }
+
+      // Now await the heavy snapshot (already in flight) for project/proposal chats
+      let snapshotResult: PromiseSettledResult<any>;
+      try {
+        const v = await snapshotP;
+        snapshotResult = { status: 'fulfilled', value: v } as any;
+      } catch (e) {
+        snapshotResult = { status: 'rejected', reason: e } as any;
+      }
+      const snapshot =
+        (snapshotResult as any).status === 'fulfilled'
+          ? (snapshotResult as any).value
+          : {
+              projects: [],
+              partnerApplications: [],
+              volunteerJoinRecords: [],
+              volunteerProfile: null,
+            };
+
+
+
+      // Extract active programs present in system
+      const loadedProjects: Project[] = Array.isArray(snapshot.projects) ? snapshot.projects : [];
+      const loadedPrograms = loadedProjects
+        .filter(p => !p.isEvent && !p.parentProjectId)
+        .map(p => {
+          let mod: AdvocacyFocus = 'Nutrition';
+          const text = `${p.programModule || ''} ${p.id || ''} ${p.title || ''} ${p.category || ''}`.toLowerCase();
+          if (text.includes('education')) mod = 'Education';
+          else if (text.includes('livelihood')) mod = 'Livelihood';
+          else if (text.includes('disaster')) mod = 'Disaster';
+          else if (text.includes('nutrition')) mod = 'Nutrition';
+          return { id: p.id, title: p.title, module: mod };
+        });
+      setSystemPrograms(loadedPrograms);
 
       const joinedEventIds = new Set(snapshot.volunteerJoinRecords.map(record => record.projectId));
 
       const volunteerProfileId = snapshot.volunteerProfile?.id;
-
-      const adminUsers = users.filter(candidate => candidate.role === 'admin');
-
-
-
-      setAllUsers(allowedDirectUsers);
 
 
 
@@ -919,46 +1080,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
 
-      const convMap = new Map<string, ConversationItem>();
-      allowedDirectUsers.forEach(u => {
-        convMap.set(u.id, { user: u, unreadCount: 0 });
-      });
-
-      msgs.forEach(m => {
-
-        const otherId = m.senderId === user.id ? m.recipientId : m.senderId;
-
-        if (!allowedDirectUserIds.has(otherId)) return;
-
-        const otherUser = others.filter(u => u.id === otherId);
-
-        if (!otherUser) return;
-
-        const entry = convMap.get(otherId) || { user: otherUser, unreadCount: 0 };
-
-        if (!entry.lastMessage || new Date(m.timestamp) > new Date(entry.lastMessage.timestamp)) {
-
-          entry.lastMessage = m;
-
-        }
-
-        if (!m.read && m.recipientId === user.id) {
-
-          entry.unreadCount++;
-
-        }
-
-        convMap.set(otherId, entry);
-
-      });
-
-
-
-      setConversations(Array.from(convMap.values()).sort((a, b) =>
-
-        new Date(b.lastMessage?.timestamp || 0).getTime() - new Date(a.lastMessage?.timestamp || 0).getTime()
-
-      ));
+      console.log(`[COM-HUB] loadData: total ${Date.now() - t0}ms`);
 
       setLoading(false);
 
@@ -968,46 +1090,77 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
       setLoading(false);
 
+    } finally {
+
+      loadDataInFlightRef.current = null;
+
     }
+
+    })();
+
+    loadDataInFlightRef.current = run;
+    return run;
 
   }, [user]);
 
 
 
-  const loadMessages = async () => {
+  const loadMessages = async (isInitial = false) => {
 
     if (!user) return;
+    if (loadMessagesInFlightRef.current) return;
+
+    loadMessagesInFlightRef.current = true;
+    if (isInitial) setIsMessagesLoading(true);
 
     try {
 
       if (selectedUser) {
+        const targetUserId = selectedUser.id;
+        const chat = await getConversation(user.id, targetUserId);
+        
+        // Ensure user hasn't switched conversation while fetch was in flight
+        if (selectedUserRef.current?.id !== targetUserId) return;
+        
+        const deduped = dedupeProposalReviewCards(chat);
 
-        const chat = await getConversation(user.id, selectedUser.id);
-
-        setMessages(dedupeProposalReviewCards(chat));
+        setMessages(prev => {
+          if (prev.length !== deduped.length) return deduped;
+          const isIdentical = prev.every((m, idx) => {
+            const d = deduped[idx];
+            return d && m.id === d.id && m.content === d.content && m.read === d.read;
+          });
+          return isIdentical ? prev : deduped;
+        });
 
         const unread = chat.filter(m => !m.read && m.recipientId === user.id);
 
         if (unread.length > 0) {
-
           await Promise.all(unread.map(m => markMessageAsRead(m.id)));
-
           void loadData();
-
         }
 
       } else if (selectedProjectChat) {
+        const targetProjectId = selectedProjectChat.project.id;
+        const chat = await getProjectGroupMessages(targetProjectId, user.id);
+        
+        // Ensure project chat hasn't switched while in flight
+        if (selectedProjectChatRef.current?.project.id !== targetProjectId) return;
+        
+        const deduped = dedupeProposalReviewCards(chat);
 
-        const chat = await getProjectGroupMessages(selectedProjectChat.project.id, user.id);
-
-        setMessages(dedupeProposalReviewCards(chat));
+        setMessages(prev => {
+          if (prev.length !== deduped.length) return deduped;
+          const isIdentical = prev.every((m, idx) => {
+            const d = deduped[idx];
+            return d && m.id === d.id && m.content === d.content && m.read === d.read;
+          });
+          return isIdentical ? prev : deduped;
+        });
 
       }
 
     } catch (e) {
-
-      // Gracefully handle errors - set empty messages and silently fail
-      setMessages([]);
 
       // Only log for debugging if not a known API error
       const errorMsg = e instanceof Error ? e.message : String(e);
@@ -1018,6 +1171,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
       }
 
+    } finally {
+      loadMessagesInFlightRef.current = false;
+      if (isInitial) setIsMessagesLoading(false);
     }
 
   };
@@ -1025,19 +1181,12 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
   useEffect(() => {
-
     selectedUserRef.current = selectedUser;
-
   }, [selectedUser]);
 
-
-
   useEffect(() => {
-
     selectedProjectChatRef.current = selectedProjectChat;
-
     setShowConversationMenu(false);
-
     setShowMembersModal(false);
 
   }, [selectedProjectChat]);
@@ -1157,14 +1306,28 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
   useEffect(() => {
-
-    if (view === 'detail') {
-
-      void loadMessages();
-
+    if (!user?.id || !selectedUser?.id) {
+      setIsRecipientTyping(false);
+      return;
     }
+    return subscribeToTypingStatus(user.id, selectedUser.id, (typing) => {
+      setIsRecipientTyping(typing);
+    });
+  }, [user?.id, selectedUser?.id]);
 
-  }, [selectedUser, selectedProjectChat, view]);
+  useEffect(() => {
+    // Immediately clear messages when switching conversation to prevent showing wrong person's messages
+    setMessages([]);
+    if (view === 'detail' && (selectedUser || selectedProjectChat)) {
+      void loadMessages(true);
+
+      const timer = setInterval(() => {
+        void loadMessages(false);
+      }, 2000);
+
+      return () => clearInterval(timer);
+    }
+  }, [selectedUser?.id, selectedProjectChat?.project?.id, view]);
 
 
 
@@ -1249,11 +1412,13 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
   useEffect(() => {
-
     if (!conversationUserId || loading) return;
 
+    const matchedUser = allUsers.find((candidate) => candidate.id === conversationUserId) ||
+      (conversationUserId === 'admin' || conversationUserId === 'admin-support'
+        ? allUsers.find(candidate => candidate.role === 'admin')
+        : null);
 
-    const matchedUser = allUsers.find((candidate) => candidate.id === conversationUserId);
     if (matchedUser) {
       setSelectedUser(matchedUser);
       setSelectedProjectChat(null);
@@ -1262,9 +1427,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       setView('detail');
     }
 
-
     navigation.setParams({ conversationUserId: undefined });
-
   }, [conversationUserId, loading, navigation, allUsers]);
 
   // Handle requested proposal navigation
@@ -1288,42 +1451,39 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     if (newProposalModule || newProposalProjectId) {
 
-      setProposalIntent({
-
-        module: newProposalModule,
-
-        projectId: newProposalProjectId,
-
-        title: newProposalTitle
-
-      });
-      setProposalRevisionMode(false);
-
-      setProposalForm(f => ({ ...f, proposedTitle: newProposalTitle || '' }));
-
-      setView('detail');
-
-
-
-      // Auto-select Admin for proposals
-
+      // Auto-select admin
       const admin = allUsers.find(u => u.role === 'admin');
-
       if (admin) {
-
         setSelectedUser(admin);
-
       } else {
-
         setSelectedUser(null);
-
       }
 
-
-
       setSelectedProjectChat(null);
-
       setSelectedProposalApplication(null);
+      setView('detail');
+
+      // For partners: open inline draft card directly (image UI)
+      // For others (revision mode etc.): fall back to full-screen proposalIntent form
+      if (user?.role === 'partner') {
+        setInlineDraftModule(newProposalModule || 'Nutrition');
+        setInlineDraftProjectId(newProposalProjectId || 'new');
+        setInlineDraftProposal(createEmptyProposalForm(newProposalTitle || ''));
+        setInlineRegionCode('');
+        setInlineCityCode('');
+        setInlineFilteredCities([]);
+        setInlineDraftDocAttachment('');
+        setProposalIntent(null);
+        setProposalRevisionMode(false);
+      } else {
+        setProposalIntent({
+          module: newProposalModule,
+          projectId: newProposalProjectId,
+          title: newProposalTitle,
+        });
+        setProposalRevisionMode(false);
+        setProposalForm(f => ({ ...f, proposedTitle: newProposalTitle || '' }));
+      }
 
       navigation.setParams({ newProposalModule: undefined, newProposalProjectId: undefined, newProposalTitle: undefined });
 
@@ -1332,6 +1492,187 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   }, [newProposalModule, newProposalProjectId, newProposalTitle, navigation, user?.role, allUsers]);
 
 
+
+  // Insert a draft proposal card inline into the message thread
+  const handleInsertProposalDraft = () => {
+    if (!user) return;
+    // Determine module/projectId from proposalIntent or defaults
+    const mod = proposalIntent?.module || 'Nutrition';
+    const pid = proposalIntent?.projectId || 'new';
+    const title = proposalIntent?.title || '';
+    setInlineDraftModule(mod);
+    setInlineDraftProjectId(pid);
+    setInlineDraftProposal(createEmptyProposalForm(title));
+    setInlineRegionCode('');
+    setInlineCityCode('');
+    setInlineFilteredCities([]);
+    setInlineDraftDocAttachment('');
+    // Clear proposalIntent so the full-screen composer doesn't open
+    setProposalIntent(null);
+  };
+
+  const handlePickInlineDraftPhoto = async () => {
+    try {
+      const pickedImage = await pickImageFromDevice();
+      if (!pickedImage) return;
+      setInlineDraftProposal(prev => prev ? { ...prev, photoAttachment: pickedImage } : prev);
+    } catch (error: any) {
+      Alert.alert('Photo Upload Failed', error?.message || 'Unable to upload photo.');
+    }
+  };
+
+  const handlePickInlineDraftDoc = async () => {
+    try {
+      const docUri = await pickDocumentFromDevice();
+      if (!docUri) return;
+      setInlineDraftDocAttachment(docUri);
+    } catch (error: any) {
+      Alert.alert('File Upload Failed', error?.message || 'Unable to upload document.');
+    }
+  };
+
+  const handleSubmitInlineProposal = async () => {
+    if (!user || !inlineDraftProposal) return;
+    setIsSubmittingInlineDraft(true);
+    try {
+      const attachments: { url: string; type: 'image' | 'document'; description?: string }[] = [];
+      if (inlineDraftProposal.photoAttachment) {
+        attachments.push({ url: inlineDraftProposal.photoAttachment, type: 'image', description: 'Proposal Photo' });
+      }
+      if (inlineDraftDocAttachment) {
+        attachments.push({ url: inlineDraftDocAttachment, type: 'document', description: 'Proposal Document' });
+      }
+      const isResubmission = inlineDraftProposal?.communityNeed?.includes('[Revised]') || false;
+      await submitPartnerProgramProposal(inlineDraftProjectId || 'new', user, {
+        programModule: (inlineDraftModule as AdvocacyFocus) || 'Nutrition',
+        proposalDetails: {
+          ...inlineDraftProposal,
+          proposedVolunteersNeeded: Number(inlineDraftProposal.proposedVolunteersNeeded) || 0,
+          requestedProgramModule: (inlineDraftModule as AdvocacyFocus) || 'Nutrition',
+          targetProjectId: inlineDraftProjectId !== 'new' ? inlineDraftProjectId : undefined,
+          isResubmission: true,
+          attachments,
+        } as any,
+      });
+      setInlineDraftProposal(null);
+      setInlineDraftDocAttachment('');
+      Alert.alert('Submitted', 'Your revised proposal has been submitted for review.');
+      void loadData();
+    } catch (e) {
+      Alert.alert('Error', 'Failed to submit proposal. Please check your connection.');
+    } finally {
+      setIsSubmittingInlineDraft(false);
+    }
+  };
+
+  const handleEditProposalFromMessage = (app: any) => {
+    const pd = app.proposalDetails || app || {};
+    const mod = pd.requestedProgramModule || pd.programModule || app.programModule || 'Nutrition';
+    const pid = pd.targetProjectId || pd.targetProjectTitle || app.projectId || 'new';
+    setInlineDraftModule(mod as any);
+    setInlineDraftProjectId(String(pid));
+    setInlineDraftProposal({
+      proposedTitle: pd.proposedTitle || app.proposedTitle || '',
+      proposedDescription: pd.proposedDescription || '',
+      proposedStartDate: pd.proposedStartDate || '',
+      proposedEndDate: pd.proposedEndDate || '',
+      proposedLocation: pd.proposedLocation || '',
+      proposedVolunteersNeeded: String(pd.proposedVolunteersNeeded ?? ''),
+      communityNeed: pd.communityNeed || '',
+      expectedDeliverables: pd.expectedDeliverables || '',
+      photoAttachment: (pd.attachments?.find((a: any) => a.type === 'image')?.url) || pd.photoAttachment || '',
+    });
+    const docUrl = (pd.attachments?.find((a: any) => a.type === 'document')?.url) || '';
+    setInlineDraftDocAttachment(docUrl);
+    // Try to hydrate region/city pickers from composed address if possible
+    if (pd.proposedLocation) {
+      const loc = String(pd.proposedLocation);
+      // simple heuristic: if location contains region name, set code
+      const regionMatch = PHRegions.find(r => loc.includes(r.name));
+      if (regionMatch) {
+        setInlineRegionCode(regionMatch.code);
+        setInlineFilteredCities(getCitiesByRegion(regionMatch.code));
+      }
+    }
+  };
+
+  const handleSubmitProposalFromMessage = async (app: any) => {
+    if (!user) {
+      Alert.alert('Sign in required', 'Please sign in to submit a proposal.');
+      return;
+    }
+    // If admin, approve the underlying application instead
+    if (user.role === 'admin' && app.id) {
+      try {
+        setIsSubmittingInlineDraft(true);
+        const reviewed = await reviewPartnerProjectApplication(app.id, 'Approved', user.id);
+        
+        // Update local message status
+        setMessages(current =>
+          current.map(msg => {
+            if (typeof msg.content === 'string' && msg.content.startsWith(PROPOSAL_PREFIX)) {
+              try {
+                const msgApp = JSON.parse(msg.content.replace(PROPOSAL_PREFIX, ''));
+                if (msgApp.id === app.id || msg.id === app.id) {
+                  const updatedApp = { ...msgApp, status: 'Approved' };
+                  return { ...msg, content: PROPOSAL_PREFIX + JSON.stringify(updatedApp) };
+                }
+              } catch (_) {}
+            }
+            return msg;
+          })
+        );
+
+        setReviewNotice({
+          title: 'Proposal approved',
+          message: 'The proposal was approved and a new project was created.',
+          tone: 'success',
+          projectId: reviewed.projectId,
+        });
+
+        Alert.alert('Approved', 'Proposal approved! New project has been created.');
+        void loadData();
+      } catch (e: any) {
+        Alert.alert('Error', e?.message || 'Failed to approve proposal.');
+      } finally {
+        setIsSubmittingInlineDraft(false);
+      }
+      return;
+    }
+    const pd = app.proposalDetails || app || {};
+    const attachments: any[] = Array.isArray(pd.attachments) ? pd.attachments : [];
+    // fallback: if no attachments array but has photoAttachment, add it
+    if (attachments.length === 0 && pd.photoAttachment) {
+      attachments.push({ url: pd.photoAttachment, type: 'image', description: 'Proposal Photo' });
+    }
+    const targetProjectId = String(pd.targetProjectId || app.projectId || 'new');
+    const mod = String(pd.requestedProgramModule || pd.programModule || 'Nutrition');
+    try {
+      setIsSubmittingInlineDraft(true);
+      await submitPartnerProgramProposal(targetProjectId, user as any, {
+        programModule: mod,
+        proposalDetails: {
+          proposedTitle: pd.proposedTitle || app.proposedTitle || 'Untitled Proposal',
+          proposedDescription: pd.proposedDescription || '',
+          proposedStartDate: pd.proposedStartDate || '',
+          proposedEndDate: pd.proposedEndDate || '',
+          proposedLocation: pd.proposedLocation || '',
+          proposedVolunteersNeeded: Number(pd.proposedVolunteersNeeded) || 0,
+          communityNeed: pd.communityNeed || '',
+          expectedDeliverables: pd.expectedDeliverables || '',
+          requestedProgramModule: mod as any,
+          targetProjectId: targetProjectId !== 'new' ? targetProjectId : undefined,
+          attachments,
+        },
+      });
+      Alert.alert('Submitted', 'Your proposal has been submitted for review.');
+      void loadData();
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to submit proposal. Please check your connection.');
+    } finally {
+      setIsSubmittingInlineDraft(false);
+    }
+  };
 
   const handleSendProposalCard = async (overrideForm?: any) => {
 
@@ -1861,6 +2202,31 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   };
 
+  const handleDeleteMessage = (messageId: string, isProjectMsg: boolean) => {
+    if (!messageId) return;
+    Alert.alert('Delete message?', 'This will delete the message for everyone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          const previous = messages;
+          setMessages(curr => curr.filter(m => m.id !== messageId));
+          try {
+            if (isProjectMsg) {
+              await deleteProjectGroupMessage(messageId);
+            } else {
+              await deleteMessage(messageId);
+            }
+          } catch (e) {
+            setMessages(previous);
+            Alert.alert('Failed to delete', getRequestErrorMessage(e, 'Could not delete message.'));
+          }
+        },
+      },
+    ]);
+  };
+
 
 
   const handleSendMessage = async () => {
@@ -1868,8 +2234,13 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
     const trimmedMessage = messageText.trim();
 
     if (!user || (!trimmedMessage && pendingAttachments.length === 0) || isSending) return;
+    if (!selectedUser && !selectedProjectChat) {
+      Alert.alert('Select a conversation', 'Please select a chat before sending a message.');
+      return;
+    }
 
     setIsSending(true);
+    setShowEmojiPicker(false);
 
     const msg = {
 
@@ -1885,14 +2256,37 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     };
 
+    // Keep copies for optimistic update so we can revert on hard failure
+    const optimisticText = trimmedMessage;
+    const optimisticAttachments = [...pendingAttachments];
+
     try {
 
       if (selectedUser) {
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        void setTypingStatus(user.id, selectedUser.id, false);
         const fullMsg: Message = { ...msg, recipientId: selectedUser.id, read: false };
+        // Optimistic UI — shows instantly even if Firestore is slow/disabled
         setMessages(curr => upsertChatMessage(curr, fullMsg));
         setMessageText('');
         setPendingAttachments([]);
-        await saveMessage(fullMsg);
+        setIsSending(false);
+        // Firestore save — non-blocking; keep message locally on failure
+        try {
+          await Promise.race([
+            saveMessage(fullMsg),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Save timeout')), 8000)),
+          ]);
+          // Refresh messages and conversation lists immediately after sending
+          void loadMessages();
+          void loadData();
+        } catch (saveErr: any) {
+          const code = String(saveErr?.code || saveErr?.message || '');
+          // If Firestore is disabled (PERMISSION_DENIED) we keep the optimistic message and warn
+          console.warn('[Chat] saveMessage failed (kept locally):', code, saveErr);
+          // Don't revert — message stays visible; optionally could store locally
+        }
+        return;
       } else if (selectedProjectChat) {
 
         const fullMsg: ProjectGroupMessage = { ...msg, projectId: selectedProjectChat.project.id, kind: 'message' };
@@ -1900,14 +2294,26 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         setMessages(curr => upsertChatMessage(curr, fullMsg));
         setMessageText('');
         setPendingAttachments([]);
-        await saveProjectGroupMessage(fullMsg);
-
+        setIsSending(false);
+        try {
+          await Promise.race([
+            saveProjectGroupMessage(fullMsg),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Save timeout')), 8000)),
+          ]);
+          // Refresh project messages and conversation lists immediately after sending
+          void loadMessages();
+          void loadData();
+        } catch (saveErr: any) {
+          console.warn('[Chat] saveProjectGroupMessage failed (kept locally):', saveErr);
+        }
+        return;
       }
 
     } catch (e) {
 
       const errorMsg = e instanceof Error ? e.message : 'Failed to send message';
-
+      // Revert optimistic on hard error before save
+      setMessageText(optimisticText);
       Alert.alert('Error', `Failed to send message: ${errorMsg}`);
 
     } finally {
@@ -2012,20 +2418,15 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
 
-  const handleReview = async (app: PartnerProjectApplication, status: 'Approved' | 'Rejected', notes?: string) => {
-
+  const handleReview = async (app: PartnerProjectApplication, status: 'Approved' | 'Rejected' | 'Revision Requested' | 'Needs Revision', notes?: string) => {
+    if (!user) return;
     if (status === 'Approved') setIsApproving(true);
 
     const previousProposalChats = proposalChats;
-
     const previousSelectedProposalApplication = selectedProposalApplication;
 
-
-
     try {
-
       const reviewedApplication = await reviewPartnerProjectApplication(app.id, status, user?.id || '', notes);
-
 
       setProposalChats(current =>
         current.map(item =>
@@ -2059,13 +2460,11 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       );
 
       setReviewNotice(
-
         status === 'Approved'
-
           ? { title: 'Proposal approved', message: 'The proposal was approved and a new project was created.', tone: 'success', projectId: reviewedApplication.projectId }
-
+          : status === 'Revision Requested' || status === 'Needs Revision'
+          ? { title: 'Revision requested', message: 'Revision requested. Feedback has been sent to the partner.', tone: 'warning' }
           : { title: 'Proposal rejected', message: 'The proposal was rejected. A notification card has been sent to the partner.', tone: 'warning' }
-
       );
 
       if (selectedProposalApplication?.id === reviewedApplication.id) {
@@ -2143,7 +2542,22 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
     setActiveProposalCardData(null);
   };
 
+  const formatMessageSubtitle = (msg?: Message | null, defaultText = 'Start a conversation'): string => {
+    if (!msg || !msg.content) return defaultText;
+    if (typeof msg.content === 'string' && msg.content.startsWith(PROPOSAL_PREFIX)) {
+      try {
+        const parsed = JSON.parse(msg.content.replace(PROPOSAL_PREFIX, ''));
+        const title = parsed?.proposalDetails?.proposedTitle || parsed?.proposedTitle || 'Project Specifications';
+        return `📋 ${title}`;
+      } catch {
+        return '📋 Project Specifications';
+      }
+    }
+    return msg.content;
+  };
+
   const filteredConversations = conversations.filter(c => c.user.name.toLowerCase().includes(searchText.toLowerCase()));
+  const adminConversations = filteredConversations.filter(c => c.user.role === 'admin');
   const partnerConversations = filteredConversations.filter(c => c.user.role === 'partner');
   const volunteerConversations = filteredConversations.filter(c => c.user.role === 'volunteer');
   const filteredProjects = projectChats.filter(c => c.project.title.toLowerCase().includes(searchText.toLowerCase()));
@@ -2243,7 +2657,14 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
           <TouchableOpacity
             style={styles.sidebarHeaderAction}
             onPress={() => {
-              if (availableSections.includes('contacts')) {
+              const adminUser = allUsers.find(u => u.role === 'admin') || allUsers[0];
+              if ((isVolunteer || isPartner) && adminUser) {
+                setSelectedUser(adminUser);
+                setSelectedProjectChat(null);
+                setSelectedProposalApplication(null);
+                setProposalIntent(null);
+                setView('detail');
+              } else if (availableSections.includes('contacts')) {
                 setActiveSection('contacts');
               } else if (allUsers.length > 0) {
                 setSelectedUser(allUsers[0]);
@@ -2271,7 +2692,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
           />
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sectionTabs}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sectionTabs} contentContainerStyle={styles.sectionTabsContent}>
             {['messages', 'updates', 'projects'].map(section => {
               const isUpdates = section === 'updates';
               const label = section === 'messages' ? 'Messages' : section === 'updates' ? 'Updates' : 'Event Group Chat';
@@ -2295,13 +2716,18 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
             })}
           </ScrollView>
 
-      <ScrollView style={styles.sidebarList}>
+      <ScrollView
+        style={styles.sidebarList}
+        contentContainerStyle={styles.sidebarListContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
 
         {activeSection === 'messages' && (
 
           <>
 
-              {partnerConversations.length === 0 && volunteerConversations.length === 0 ? (
+              {adminConversations.length === 0 && partnerConversations.length === 0 && volunteerConversations.length === 0 ? (
                 <View style={styles.emptyStateContainer}>
                   <View style={styles.emptyStateIllustration}>
                     <MaterialCommunityIcons name="chat-processing-outline" size={80} color="#bbf7d0" style={{ position: 'absolute' }} />
@@ -2312,42 +2738,65 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                   <TouchableOpacity
                     style={styles.emptyStateButton}
                     onPress={() => {
-                      if (availableSections.includes('contacts')) {
-                        setActiveSection('contacts');
-                      } else if (allUsers.length > 0) {
-                        setSelectedUser(allUsers[0]);
+                      const adminUser = allUsers.find(u => u.role === 'admin') || allUsers[0];
+                      if (adminUser) {
+                        setSelectedUser(adminUser);
                         setSelectedProjectChat(null);
                         setSelectedProposalApplication(null);
                         setProposalIntent(null);
                         setView('detail');
+                      } else if (availableSections.includes('contacts')) {
+                        setActiveSection('contacts');
                       }
                     }}
                   >
-                    <MaterialIcons name="edit" size={18} color="#fff" />
-                    <Text style={styles.emptyStateButtonText}>Start a conversation</Text>
+                    <MaterialIcons name="support-agent" size={18} color="#fff" />
+                    <Text style={styles.emptyStateButtonText}>Message Admin Support</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
                 <>
-                  <Text style={styles.listSectionLabel}>Proposal Partners</Text>
-                  {partnerConversations.map(c => renderSidebarItem(
-                    c.user.id,
-                    c.user.name,
-                    c.lastMessage?.content || 'Start a conversation',
-                    selectedUser?.id === c.user.id,
-                    () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
-                    { badge: c.unreadCount }
-                  ))}
+                  {adminConversations.length > 0 && (
+                    <>
+                      <Text style={styles.listSectionLabel}>Admin Support</Text>
+                      {adminConversations.map(c => renderSidebarItem(
+                        c.user.id,
+                        c.user.name,
+                        formatMessageSubtitle(c.lastMessage, 'Tap to chat with Admin'),
+                        selectedUser?.id === c.user.id,
+                        () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
+                        { badge: c.unreadCount }
+                      ))}
+                    </>
+                  )}
+
+                  {partnerConversations.length > 0 && (
+                    <>
+                      <Text style={styles.listSectionLabel}>Proposal Partners</Text>
+                      {partnerConversations.map(c => renderSidebarItem(
+                        c.user.id,
+                        c.user.name,
+                        formatMessageSubtitle(c.lastMessage, 'Start a conversation'),
+                        selectedUser?.id === c.user.id,
+                        () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
+                        { badge: c.unreadCount }
+                      ))}
+                    </>
+                  )}
                   
-                  <Text style={styles.listSectionLabel}>Volunteers</Text>
-                  {volunteerConversations.map(c => renderSidebarItem(
-                    c.user.id,
-                    c.user.name,
-                    c.lastMessage?.content || 'Start a conversation',
-                    selectedUser?.id === c.user.id,
-                    () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
-                    { badge: c.unreadCount }
-                  ))}
+                  {volunteerConversations.length > 0 && (
+                    <>
+                      <Text style={styles.listSectionLabel}>Volunteers</Text>
+                      {volunteerConversations.map(c => renderSidebarItem(
+                        c.user.id,
+                        c.user.name,
+                        formatMessageSubtitle(c.lastMessage, 'Start a conversation'),
+                        selectedUser?.id === c.user.id,
+                        () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
+                        { badge: c.unreadCount }
+                      ))}
+                    </>
+                  )}
                 </>
               )}
 
@@ -2448,13 +2897,41 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
               ))
 
             ) : (
-
-              <Text style={styles.emptyListText}>
-
-                No partner proposals yet. Submitted proposals will appear here for admin review.
-
-              </Text>
-
+              <View style={styles.emptyStateContainer}>
+                <View style={styles.emptyStateIllustration}>
+                  <MaterialIcons name="description" size={64} color="#bbf7d0" />
+                </View>
+                <Text style={styles.emptyStateTitle}>No Proposals Yet</Text>
+                <Text style={styles.emptyStateSubtitle}>
+                  {user?.role === 'partner'
+                    ? 'Submit a program proposal to collaborate with NVC and launch community projects.'
+                    : 'Submitted partner proposals will appear here for admin review and real-time collaboration.'}
+                </Text>
+                {user?.role === 'partner' ? (
+                  <TouchableOpacity
+                    style={styles.emptyStateButton}
+                    onPress={() => {
+                      setInlineDraftModule('Nutrition');
+                      setInlineDraftProjectId('new');
+                      setInlineDraftProposal(createEmptyProposalForm());
+                      setView('detail');
+                    }}
+                  >
+                    <MaterialIcons name="add-circle" size={18} color="#fff" />
+                    <Text style={styles.emptyStateButtonText}>Submit New Proposal</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.emptyStateButton}
+                    onPress={() => {
+                      navigateToAvailableRoute(navigation, 'Projects', { programSuiteView: 'projects' });
+                    }}
+                  >
+                    <MaterialIcons name="folder-open" size={18} color="#fff" />
+                    <Text style={styles.emptyStateButtonText}>Explore Programs</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             )}
 
           </>
@@ -3080,24 +3557,50 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
 
-              {user?.role === 'admin' && app.status === 'Pending' && (
-
+              {user?.role === 'admin' && (app.status === 'Pending' || app.status === 'Resubmitted') && (
                 <View style={styles.adminActionRow}>
-
                   <TouchableOpacity style={[styles.actionBtn, styles.approveBtn]} onPress={() => handleReview(app, 'Approved')}>
-
                     <Text style={styles.actionBtnText}>Approve Proposal</Text>
+                  </TouchableOpacity>
 
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { backgroundColor: '#fffbeb', borderColor: '#fed7aa', borderWidth: 1 }]}
+                    onPress={() => {
+                      Alert.prompt
+                        ? Alert.prompt(
+                            'Request Revision',
+                            'Specify what changes the partner needs to make:',
+                            [
+                              { text: 'Cancel', style: 'cancel' },
+                              {
+                                text: 'Send Request',
+                                onPress: (notes) => handleReview(app, 'Revision Requested', notes?.trim() || 'Please revise proposal details.'),
+                              },
+                            ],
+                            'plain-text'
+                          )
+                        : handleRejectWithNotes(app);
+                    }}
+                  >
+                    <Text style={[styles.actionBtnText, { color: '#d97706' }]}>Request Revision</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity style={[styles.actionBtn, styles.rejectBtn]} onPress={() => handleRejectWithNotes(app)}>
-
                     <Text style={[styles.actionBtnText, { color: '#ef4444' }]}>Reject</Text>
-
                   </TouchableOpacity>
-
                 </View>
+              )}
 
+              {user?.role === 'partner' && (app.status === 'Revision Requested' || app.status === 'Needs Revision') && (
+                <View style={{ marginTop: 16 }}>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, styles.approveBtn, { backgroundColor: '#d97706', width: '100%', justifyContent: 'center' }]}
+                    onPress={() => handleEditProposalFromMessage(app)}
+                  >
+                    <MaterialIcons name="edit" size={16} color="#fff" style={{ marginRight: 6 }} />
+                    <Text style={styles.actionBtnText}>Edit & Resubmit Proposal</Text>
+                  </TouchableOpacity>
+                </View>
               )}
 
 
@@ -3367,14 +3870,18 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
         <ScrollView
-
           ref={scrollRef}
-
           style={styles.messagesList}
-
           contentContainerStyle={styles.messagesListContent}
-
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={true}
         >
+          {isMessagesLoading && messages.length === 0 ? (
+            <View style={{ paddingVertical: 40, alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+              <ActivityIndicator size="small" color="#166534" />
+              <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '600' }}>Loading conversation...</Text>
+            </View>
+          ) : null}
 
           {selectedUser && (user?.role === 'admin' || user?.role === 'partner') && (() => {
 
@@ -3450,113 +3957,65 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                 } catch (e) { return null; }
 
-                
-                const proposalDetails = application.proposalDetails || {};
-                const data = {
-                  proposedTitle: proposalDetails.proposedTitle || application.proposedTitle || 'Untitled Proposal',
-                  proposedDescription: proposalDetails.proposedDescription || application.proposedDescription || 'No description provided.',
-                  proposedStartDate: proposalDetails.proposedStartDate || application.proposedStartDate || 'TBD',
-                  proposedEndDate: proposalDetails.proposedEndDate || application.proposedEndDate || 'TBD',
-                  proposedLocation: proposalDetails.proposedLocation || application.proposedLocation || 'TBD',
-                  proposedVolunteersNeeded: proposalDetails.proposedVolunteersNeeded || application.proposedVolunteersNeeded || '0',
-                  status: application.status || 'Pending',
-                  id: application.id,
-                };
-
-                const isApproved = application.status === 'Approved';
+                // Normalize proposalDetails for system data compatibility
+                if (!application.proposalDetails && (application.proposedTitle || application.proposedDescription)) {
+                  application.proposalDetails = {
+                    proposedTitle: application.proposedTitle,
+                    proposedDescription: application.proposedDescription,
+                    proposedStartDate: application.proposedStartDate,
+                    proposedEndDate: application.proposedEndDate,
+                    proposedLocation: application.proposedLocation,
+                    proposedVolunteersNeeded: application.proposedVolunteersNeeded,
+                    communityNeed: application.communityNeed,
+                    expectedDeliverables: application.expectedDeliverables,
+                    requestedProgramModule: application.requestedProgramModule || application.programModule,
+                    targetProjectId: application.targetProjectId || application.projectId,
+                    attachments: application.attachments,
+                    photoAttachment: application.photoAttachment,
+                  };
+                }
+                const isAdminView = user?.role === 'admin';
+                const isOwner = Boolean((application.proposedById && application.proposedById === user?.id) || (application.partnerUserId && application.partnerUserId === user?.id) || isOwn);
+                const templateApp: PartnerProjectApplication = {
+                  id: application.id || m.id,
+                  projectId: application.projectId || application.targetProjectId || 'new',
+                  partnerUserId: application.partnerUserId || application.proposedById || '',
+                  partnerName: application.partnerName || application.proposedByName || user?.name || 'Partner',
+                  partnerEmail: application.partnerEmail || '',
+                  status: (application.status === 'Proposed' ? 'Pending' : application.status) as any || 'Pending',
+                  requestedAt: application.timestamp || application.requestedAt || m.timestamp,
+                  proposalDetails: application.proposalDetails || {},
+                  reviewNotes: application.reviewNotes,
+                } as any;
 
                 return (
 
                   <View key={`proposal-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther, styles.proposalMessageRow]}>
 
-                    <TouchableOpacity 
-
-                      style={styles.proposalMsgCard}
-
-                      onPress={() => {
-
-                        setActiveProposalCardData({ ...application, messageId: m.id });
-
-                      }}
-
-                      activeOpacity={0.7}
-
+                    <TouchableOpacity
+                      onLongPress={() => isOwn && handleDeleteMessage(m.id, !!selectedProjectChat)}
+                      activeOpacity={0.95}
+                      delayLongPress={500}
                     >
-
-                      <View style={styles.propCardHeader}>
-
-                        <View style={styles.propCardIconBox}>
-
-                          <MaterialIcons name="assignment" size={28} color="#d97706" />
-
-                        </View>
-
-                        <View style={{ flex: 1, minWidth: 0 }}>
-
-                          <Text style={styles.propCardTitle} numberOfLines={2}>{data.proposedTitle}</Text>
-
-                          <Text style={styles.propCardSubtitle} numberOfLines={1}>Proposal • {application.status}</Text>
-
-                        </View>
-
-                        {isApproved && (
-
-                          <View style={styles.propApprovedBadge}>
-
-                            <MaterialIcons name="check-circle" size={18} color="#166534" />
-
-                            <Text style={styles.propApprovedText}>Done</Text>
-
-                          </View>
-
-                        )}
-
-                      </View>
-
-
-
-                      <View style={styles.propCardBody}>
-
-                        <Text style={styles.propCardDesc} numberOfLines={2}>
-
-                          {data.proposedDescription || 'No description provided.'}
-
-                        </Text>
-
-
-
-                        <View style={styles.propCardMetaGrid}>
-
-                          <View style={styles.propCardMetaItem}>
-
-                            <MaterialIcons name="event" size={14} color="#64748b" />
-
-                            <Text style={styles.propCardMetaText} numberOfLines={1}>{data.proposedStartDate || 'TBD'}</Text>
-
-                          </View>
-
-                          <View style={styles.propCardMetaItem}>
-
-                            <MaterialIcons name="people" size={14} color="#64748b" />
-
-                            <Text style={styles.propCardMetaText} numberOfLines={1}>{data.proposedVolunteersNeeded || '0'}</Text>
-
-                          </View>
-
-                          <View style={styles.propCardMetaItem}>
-
-                            <MaterialIcons name="location-on" size={14} color="#64748b" />
-
-                            <Text style={styles.propCardMetaText} numberOfLines={1}>{data.proposedLocation || 'TBD'}</Text>
-
-                          </View>
-
-                        </View>
-
-                      </View>
-
-                      <Text style={styles.propTapHint}>Tap to view details</Text>
-
+                      <ProposalMessageTemplate
+                        application={templateApp}
+                        isAdmin={isAdminView}
+                        isOwner={isOwner}
+                        isSubmitting={isSubmittingInlineDraft}
+                        onEdit={(app) => handleEditProposalFromMessage(app)}
+                        onSubmit={(app) => handleSubmitProposalFromMessage(app)}
+                        onViewProjects={(app) => {
+                          navigateToAvailableRoute(
+                            navigation,
+                            'Projects',
+                            { projectId: app.projectId, programSuiteView: 'projects' },
+                            { routeName: 'Projects', params: { projectId: app.projectId, programSuiteView: 'projects' } }
+                          );
+                        }}
+                        onOpenAttachment={(url) => {
+                          void Linking.openURL(url).catch(() => Alert.alert('Attachment', 'Unable to open this attachment on this device.'));
+                        }}
+                      />
                     </TouchableOpacity>
 
                     <Text style={styles.messageTime}>
@@ -3573,20 +4032,123 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
 
+              const isProposalNotification =
+                typeof m.content === 'string' &&
+                (m.content.startsWith('Your proposal for ') ||
+                 m.content.includes('has been submitted and'));
+
+              if (isProposalNotification) {
+                const titleMatch = m.content.match(/Your proposal for (?:the )?["“]?([^"”]+)["”]?/i);
+                const extractedTarget = titleMatch ? titleMatch[1].replace(/ program module/i, '').trim() : '';
+
+                // Look up proposal in proposalChats / partner proposals
+                const matchingChat = proposalChats.find(item => {
+                  const pTitle = item.projectTitle || item.application?.proposalDetails?.proposedTitle || '';
+                  const pModule = item.application?.proposalDetails?.requestedProgramModule || getProgramModuleFromProposalProjectId(item.application?.projectId) || '';
+                  const normTarget = extractedTarget.toLowerCase();
+                  return (
+                    pTitle.toLowerCase().includes(normTarget) ||
+                    normTarget.includes(pTitle.toLowerCase()) ||
+                    pModule.toLowerCase() === normTarget ||
+                    normTarget.includes(pModule.toLowerCase())
+                  );
+                });
+
+                const appStatus = matchingChat?.application?.status;
+                const isApproved = appStatus === 'Approved' || m.content.toLowerCase().includes('has been approved');
+                const isRevisionRequested = appStatus === 'Revision Requested' || appStatus === 'Needs Revision' || m.content.toLowerCase().includes('requires revision');
+                const isResubmitted = appStatus === 'Resubmitted' || m.content.toLowerCase().includes('has been resubmitted');
+                const displayTitle = matchingChat?.projectTitle || extractedTarget || 'Program Proposal';
+                const targetProjectId = matchingChat?.application?.projectId || 'all';
+
+                const badgeBg = isApproved ? '#dcfce7' : isRevisionRequested ? '#fef3c7' : isResubmitted ? '#dbeafe' : '#fef3c7';
+                const badgeColor = isApproved ? '#166534' : isRevisionRequested ? '#b45309' : isResubmitted ? '#1d4ed8' : '#b45309';
+                const badgeText = isApproved ? 'APPROVED' : isRevisionRequested ? 'NEEDS REVISION' : isResubmitted ? 'RESUBMITTED' : 'PENDING REVIEW';
+                const iconName = isApproved ? 'check-circle' : isRevisionRequested ? 'edit-note' : isResubmitted ? 'update' : 'schedule';
+
+                return (
+                  <View key={`proposal-notice-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther]}>
+                    <View style={[styles.approvedNoticeContainer, isRevisionRequested && { borderColor: '#fed7aa' }, isResubmitted && { borderColor: '#bfdbfe' }]}>
+                      <View style={styles.approvedNoticeHeader}>
+                        <View style={[styles.approvedNoticeIconCircle, { backgroundColor: badgeBg }]}>
+                          <MaterialIcons
+                            name={iconName as any}
+                            size={22}
+                            color={badgeColor}
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <View style={[styles.approvedBadgePill, { backgroundColor: badgeBg }]}>
+                            <Text style={[styles.approvedBadgeText, { color: badgeColor }]}>
+                              {badgeText}
+                            </Text>
+                          </View>
+                          <Text style={styles.approvedNoticeHeadline}>
+                            {isApproved
+                              ? `Your proposal for "${displayTitle}" has been submitted and has been approved`
+                              : isRevisionRequested
+                              ? `Revision Requested for "${displayTitle}". Please edit and resubmit.`
+                              : isResubmitted
+                              ? `Your revised proposal for "${displayTitle}" has been submitted and is pending admin review.`
+                              : `Your proposal for "${displayTitle}" has been submitted and is pending admin review.`}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {isApproved && (
+                        <TouchableOpacity
+                          style={styles.approvedNoticeButton}
+                          onPress={() => {
+                            navigateToAvailableRoute(
+                              navigation,
+                              'Projects',
+                              { projectId: targetProjectId, programSuiteView: 'projects' },
+                              { routeName: 'Projects', params: { projectId: targetProjectId, programSuiteView: 'projects' } }
+                            );
+                          }}
+                          activeOpacity={0.85}
+                        >
+                          <MaterialIcons name="folder-special" size={18} color="#ffffff" style={{ marginRight: 6 }} />
+                          <Text style={styles.approvedNoticeButtonText}>View my Projects</Text>
+                          <MaterialIcons name="arrow-forward" size={16} color="#ffffff" style={{ marginLeft: 4 }} />
+                        </TouchableOpacity>
+                      )}
+
+                      {isRevisionRequested && (
+                        <TouchableOpacity
+                          style={[styles.approvedNoticeButton, { backgroundColor: '#d97706' }]}
+                          onPress={() => {
+                            if (matchingChat?.application) {
+                              handleEditProposalFromMessage(matchingChat.application);
+                            }
+                          }}
+                          activeOpacity={0.85}
+                        >
+                          <MaterialIcons name="edit" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                          <Text style={styles.approvedNoticeButtonText}>Edit & Resubmit Proposal</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    <Text style={styles.messageTime}>
+                      {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                  </View>
+                );
+              }
+
               const messageAttachments = m.attachments || [];
 
-
-
               return (
-
                 <View key={`msg-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther]}>
-
-                  <View style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubbleOther]}>
-
+                  <TouchableOpacity
+                    style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubbleOther]}
+                    onLongPress={() => isOwn && handleDeleteMessage(m.id, !!selectedProjectChat)}
+                    activeOpacity={0.85}
+                    delayLongPress={500}
+                  >
                     {m.content ? (
-
                       <Text style={[styles.bubbleText, isOwn && styles.bubbleTextOwn]}>{m.content}</Text>
-
                     ) : null}
 
                     {messageAttachments.length > 0 ? (
@@ -3671,7 +4233,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                     ) : null}
 
-                  </View>
+                  </TouchableOpacity>
 
                   <Text style={styles.messageTime}>
 
@@ -3688,6 +4250,327 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
             })()
 
           )}
+
+          {/* Typing Indicator */}
+          {isRecipientTyping && selectedUser ? (
+            <View style={[styles.messageRow, styles.messageRowOther, { marginTop: 4 }]}>
+              <View style={[styles.bubble, styles.bubbleOther, { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 16, backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#dcfce7' }]}>
+                <ThreeDotsTypingIndicator />
+                <Text style={{ fontSize: 12, color: '#166534', fontWeight: '500' }}>
+                  {selectedUser.name || 'User'} is typing...
+                </Text>
+              </View>
+            </View>
+          ) : null}
+
+          {/* Inline Draft Proposal Card – shown at bottom of messages list (partner or admin) */}
+          {inlineDraftProposal && (isPartner || user?.role === 'admin') ? (() => {
+            const draft = inlineDraftProposal;
+            const getDocName = (uri: string) => {
+              if (!uri) return '';
+              const clean = uri.split('?')[0];
+              const rawName = decodeURIComponent(clean.split('/').pop() || 'document');
+              if (rawName.length <= 18) return rawName;
+              const extIdx = rawName.lastIndexOf('.');
+              if (extIdx > 0 && extIdx > rawName.length - 7) {
+                const ext = rawName.slice(extIdx);
+                const base = rawName.slice(0, extIdx);
+                const leftLen = Math.max(5, 18 - ext.length - 3);
+                return `${base.slice(0, leftLen)}...${ext}`;
+              }
+              return `${rawName.slice(0, 15)}...`;
+            };
+            return (
+              <View style={inlineStyles.draftCardWrap}>
+                <View style={inlineStyles.draftCard}>
+                  {/* Header */}
+                  <View style={inlineStyles.draftCardHeader}>
+                    <View style={inlineStyles.draftCardIconWrap}>
+                      <MaterialIcons name="description" size={22} color="#166534" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={inlineStyles.draftCardTitle}>Project Specifications</Text>
+                      <Text style={inlineStyles.draftCardSub}>Provide details for the {inlineDraftModule} program.</Text>
+                    </View>
+                    <View style={inlineStyles.draftBadge}>
+                      <Text style={inlineStyles.draftBadgeText}>DRAFT</Text>
+                    </View>
+                  </View>
+
+                  <ScrollView style={{ maxHeight: 480 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+                    <View style={inlineStyles.draftCardBody}>
+                      {/* Program Selection Row */}
+                      <View style={[inlineStyles.draftRow, { marginBottom: 10 }]}>
+                        <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
+                          <Text style={inlineStyles.draftLabel}>Program Track / Advocacy</Text>
+                          <View style={inlineStyles.draftPickerBorder}>
+                            <Picker
+                              selectedValue={inlineDraftModule}
+                              onValueChange={(val) => {
+                                setInlineDraftModule(val);
+                                const matched = systemPrograms.find(p => p.module === val || p.id === val || p.title === val);
+                                if (matched) {
+                                  setInlineDraftProjectId(matched.id);
+                                }
+                                setInlineDraftProposal(p => p ? { ...p, requestedProgramModule: (matched?.module || val) as any } : p);
+                              }}
+                              style={inlineStyles.draftPicker}
+                            >
+                              {systemPrograms.length > 0 ? (
+                                systemPrograms.map(prog => (
+                                  <Picker.Item
+                                    key={prog.id}
+                                    label={`${prog.title} (${prog.module})`}
+                                    value={prog.module}
+                                  />
+                                ))
+                              ) : (
+                                <>
+                                  <Picker.Item label="Nutrition (Feeding & Food Production)" value="Nutrition" />
+                                  <Picker.Item label="Education (Literacy & Scholarships)" value="Education" />
+                                  <Picker.Item label="Livelihood (Skills & Empowerment)" value="Livelihood" />
+                                  <Picker.Item label="Disaster (Emergency Response)" value="Disaster" />
+                                </>
+                              )}
+                            </Picker>
+                          </View>
+                        </View>
+                      </View>
+
+                      {/* Row 1: Project Title + Start Date */}
+                      {(() => {
+                        const isDuplicateProposalTitle = Boolean(
+                          draft.proposedTitle &&
+                          draft.proposedTitle.trim().length >= 2 &&
+                          (systemPrograms.some(p => p?.title && p.title.trim().toLowerCase() === draft.proposedTitle.trim().toLowerCase()) ||
+                           proposalChats.some(p => p?.projectTitle && p.projectTitle.trim().toLowerCase() === draft.proposedTitle.trim().toLowerCase()))
+                        );
+                        return (
+                          <View style={[inlineStyles.draftRow, !isWide && inlineStyles.draftRowMobile]}>
+                            <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
+                              <Text style={inlineStyles.draftLabel}>Project Title</Text>
+                              <TextInput
+                                style={[
+                                  inlineStyles.draftInput,
+                                  isDuplicateProposalTitle && { borderColor: '#f59e0b', backgroundColor: '#fffbeb' }
+                                ]}
+                                value={draft.proposedTitle}
+                                onChangeText={t => setInlineDraftProposal(p => p ? { ...p, proposedTitle: t } : p)}
+                                placeholder="e.g. Nutrition Program – Mingo"
+                                placeholderTextColor="#94a3b8"
+                              />
+                              {isDuplicateProposalTitle ? (
+                                <View style={{
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  backgroundColor: '#fffbeb',
+                                  borderWidth: 1,
+                                  borderColor: '#fde68a',
+                                  borderRadius: 6,
+                                  paddingHorizontal: 8,
+                                  paddingVertical: 4,
+                                  marginTop: 4,
+                                }}>
+                                  <MaterialIcons name="warning-amber" size={14} color="#d97706" />
+                                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#b45309', flex: 1 }}>
+                                    Warning: A program, project, or proposal with this title already exists.
+                                  </Text>
+                                </View>
+                              ) : null}
+                            </View>
+                            <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
+                              <Text style={inlineStyles.draftLabel}>Start Date</Text>
+                              <TouchableOpacity
+                                style={inlineStyles.draftDateBtn}
+                                onPress={() => setInlineStartDatePicker(true)}
+                              >
+                                <MaterialIcons name="calendar-today" size={15} color="#475569" />
+                                <Text style={[inlineStyles.draftDateText, !draft.proposedStartDate && { color: '#94a3b8' }]}>
+                                  {draft.proposedStartDate ? formatProposalDate(draft.proposedStartDate) : 'Select date'}
+                                </Text>
+                              </TouchableOpacity>
+                              {inlineStartDatePicker && (
+                                <LazyDateTimePicker
+                                  value={draft.proposedStartDate ? new Date(draft.proposedStartDate) : new Date()}
+                                  mode="date"
+                                  display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
+                                  onChange={(_: any, date?: Date) => {
+                                    setInlineStartDatePicker(false);
+                                    if (date) setInlineDraftProposal(p => p ? { ...p, proposedStartDate: date.toISOString().split('T')[0] } : p);
+                                  }}
+                                />
+                              )}
+                            </View>
+                          </View>
+                        );
+                      })()}
+
+                      {/* Row 2: Detailed Description + End Date */}
+                      <View style={[inlineStyles.draftRow, !isWide && inlineStyles.draftRowMobile]}>
+                        <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
+                          <Text style={inlineStyles.draftLabel}>Detailed Description</Text>
+                          <TextInput
+                            style={[inlineStyles.draftInput, { height: 80, textAlignVertical: 'top' }]}
+                            multiline
+                            value={draft.proposedDescription}
+                            onChangeText={t => setInlineDraftProposal(p => p ? { ...p, proposedDescription: t } : p)}
+                            placeholder="Outline the goals, target beneficiaries, and scope..."
+                            placeholderTextColor="#94a3b8"
+                          />
+                        </View>
+                        <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
+                          <Text style={inlineStyles.draftLabel}>End Date</Text>
+                          <TouchableOpacity
+                            style={inlineStyles.draftDateBtn}
+                            onPress={() => setInlineEndDatePicker(true)}
+                          >
+                            <MaterialIcons name="calendar-today" size={15} color="#475569" />
+                            <Text style={[inlineStyles.draftDateText, !draft.proposedEndDate && { color: '#94a3b8' }]}>
+                              {draft.proposedEndDate ? formatProposalDate(draft.proposedEndDate) : 'Select date'}
+                            </Text>
+                          </TouchableOpacity>
+                          {inlineEndDatePicker && (
+                            <LazyDateTimePicker
+                              value={draft.proposedEndDate ? new Date(draft.proposedEndDate) : new Date()}
+                              mode="date"
+                              display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
+                              onChange={(_: any, date?: Date) => {
+                                setInlineEndDatePicker(false);
+                                if (date) setInlineDraftProposal(p => p ? { ...p, proposedEndDate: date.toISOString().split('T')[0] } : p);
+                              }}
+                            />
+                          )}
+                        </View>
+                      </View>
+
+                      {/* Row 3: Target Location + City/Municipality */}
+                      <View style={[inlineStyles.draftRow, !isWide && inlineStyles.draftRowMobile]}>
+                        <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
+                          <Text style={inlineStyles.draftLabel}>Target Location</Text>
+                          <View style={inlineStyles.draftPickerBorder}>
+                            <Picker
+                              selectedValue={inlineRegionCode}
+                              onValueChange={(code) => {
+                                setInlineRegionCode(code);
+                                const region = PHRegions.find(r => r.code === code);
+                                setInlineFilteredCities(getCitiesByRegion(code));
+                                setInlineCityCode('');
+                                setInlineDraftProposal(p => p ? { ...p, proposedLocation: region ? region.name : '' } : p);
+                              }}
+                              style={inlineStyles.draftPicker}
+                            >
+                              <Picker.Item label="Select Region" value="" color="#94a3b8" />
+                              {PHRegions.map(r => <Picker.Item key={r.code} label={r.name} value={r.code} />)}
+                            </Picker>
+                          </View>
+                        </View>
+                        <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
+                          <Text style={inlineStyles.draftLabel}>City / Municipality</Text>
+                          <View style={inlineStyles.draftPickerBorder}>
+                            <Picker
+                              selectedValue={inlineCityCode}
+                              enabled={!!inlineRegionCode}
+                              onValueChange={(code) => {
+                                setInlineCityCode(code);
+                                const city = inlineFilteredCities.find(c => c.code === code);
+                                const region = PHRegions.find(r => r.code === inlineRegionCode);
+                                const composed = composePhilippineAddress(region?.name || '', city?.name || '', '');
+                                setInlineDraftProposal(p => p ? { ...p, proposedLocation: composed } : p);
+                              }}
+                              style={inlineStyles.draftPicker}
+                            >
+                              <Picker.Item label="Select City" value="" color="#94a3b8" />
+                              {inlineFilteredCities.map(c => <Picker.Item key={c.code} label={c.name} value={c.code} />)}
+                            </Picker>
+                          </View>
+                        </View>
+                      </View>
+
+                      {/* Row 4: Proposal Photo + Proposal Document */}
+                      <View style={[inlineStyles.draftRow, !isWide && inlineStyles.draftRowMobile]}>
+                        <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
+                          <Text style={inlineStyles.draftLabel}>Proposal Photo</Text>
+                          {draft.photoAttachment ? (
+                            <View style={inlineStyles.draftAttachCard}>
+                              <Image source={{ uri: draft.photoAttachment }} style={inlineStyles.draftAttachThumb} />
+                              <View style={inlineStyles.draftAttachMeta}>
+                                <Text style={inlineStyles.draftAttachName} numberOfLines={1}>
+                                  {getDocName(draft.photoAttachment)}
+                                </Text>
+                              </View>
+                              <TouchableOpacity
+                                style={inlineStyles.draftAttachDownload}
+                                onPress={() => void handleOpenProposalAttachment(draft.photoAttachment!, 0)}
+                              >
+                                <MaterialIcons name="file-download" size={18} color="#475569" />
+                              </TouchableOpacity>
+                            </View>
+                          ) : (
+                            <TouchableOpacity style={inlineStyles.draftAttachBtn} onPress={handlePickInlineDraftPhoto}>
+                              <MaterialIcons name="photo-camera" size={16} color="#475569" />
+                              <Text style={inlineStyles.draftAttachBtnText}>Attach Photo</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                        <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
+                          <Text style={inlineStyles.draftLabel}>Proposal Document</Text>
+                          {inlineDraftDocAttachment ? (
+                            <View style={inlineStyles.draftAttachCard}>
+                              <View style={inlineStyles.draftAttachDocIcon}>
+                                <MaterialIcons name="picture-as-pdf" size={24} color="#dc2626" />
+                              </View>
+                              <View style={inlineStyles.draftAttachMeta}>
+                                <Text style={inlineStyles.draftAttachName} numberOfLines={1}>
+                                  {getDocName(inlineDraftDocAttachment)}
+                                </Text>
+                              </View>
+                              <TouchableOpacity
+                                style={inlineStyles.draftAttachDownload}
+                                onPress={() => void handleOpenProposalAttachment(inlineDraftDocAttachment, 0)}
+                              >
+                                <MaterialIcons name="file-download" size={18} color="#475569" />
+                              </TouchableOpacity>
+                            </View>
+                          ) : (
+                            <TouchableOpacity style={inlineStyles.draftAttachBtn} onPress={handlePickInlineDraftDoc}>
+                              <MaterialIcons name="attach-file" size={16} color="#475569" />
+                              <Text style={inlineStyles.draftAttachBtnText}>Attach Document</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      </View>
+
+                    </View>
+                  </ScrollView>
+
+                  {/* Footer buttons: Edit | Submit Proposal */}
+                  <View style={inlineStyles.draftFooter}>
+                    <TouchableOpacity
+                      style={inlineStyles.draftEditBtn}
+                      onPress={() => setInlineDraftProposal(null)}
+                    >
+                      <Text style={inlineStyles.draftEditBtnText}>Edit</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[inlineStyles.draftSubmitBtn, isSubmittingInlineDraft && { opacity: 0.6 }]}
+                      onPress={handleSubmitInlineProposal}
+                      disabled={isSubmittingInlineDraft}
+                    >
+                      {isSubmittingInlineDraft ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <MaterialIcons name="send" size={16} color="#fff" />
+                      )}
+                      <Text style={inlineStyles.draftSubmitBtnText}>
+                        {isSubmittingInlineDraft ? 'Submitting...' : 'Submit Proposal'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            );
+          })() : null}
 
         </ScrollView>
 
@@ -3755,47 +4638,15 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
           ) : null}
 
-
-
-          {pendingAttachments.length > 0 ? (
-
-            <View style={styles.pendingAttachmentTray}>
-
-              {pendingAttachments.map((attachmentUri, attachmentIndex) => (
-
-                <View key={`${attachmentUri}-${attachmentIndex}`} style={styles.pendingAttachmentChip}>
-
-                  <MaterialIcons
-
-                    name={isImageMediaUri(attachmentUri) ? 'image' : 'insert-drive-file'}
-
-                    size={16}
-
-                    color="#166534"
-
-                  />
-
-                  <Text style={styles.pendingAttachmentText} numberOfLines={1}>
-
-                    {getAttachmentName(attachmentUri, attachmentIndex)}
-
-                  </Text>
-
-                  <TouchableOpacity onPress={() => removePendingAttachment(attachmentUri)}>
-
-                    <MaterialIcons name="close" size={16} color="#64748b" />
-
-                  </TouchableOpacity>
-
-                </View>
-
+          {showEmojiPicker ? (
+            <View style={styles.emojiPicker}>
+              {QUICK_EMOJIS.map(e => (
+                <TouchableOpacity key={e} style={styles.emojiItem} onPress={() => setMessageText(prev => prev + e)} activeOpacity={0.7}>
+                  <Text style={styles.emojiText}>{e}</Text>
+                </TouchableOpacity>
               ))}
-
             </View>
-
           ) : null}
-
-
 
           <View style={styles.composer}>
 
@@ -3817,16 +4668,82 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
               <TextInput
                 style={styles.composerInput}
-                placeholder="Type a message..."
+                placeholder={(isPartner && selectedUser?.role === 'admin') || (user?.role === 'admin' && selectedUser) ? 'Type a message or use /plan to insert a tool...' : 'Type a message...'}
                 value={messageText}
-                onChangeText={setMessageText}
+                onChangeText={(t) => {
+                  setMessageText(t);
+                  // Update typing status
+                  if (user?.id && selectedUser?.id) {
+                    void setTypingStatus(user.id, selectedUser.id, true);
+                    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+                    typingTimeoutRef.current = setTimeout(() => {
+                      if (user?.id && selectedUser?.id) {
+                        void setTypingStatus(user.id, selectedUser.id, false);
+                      }
+                    }, 2500);
+                  }
+                  // Detect /plan command typed in composer
+                  if (t.trim() === '/plan' && ((isPartner && selectedUser?.role === 'admin') || (user?.role === 'admin' && selectedUser))) {
+                    setMessageText('');
+                    handleInsertProposalDraft();
+                  }
+                }}
                 multiline
-                onSubmitEditing={handleSendMessage}
+                blurOnSubmit={false}
+                returnKeyType="send"
+                onSubmitEditing={() => {
+                  if (Platform.OS !== 'web') handleSendMessage();
+                }}
+                onKeyPress={({ nativeEvent }: any) => {
+                  if (nativeEvent.key === 'Enter' && !nativeEvent.shiftKey) {
+                    if (Platform.OS === 'web') {
+                      nativeEvent.preventDefault?.();
+                      if (messageText.trim() || pendingAttachments.length > 0) handleSendMessage();
+                    }
+                  }
+                }}
                 maxLength={1000}
 
               />
 
             </View>
+
+            <TouchableOpacity
+              style={[styles.emojiBtn, showEmojiPicker && styles.emojiBtnActive]}
+              onPress={() => setShowEmojiPicker(v => !v)}
+              activeOpacity={0.8}
+            >
+              <MaterialIcons name="sentiment-satisfied-alt" size={22} color={showEmojiPicker ? "#166534" : "#64748b"} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.emojiBtn}
+              onPress={() => void handlePickAttachment('file')}
+              activeOpacity={0.8}
+            >
+              <MaterialIcons name="attach-file" size={22} color="#64748b" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.emojiBtn}
+              onPress={() => {
+                Alert.alert('Voice Message', 'Voice recording feature is available on mobile devices.');
+              }}
+              activeOpacity={0.8}
+            >
+              <MaterialIcons name="mic-none" size={22} color="#64748b" />
+            </TouchableOpacity>
+
+            {/* /plan shortcut button for partners and admins */}
+            {((isPartner && selectedUser?.role === 'admin') || (user?.role === 'admin' && selectedUser)) && !inlineDraftProposal ? (
+              <TouchableOpacity
+                style={inlineStyles.planBtn}
+                onPress={handleInsertProposalDraft}
+                activeOpacity={0.8}
+              >
+                <MaterialIcons name="assignment" size={16} color="#166534" />
+              </TouchableOpacity>
+            ) : null}
 
             <TouchableOpacity
 
@@ -4369,7 +5286,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                     if (!selectedProjectChat) return;
                     try {
                       const existingIds = selectedProjectChat?.members.map(m => m.id) || [];
-                      setAvailableVolunteers(users.filter(u => u.role === 'volunteer' && !existingIds.includes(u.id)));
+                      setAvailableVolunteers((allUsers || []).filter(u => u.role === 'volunteer' && !existingIds.includes(u.id)));
                       setShowAddMemberModal(true);
                     } catch (e) {
                       console.error(e);
@@ -4957,137 +5874,83 @@ const styles = StyleSheet.create({
   },
 
   sectionTabs: {
-
-    flexDirection: 'row',
-
     paddingHorizontal: 12,
-
+    marginBottom: 4,
+    maxHeight: 44,
+  },
+  sectionTabsContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
-
-    marginBottom: 8,
-
-    flexWrap: 'wrap',
-
+    paddingVertical: 2,
   },
-
   sectionTab: {
-
     flexDirection: 'row',
-
     alignItems: 'center',
-
     gap: 6,
-
     paddingVertical: 6,
-
     paddingHorizontal: 10,
-
     borderRadius: 10,
-
     backgroundColor: '#f1f5f9',
-
     borderWidth: 1,
-
     borderColor: '#e2e8f0',
-
   },
-
   sectionTabActive: {
-
     backgroundColor: '#166534',
-
     borderColor: '#166534',
-
   },
-
   sectionTabIconWrap: {
-
     width: 24,
-
     height: 24,
-
     borderRadius: 8,
-
     backgroundColor: '#dcfce7',
-
     alignItems: 'center',
-
     justifyContent: 'center',
-
   },
-
   sectionTabIconWrapActive: {
-
     backgroundColor: 'rgba(255,255,255,0.18)',
-
   },
-
   sectionTabText: { fontSize: 11, fontWeight: '700', color: '#64748b' },
-
   sectionTabTextActive: { color: '#fff' },
-
   sectionTabBadge: {
-
     minWidth: 18,
-
     height: 18,
-
     borderRadius: 9,
-
     backgroundColor: '#dcfce7',
-
     alignItems: 'center',
-
     justifyContent: 'center',
-
     paddingHorizontal: 4,
-
   },
-
   sectionTabBadgeActive: {
-
     backgroundColor: 'rgba(255,255,255,0.2)',
-
   },
-
   sectionTabBadgeText: {
-
     fontSize: 9,
-
     fontWeight: '900',
-
     color: '#166534',
-
   },
-
   sectionTabBadgeTextActive: {
-
     color: '#ffffff',
-
   },
 
-
-
-  sidebarList: { flex: 1 },
-
+  sidebarList: {
+    flex: 1,
+  },
+  sidebarListContent: {
+    flexGrow: 1,
+    justifyContent: 'flex-start',
+    paddingTop: 2,
+    paddingBottom: 24,
+  },
   listSectionLabel: {
-
     fontSize: 10,
-
     fontWeight: '800',
-
     color: '#94a3b8',
-
     textTransform: 'uppercase',
-
     letterSpacing: 1.2,
-
     paddingHorizontal: 12,
-
-    marginTop: 10,
-
-    marginBottom: 6
-
+    marginTop: 6,
+    marginBottom: 4,
   },
 
   sidebarItem: {
@@ -5590,7 +6453,7 @@ const styles = StyleSheet.create({
 
   messageRow: { maxWidth: '85%', gap: 4 },
 
-  proposalMessageRow: { maxWidth: '92%', width: '92%' },
+  proposalMessageRow: { maxWidth: '100%', width: '100%', alignSelf: 'stretch' },
 
   messageRowOwn: { alignSelf: 'flex-end', alignItems: 'flex-end' },
 
@@ -7194,7 +8057,342 @@ const styles = StyleSheet.create({
 
   },
 
+  emojiBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 2,
+  },
+
+  emojiBtnActive: {
+    backgroundColor: '#dcfce7',
+  },
+
+  emojiPicker: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#f8fafc',
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+
+  emojiItem: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+
+  emojiText: {
+    fontSize: 18,
+  },
+
 });
 
+// Inline proposal draft card styles (separate from main StyleSheet to keep things clean)
+const inlineStyles = StyleSheet.create({
+  draftCardWrap: {
+    marginHorizontal: 4,
+    marginBottom: 6,
+  },
+  draftCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  draftCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    backgroundColor: '#f8fafc',
+  },
+  draftCardIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: '#dcfce7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  draftCardTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  draftCardSub: {
+    fontSize: 10,
+    color: '#64748b',
+    marginTop: 1,
+  },
+  draftBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: '#ede9fe',
+    borderWidth: 1,
+    borderColor: '#c4b5fd',
+  },
+  draftBadgeText: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: '#7c3aed',
+    letterSpacing: 0.5,
+  },
+  draftCardBody: {
+    padding: 10,
+    gap: 8,
+  },
+  draftRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  draftRowMobile: {
+    flexDirection: 'column',
+    gap: 6,
+  },
+  draftGroup: {
+    gap: 3,
+  },
+  draftLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  draftInput: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    fontSize: 12,
+    color: '#1e293b',
+  },
+  draftDateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  draftDateText: {
+    fontSize: 12,
+    color: '#1e293b',
+    fontWeight: '500',
+  },
+  draftPickerBorder: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  draftPicker: {
+    height: 38,
+    width: '100%',
+  },
+  draftAttachCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    padding: 6,
+  },
+  draftAttachThumb: {
+    width: 36,
+    height: 36,
+    borderRadius: 6,
+    backgroundColor: '#e2e8f0',
+  },
+  draftAttachDocIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 6,
+    backgroundColor: '#fee2e2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  draftAttachMeta: {
+    flex: 1,
+    minWidth: 0,
+    marginRight: 40,
+  },
+  draftAttachName: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  draftAttachDownload: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  draftAttachBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  draftAttachBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  draftFooter: {
+    flexDirection: 'row',
+    gap: 8,
+    padding: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    backgroundColor: '#fafafa',
+    justifyContent: 'flex-end',
+  },
+  draftEditBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  draftEditBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  draftSubmitBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#166534',
+  },
+  draftSubmitBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  planBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  approvedNoticeContainer: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#bbf7d0',
+    padding: 16,
+    gap: 12,
+    maxWidth: 480,
+    width: '100%',
+    shadowColor: '#166534',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  approvedNoticeHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  approvedNoticeIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#dcfce7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  approvedNoticeBadgePill: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    marginBottom: 4,
+  },
+  approvedNoticeBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#166534',
+    letterSpacing: 0.5,
+  },
+  approvedNoticeHeadline: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+    lineHeight: 20,
+  },
+  approvedNoticeButton: {
+    backgroundColor: '#166534',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#166534',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  approvedNoticeButtonText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+});
 
 

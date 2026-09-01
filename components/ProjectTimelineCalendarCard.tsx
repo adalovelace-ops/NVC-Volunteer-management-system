@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { StyleSheet, Text, TouchableOpacity, View, Linking, useWindowDimensions, ScrollView } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { addMonths, format, isSameDay, isSameMonth, subMonths } from 'date-fns';
+import { addDays, addMonths, addWeeks, endOfWeek, format, isSameDay, isSameMonth, startOfWeek, subDays, subMonths, subWeeks } from 'date-fns';
 import type { AdminPlanningCalendar, AdminPlanningItem, Project } from '../models/types';
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
 
@@ -31,6 +31,7 @@ type ProjectTimelineCalendarCardProps = {
   projectFilterIds?: string[];
   statusFilter?: string | null;
   setStatusFilter?: (status: string | null) => void;
+  hideSecondCalendar?: boolean;
   onAddEvent?: (date: Date) => void;
   onOpenProject?: (projectId: string) => void;
 };
@@ -99,6 +100,20 @@ function getLaneLabel(project: Project): string {
   return project.programModule || project.category || 'Project';
 }
 
+function formatViewLabel(date: Date, viewMode: 'Month' | 'Week' | 'Day' | 'List'): string {
+  if (viewMode === 'Day') {
+    return date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  }
+
+  if (viewMode === 'Week') {
+    const start = startOfWeek(date, { weekStartsOn: 0 });
+    const end = endOfWeek(date, { weekStartsOn: 0 });
+    return `${start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  }
+
+  return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+}
+
 export default function ProjectTimelineCalendarCard({
   title,
   subtitle,
@@ -111,6 +126,7 @@ export default function ProjectTimelineCalendarCard({
   projectFilterIds,
   statusFilter,
   setStatusFilter,
+  hideSecondCalendar = false,
   onAddEvent,
   onOpenProject,
 }: ProjectTimelineCalendarCardProps) {
@@ -122,7 +138,7 @@ export default function ProjectTimelineCalendarCard({
     return new Date();
   });
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
-  const [viewMode, setViewMode] = useState<'Month' | 'Week' | 'Day'>('Month');
+  const [viewMode, setViewMode] = useState<'Month' | 'Week' | 'Day' | 'List'>('Month');
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
 
   const monthGrid = useMemo(() => getMonthGrid(calendarDate), [calendarDate]);
@@ -130,6 +146,12 @@ export default function ProjectTimelineCalendarCard({
     () => calendarDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
     [calendarDate]
   );
+
+  // Days of the current week (for Week view)
+  const weekGrid = useMemo(() => {
+    const start = startOfWeek(calendarDate, { weekStartsOn: 0 });
+    return Array.from({ length: 7 }, (_, index) => addDays(start, index));
+  }, [calendarDate]);
 
   // Google Calendar Integration states
   const [calendarSettings, setCalendarSettings] = useState({
@@ -359,11 +381,23 @@ export default function ProjectTimelineCalendarCard({
 
   // Navigation handlers
   const handlePrevMonth = () => {
-    setCalendarDate(prev => subMonths(prev, 1));
+    setCalendarDate(prev =>
+      viewMode === 'Day'
+        ? subDays(prev, 1)
+        : viewMode === 'Week'
+          ? subWeeks(prev, 1)
+          : subMonths(prev, 1)
+    );
   };
 
   const handleNextMonth = () => {
-    setCalendarDate(prev => addMonths(prev, 1));
+    setCalendarDate(prev =>
+      viewMode === 'Day'
+        ? addDays(prev, 1)
+        : viewMode === 'Week'
+          ? addWeeks(prev, 1)
+          : addMonths(prev, 1)
+    );
   };
 
   const handleResetToToday = () => {
@@ -525,12 +559,14 @@ export default function ProjectTimelineCalendarCard({
       <View style={[styles.mainLayout, { flexDirection: isMobile ? 'column' : 'row' }]}>
         
         {/* Left Column (Big Calendar + Event List) */}
-        <View style={styles.leftColumn}>
+        <View style={[styles.leftColumn, isMobile && styles.leftColumnMobile]}>
           
           {/* Calendar Header with navigation and Mode buttons */}
-          <View style={styles.calendarControlBar}>
+          <View style={[styles.calendarControlBar, isMobile && styles.calendarControlBarMobile]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <Text style={styles.bigMonthLabel}>{monthLabel}</Text>
+              <Text style={[styles.bigMonthLabel, isMobile && styles.bigMonthLabelMobile]}>
+                {formatViewLabel(calendarDate, viewMode)}
+              </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <TouchableOpacity style={styles.navButton} onPress={handlePrevMonth}>
                   <MaterialIcons name="chevron-left" size={20} color="#475569" />
@@ -542,11 +578,11 @@ export default function ProjectTimelineCalendarCard({
             </View>
 
             {/* View Mode Tabs */}
-            <View style={styles.viewModeTabs}>
-              {(['Month', 'Week', 'Day'] as const).map(mode => (
+            <View style={[styles.viewModeTabs, isMobile && styles.viewModeTabsMobile]}>
+              {(['Month', 'Week', 'Day', 'List'] as const).map(mode => (
                 <TouchableOpacity
                   key={mode}
-                  style={[styles.viewModeTabButton, viewMode === mode && styles.viewModeTabButtonActive]}
+                  style={[styles.viewModeTabButton, isMobile && styles.viewModeTabButtonMobile, viewMode === mode && styles.viewModeTabButtonActive]}
                   onPress={() => setViewMode(mode)}
                 >
                   <Text style={[styles.viewModeTabText, viewMode === mode && styles.viewModeTabTextActive]}>
@@ -558,23 +594,122 @@ export default function ProjectTimelineCalendarCard({
           </View>
 
           {/* Weekday labels */}
-          <View style={styles.weekdayLabelsRow}>
-            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-              <View key={day} style={styles.weekdayLabelCell}>
-                <Text style={styles.weekdayLabelText}>{day}</Text>
-              </View>
-            ))}
-          </View>
+          {viewMode !== 'List' && (
+            <View style={styles.weekdayLabelsRow}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                <View key={day} style={styles.weekdayLabelCell}>
+                  <Text style={styles.weekdayLabelText}>{day}</Text>
+                </View>
+              ))}
+            </View>
+          )}
 
           {/* Big Monthly grid */}
-          <View style={styles.bigCalendarGrid}>
-            {monthGrid.map((day, idx) => renderBigCalendarDay(day, idx))}
-          </View>
+          {viewMode === 'List' ? (
+            <View style={styles.listContainer}>
+              <Text style={styles.listIntroText}>
+                All events and planning items, newest first, across the selected date.
+              </Text>
+              {(() => {
+                const visibleEntries = timelineEntries.filter(entry =>
+                  Math.abs(new Date(entry.startDate).getTime() - calendarDate.getTime()) <
+                  1000 * 60 * 60 * 24 * 45
+                );
+                if (visibleEntries.length === 0) {
+                  return (
+                    <View style={styles.emptyTableState}>
+                      <Text style={styles.emptyTableText}>No events to show in this range.</Text>
+                    </View>
+                  );
+                }
+                return visibleEntries.map(entry => {
+                  const project = projects.find(p => p.id === entry.projectId);
+                  return (
+                    <TouchableOpacity
+                      key={entry.id}
+                      style={[styles.listEventRow, { borderLeftColor: entry.color }]}
+                      onPress={() => {
+                        if (entry.projectId) {
+                          onOpenProject?.(entry.projectId);
+                        }
+                      }}
+                    >
+                      <View style={styles.listDateBox}>
+                        <Text style={styles.listDateDay}>{format(new Date(entry.startDate), 'MMM')}</Text>
+                        <Text style={styles.listDateNum}>{format(new Date(entry.startDate), 'd')}</Text>
+                      </View>
+                      <View style={styles.listEventInfo}>
+                        <Text style={styles.listEventTitle} numberOfLines={1}>{entry.title}</Text>
+                        <Text style={styles.listEventMeta} numberOfLines={1}>
+                          {formatRange(entry.startDate, entry.endDate)} • {entry.laneLabel}{' '}
+                          {project ? `• ${getProjectDisplayStatus(project)}` : ''}
+                        </Text>
+                      </View>
+                      <MaterialIcons name="chevron-right" size={18} color="#94a3b8" />
+                    </TouchableOpacity>
+                  );
+                });
+              })()}
+            </View>
+          ) : viewMode === 'Day' ? (
+            <View style={styles.dayViewContainer}>
+              <View
+                style={styles.dayViewHeader}
+              >
+                <Text style={styles.dayViewTitle}>
+                  {calendarDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+                </Text>
+                <Text style={styles.dayViewCount}>
+                  {timelineEntries.filter(entry => isSameDay(new Date(entry.startDate), calendarDate)).length} events
+                </Text>
+              </View>
+              {timelineEntries
+                .filter(entry => isSameDay(new Date(entry.startDate), calendarDate))
+                .map(entry => {
+                  const project = projects.find(p => p.id === entry.projectId);
+                  return (
+                    <TouchableOpacity
+                      key={entry.id}
+                      style={[styles.dayViewEventCard, { borderLeftColor: entry.color }]}
+                      onPress={() => {
+                        if (entry.projectId) {
+                          onOpenProject?.(entry.projectId);
+                        }
+                      }}
+                    >
+                      <Text style={styles.dayViewEventTime}>
+                        {new Date(entry.startDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </Text>
+                      <View style={styles.dayViewEventBody}>
+                        <Text style={styles.dayViewEventTitle} numberOfLines={1}>{entry.title}</Text>
+                        <Text style={styles.dayViewEventMeta} numberOfLines={1}>
+                          {formatRange(entry.startDate, entry.endDate)} • {entry.laneLabel}{' '}
+                          {project ? `• ${getProjectDisplayStatus(project)}` : ''}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              {timelineEntries.filter(entry => isSameDay(new Date(entry.startDate), calendarDate)).length === 0 ? (
+                <View style={styles.emptyTableState}>
+                  <Text style={styles.emptyTableText}>No events scheduled for this day</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : (
+            <View style={styles.bigCalendarGrid}>
+              {(viewMode === 'Week' ? weekGrid : monthGrid).map((day, idx) =>
+                renderBigCalendarDay(day, idx)
+              )}
+            </View>
+          )}
 
           {/* Event List Table at the bottom */}
           <View style={styles.eventTableContainer}>
             <Text style={styles.eventTableTitle}>Event List</Text>
             
+            <ScrollView horizontal showsHorizontalScrollIndicator>
+            <View style={{ minWidth: isMobile ? 640 : '100%' }}>
             <View style={styles.tableHeader}>
               <Text style={[styles.tableHeaderCell, { flex: 1.5 }]}>Time</Text>
               <Text style={[styles.tableHeaderCell, { flex: 2 }]}>Event</Text>
@@ -621,6 +756,8 @@ export default function ProjectTimelineCalendarCard({
                 <Text style={styles.emptyTableText}>No events scheduled for this day</Text>
               </View>
             )}
+            </View>
+            </ScrollView>
           </View>
 
         </View>
@@ -628,68 +765,72 @@ export default function ProjectTimelineCalendarCard({
         {/* Right Column (Sidebar Panel) */}
         <View style={[styles.sidebarPanel, { width: isMobile ? '100%' : 300, borderLeftWidth: isMobile ? 0 : 1, borderTopWidth: isMobile ? 1 : 0 }]}>
           
-          <Text style={styles.sidebarHeading}>Calendar</Text>
+          {!hideSecondCalendar && (
+            <>
+              <Text style={styles.sidebarHeading}>Calendar</Text>
 
-          {/* Month Selector in Mini Calendar */}
-          <View style={styles.miniMonthHeader}>
-            <Text style={styles.miniMonthLabel}>{monthLabel}</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <TouchableOpacity style={styles.navButtonSmall} onPress={handlePrevMonth}>
-                <MaterialIcons name="chevron-left" size={16} color="#475569" />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.navButtonSmall} onPress={handleNextMonth}>
-                <MaterialIcons name="chevron-right" size={16} color="#475569" />
-              </TouchableOpacity>
-            </View>
-          </View>
+              {/* Month Selector in Mini Calendar */}
+              <View style={styles.miniMonthHeader}>
+                <Text style={styles.miniMonthLabel}>{monthLabel}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <TouchableOpacity style={styles.navButtonSmall} onPress={handlePrevMonth}>
+                    <MaterialIcons name="chevron-left" size={16} color="#475569" />
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.navButtonSmall} onPress={handleNextMonth}>
+                    <MaterialIcons name="chevron-right" size={16} color="#475569" />
+                  </TouchableOpacity>
+                </View>
+              </View>
 
-          {/* Mini Calendar Weekday Labels */}
-          <View style={styles.miniWeekRow}>
-            {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((day, idx) => (
-              <Text key={idx} style={styles.miniWeekLabel}>
-                {day}
-              </Text>
-            ))}
-          </View>
-
-          {/* Mini Calendar Grid */}
-          <View style={styles.miniGrid}>
-            {monthGrid.map((day, index) => {
-              const isCurrentMonth = isSameMonth(day, calendarDate);
-              const isSelected = isSameDay(day, selectedDate);
-              const hasEvents = timelineEntries.some(entry => isSameDay(new Date(entry.startDate), day));
-
-              return (
-                <TouchableOpacity
-                  key={index}
-                  style={[
-                    styles.miniDayCell,
-                    isSelected && styles.miniDayCellSelected,
-                  ]}
-                  onPress={() => {
-                    setSelectedDate(day);
-                    if (!isCurrentMonth) {
-                      setCalendarDate(day);
-                    }
-                    onAddEvent?.(day);
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.miniDayText,
-                      !isCurrentMonth && styles.miniDayTextOutside,
-                      isSelected && styles.miniDayTextSelected,
-                    ]}
-                  >
-                    {format(day, 'd')}
+              {/* Mini Calendar Weekday Labels */}
+              <View style={styles.miniWeekRow}>
+                {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((day, idx) => (
+                  <Text key={idx} style={styles.miniWeekLabel}>
+                    {day}
                   </Text>
-                  {hasEvents && !isSelected && (
-                    <View style={styles.miniEventDot} />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+                ))}
+              </View>
+
+              {/* Mini Calendar Grid */}
+              <View style={styles.miniGrid}>
+                {monthGrid.map((day, index) => {
+                  const isCurrentMonth = isSameMonth(day, calendarDate);
+                  const isSelected = isSameDay(day, selectedDate);
+                  const hasEvents = timelineEntries.some(entry => isSameDay(new Date(entry.startDate), day));
+
+                  return (
+                    <TouchableOpacity
+                      key={index}
+                      style={[
+                        styles.miniDayCell,
+                        isSelected && styles.miniDayCellSelected,
+                      ]}
+                      onPress={() => {
+                        setSelectedDate(day);
+                        if (!isCurrentMonth) {
+                          setCalendarDate(day);
+                        }
+                        onAddEvent?.(day);
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.miniDayText,
+                          !isCurrentMonth && styles.miniDayTextOutside,
+                          isSelected && styles.miniDayTextSelected,
+                        ]}
+                      >
+                        {format(day, 'd')}
+                      </Text>
+                      {hasEvents && !isSelected && (
+                        <View style={styles.miniEventDot} />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </>
+          )}
 
           {/* Upcoming Events list */}
           <View style={styles.upcomingEventsSection}>
@@ -837,16 +978,27 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 20,
   },
+  leftColumnMobile: {
+    padding: 12,
+  },
   calendarControlBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 20,
   },
+  calendarControlBarMobile: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
   bigMonthLabel: {
     fontSize: 20,
     fontWeight: '800',
     color: '#1e293b',
+  },
+  bigMonthLabelMobile: {
+    fontSize: 16,
   },
   navButton: {
     padding: 6,
@@ -863,9 +1015,18 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#f8fafc',
   },
+  viewModeTabsMobile: {
+    flexWrap: 'wrap',
+  },
   viewModeTabButton: {
     paddingHorizontal: 16,
     paddingVertical: 8,
+  },
+  viewModeTabButtonMobile: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flex: 1,
+    alignItems: 'center',
   },
   viewModeTabButtonActive: {
     backgroundColor: '#166534',
@@ -1007,6 +1168,105 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#94a3b8',
     fontWeight: '500',
+  },
+  listContainer: {
+    marginBottom: 0,
+  },
+  listIntroText: {
+    fontSize: 12,
+    color: '#64748b',
+    marginBottom: 14,
+  },
+  listEventRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderLeftWidth: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    marginBottom: 8,
+  },
+  listDateBox: {
+    width: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    backgroundColor: '#166534',
+    paddingVertical: 8,
+  },
+  listDateDay: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#d1fae5',
+    textTransform: 'uppercase',
+  },
+  listDateNum: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  listEventInfo: {
+    flex: 1,
+  },
+  listEventTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  listEventMeta: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 3,
+  },
+  dayViewContainer: {
+    marginBottom: 0,
+  },
+  dayViewHeader: {
+    marginBottom: 16,
+  },
+  dayViewTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#1e293b',
+  },
+  dayViewCount: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  dayViewEventCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    borderLeftWidth: 4,
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginBottom: 8,
+  },
+  dayViewEventTime: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+    width: 64,
+  },
+  dayViewEventBody: {
+    flex: 1,
+  },
+  dayViewEventTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  dayViewEventMeta: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 3,
   },
   sidebarPanel: {
     padding: 20,

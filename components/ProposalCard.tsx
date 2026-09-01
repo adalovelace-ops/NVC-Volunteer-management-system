@@ -10,6 +10,8 @@ interface ProposalCardProps {
   onPress?: () => void;
   onApprove?: (application: PartnerProjectApplication) => void;
   onReject?: (application: PartnerProjectApplication, notes: string) => void;
+  onRequestRevision?: (application: PartnerProjectApplication, notes: string) => void;
+  onEdit?: (application: PartnerProjectApplication) => void;
   compact?: boolean;
   isAdmin?: boolean;
   isVolunteer?: boolean;
@@ -19,6 +21,9 @@ const getStatusColor = (status: string) => {
   switch (status) {
     case 'Approved': return '#166534';
     case 'Rejected': return '#dc2626';
+    case 'Revision Requested':
+    case 'Needs Revision': return '#d97706';
+    case 'Resubmitted': return '#2563eb';
     case 'Pending':
     default: return '#f59e0b';
   }
@@ -28,22 +33,28 @@ const getStatusIcon = (status: string) => {
   switch (status) {
     case 'Approved': return 'check-circle';
     case 'Rejected': return 'cancel';
+    case 'Revision Requested':
+    case 'Needs Revision': return 'edit-note';
+    case 'Resubmitted': return 'update';
     case 'Pending':
     default: return 'schedule';
   }
 };
 
-export default function ProposalCard({ application, projectTitle, onPress, onApprove, onReject, compact = false, isAdmin = false, isVolunteer = false }: ProposalCardProps) {
+export default function ProposalCard({ application, projectTitle, onPress, onApprove, onReject, onRequestRevision, onEdit, compact = false, isAdmin = false, isVolunteer = false }: ProposalCardProps) {
   const navigation = useNavigation<any>();
   const [showModal, setShowModal] = useState(false);
   const [showRejectInput, setShowRejectInput] = useState(false);
+  const [showRevisionInput, setShowRevisionInput] = useState(false);
   const [rejectionNotes, setRejectionNotes] = useState('');
+  const [revisionNotes, setRevisionNotes] = useState('');
   const [isActing, setIsActing] = useState(false);
 
   const statusColor = getStatusColor(application.status);
   const statusIcon = getStatusIcon(application.status);
   const proposalDetails: Partial<PartnerProjectProposalDetails> = application.proposalDetails || {};
-  const isPending = application.status === 'Pending';
+  const isReviewable = application.status === 'Pending' || application.status === 'Resubmitted';
+  const isRevisionRequested = application.status === 'Revision Requested' || application.status === 'Needs Revision';
 
   const handlePress = () => {
     if (onPress) {
@@ -81,11 +92,42 @@ export default function ProposalCard({ application, projectTitle, onPress, onApp
     }
   };
 
+  const handleRequestRevision = async () => {
+    if (!onRequestRevision) return;
+    if (!revisionNotes.trim()) {
+      Alert.alert('Required', 'Please specify the changes or revisions requested.');
+      return;
+    }
+    setIsActing(true);
+    try {
+      await onRequestRevision(application, revisionNotes.trim());
+      setShowModal(false);
+      setShowRevisionInput(false);
+      setRevisionNotes('');
+    } finally {
+      setIsActing(false);
+    }
+  };
+
+  const handleEditProposal = () => {
+    setShowModal(false);
+    if (onEdit) {
+      onEdit(application);
+    } else {
+      navigation.navigate('Messages', {
+        projectId: application.projectId,
+        proposalId: application.id,
+        newProposalModule: proposalDetails.requestedProgramModule,
+        newProposalProjectId: proposalDetails.targetProjectId || application.projectId,
+      });
+    }
+  };
+
   return (
     <>
       <TouchableOpacity
         style={[styles.card, compact && styles.cardCompact]}
-        onPress={handlePress}
+        onPress={() => setShowModal(true)}
         activeOpacity={0.7}
       >
         <View style={styles.cardContent}>
@@ -104,7 +146,7 @@ export default function ProposalCard({ application, projectTitle, onPress, onApp
         visible={showModal}
         animationType="slide"
         transparent={true}
-        onRequestClose={() => { setShowModal(false); setShowRejectInput(false); setRejectionNotes(''); }}
+        onRequestClose={() => { setShowModal(false); setShowRejectInput(false); setShowRevisionInput(false); setRejectionNotes(''); setRevisionNotes(''); }}
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalContainer}>
@@ -113,19 +155,17 @@ export default function ProposalCard({ application, projectTitle, onPress, onApp
                 <Text style={styles.modalTitle}>{isVolunteer ? 'Task Details' : 'Proposal Details'}</Text>
                 <Text style={styles.modalSubtitle}>{application.partnerName}</Text>
               </View>
-              <TouchableOpacity onPress={() => { setShowModal(false); setShowRejectInput(false); setRejectionNotes(''); }} style={styles.closeButton}>
+              <TouchableOpacity onPress={() => { setShowModal(false); setShowRejectInput(false); setShowRevisionInput(false); setRejectionNotes(''); setRevisionNotes(''); }} style={styles.closeButton}>
                 <MaterialIcons name="close" size={24} color="#64748b" />
               </TouchableOpacity>
             </View>
 
             <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
-              {/* Status Badge */}
               <View style={[styles.statusBadge, { backgroundColor: `${statusColor}15` }]}>
                 <MaterialIcons name={statusIcon as any} size={20} color={statusColor} />
                 <Text style={[styles.statusText, { color: statusColor }]}>Status: {application.status}</Text>
               </View>
 
-              {/* Core Details */}
               <View style={styles.detailGrid}>
                 <View style={styles.detailGridItem}>
                   <Text style={styles.detailLabel}>Project Title</Text>
@@ -174,22 +214,73 @@ export default function ProposalCard({ application, projectTitle, onPress, onApp
                 <Text style={styles.detailValue}>{proposalDetails.expectedDeliverables || 'N/A'}</Text>
               </View>
 
-              <View style={styles.detailSection}>
-                <Text style={styles.detailLabel}>Submitted On</Text>
-                <Text style={styles.detailValue}>
-                  {new Date(application.requestedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                </Text>
-              </View>
-
               {application.reviewNotes ? (
-                <View style={[styles.detailSection, styles.reviewNotesBox]}>
-                  <Text style={styles.detailLabel}>Review Notes</Text>
-                  <Text style={styles.detailValue}>{application.reviewNotes}</Text>
+                <View style={[
+                  styles.detailSection,
+                  styles.reviewNotesBox,
+                  application.status === 'Rejected' && { backgroundColor: '#fef2f2', borderColor: '#fecaca' },
+                  isRevisionRequested && { backgroundColor: '#fffbeb', borderColor: '#fed7aa' },
+                ]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <MaterialIcons
+                      name={application.status === 'Rejected' ? 'error-outline' : 'feedback'}
+                      size={16}
+                      color={application.status === 'Rejected' ? '#dc2626' : '#d97706'}
+                    />
+                    <Text style={[
+                      styles.detailLabel,
+                      { marginBottom: 0 },
+                      application.status === 'Rejected' && { color: '#dc2626' },
+                      isRevisionRequested && { color: '#b45309' },
+                    ]}>
+                      {application.status === 'Rejected' ? 'Reason for Rejection' : 'Admin Feedback / Review Notes'}
+                    </Text>
+                  </View>
+                  <Text style={[
+                    styles.detailValue,
+                    application.status === 'Rejected' && { color: '#991b1b' },
+                    isRevisionRequested && { color: '#92400e' },
+                  ]}>
+                    {application.reviewNotes}
+                  </Text>
                 </View>
               ) : null}
 
-              {/* Admin Actions */}
-              {isAdmin && isPending && onApprove && onReject && (
+              {(isRevisionRequested || application.status === 'Rejected') && !isAdmin && (
+                <View style={{ marginTop: 16 }}>
+                  <TouchableOpacity
+                    style={[
+                      styles.approveBtn,
+                      {
+                        width: '100%',
+                        justifyContent: 'center',
+                        backgroundColor: application.status === 'Rejected' ? '#dc2626' : '#d97706',
+                      },
+                    ]}
+                    onPress={handleEditProposal}
+                  >
+                    <MaterialIcons name="edit" size={18} color="#fff" style={{ marginRight: 6 }} />
+                    <Text style={styles.approveBtnText}>Edit & Resubmit Proposal</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {application.status === 'Approved' && (
+                <View style={{ marginTop: 16 }}>
+                  <TouchableOpacity
+                    style={[styles.approveBtn, { width: '100%', justifyContent: 'center', backgroundColor: '#166534' }]}
+                    onPress={() => {
+                      setShowModal(false);
+                      navigation.navigate('Projects', { projectId: application.projectId });
+                    }}
+                  >
+                    <MaterialIcons name="folder-special" size={18} color="#fff" style={{ marginRight: 6 }} />
+                    <Text style={styles.approveBtnText}>View Project Workspace</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {isAdmin && isReviewable && onApprove && (
                 <View style={styles.actionsSection}>
                   {showRejectInput ? (
                     <View style={styles.rejectInputWrap}>
@@ -220,16 +311,57 @@ export default function ProposalCard({ application, projectTitle, onPress, onApp
                         </TouchableOpacity>
                       </View>
                     </View>
+                  ) : showRevisionInput ? (
+                    <View style={styles.rejectInputWrap}>
+                      <Text style={styles.rejectInputLabel}>Requested Changes / Revision Notes</Text>
+                      <TextInput
+                        style={styles.rejectInput}
+                        placeholder="Specify what the partner needs to revise..."
+                        value={revisionNotes}
+                        onChangeText={setRevisionNotes}
+                        multiline
+                        numberOfLines={3}
+                        textAlignVertical="top"
+                      />
+                      <View style={styles.rejectActions}>
+                        <TouchableOpacity
+                          style={styles.cancelRejectBtn}
+                          onPress={() => { setShowRevisionInput(false); setRevisionNotes(''); }}
+                        >
+                          <Text style={styles.cancelRejectText}>Cancel</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.confirmRejectBtn, { backgroundColor: '#d97706' }, isActing && styles.btnDisabled]}
+                          onPress={handleRequestRevision}
+                          disabled={isActing}
+                        >
+                          <MaterialIcons name="edit-note" size={16} color="#fff" />
+                          <Text style={styles.confirmRejectText}>{isActing ? 'Submitting...' : 'Send Revision Request'}</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
                   ) : (
                     <View style={styles.actionButtons}>
-                      <TouchableOpacity
-                        style={[styles.rejectBtn, isActing && styles.btnDisabled]}
-                        onPress={() => setShowRejectInput(true)}
-                        disabled={isActing}
-                      >
-                        <MaterialIcons name="cancel" size={18} color="#dc2626" />
-                        <Text style={styles.rejectBtnText}>Reject</Text>
-                      </TouchableOpacity>
+                      {onReject && (
+                        <TouchableOpacity
+                          style={[styles.rejectBtn, isActing && styles.btnDisabled]}
+                          onPress={() => { setShowRejectInput(true); setShowRevisionInput(false); }}
+                          disabled={isActing}
+                        >
+                          <MaterialIcons name="cancel" size={18} color="#dc2626" />
+                          <Text style={styles.rejectBtnText}>Reject</Text>
+                        </TouchableOpacity>
+                      )}
+                      {onRequestRevision && (
+                        <TouchableOpacity
+                          style={[styles.rejectBtn, { borderColor: '#fed7aa', backgroundColor: '#fffbeb' }, isActing && styles.btnDisabled]}
+                          onPress={() => { setShowRevisionInput(true); setShowRejectInput(false); }}
+                          disabled={isActing}
+                        >
+                          <MaterialIcons name="edit-note" size={18} color="#d97706" />
+                          <Text style={[styles.rejectBtnText, { color: '#d97706' }]}>Request Revision</Text>
+                        </TouchableOpacity>
+                      )}
                       <TouchableOpacity
                         style={[styles.approveBtn, isActing && styles.btnDisabled]}
                         onPress={handleApprove}

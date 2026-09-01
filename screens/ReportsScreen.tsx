@@ -32,6 +32,7 @@ import AdminReportsDashboard from '../components/AdminReportsDashboard';
 import VolunteerReportsDashboard, {
   PartnerReportsDashboard,
 } from '../components/VolunteerReportsDashboard';
+import AllReportsView from '../components/AllReportsView';
 
 export interface SubmittedReport {
   id: string;
@@ -459,6 +460,7 @@ export default function ReportsScreen({ navigation, route }: any) {
   const [volunteerJoinRecords, setVolunteerJoinRecords] = useState<VolunteerProjectJoinRecord[]>([]);
   const [selectedReportType, setSelectedReportType] = useState<'all' | 'volunteer' | 'partner' | null>(null);
   const [showFilteredReports, setShowFilteredReports] = useState(false);
+  const [activeTopTab, setActiveTopTab] = useState<'all' | 'volunteer' | 'partner'>('all');
   const reportsLoadInFlightRef = useRef<Promise<void> | null>(null);
   const reportsReloadQueuedRef = useRef(false);
   const hasLoadedReportsRef = useRef(false);
@@ -546,11 +548,11 @@ export default function ReportsScreen({ navigation, route }: any) {
         user.role === 'admin' || user.role === 'partner'
           ? getAllPartnerReports()
           : getImpactHubReportsByUser(user.id),
-        user.role === 'partner' ? getAllVolunteerTimeLogs() : Promise.resolve(null),
-        user.role === 'partner' ? getAllVolunteerProjectJoinRecords() : Promise.resolve(null),
+        user.role === 'admin' || user.role === 'partner' ? getAllVolunteerTimeLogs() : Promise.resolve(null),
+        user.role === 'admin' || user.role === 'partner' ? getAllVolunteerProjectJoinRecords() : Promise.resolve(null),
       ]);
 
-      if (user.role === 'partner') {
+      if (user.role === 'partner' || user.role === 'admin') {
         setVolunteerTimeLogs(allTimeLogs || []);
         setVolunteerJoinRecords(allJoinRecords || []);
       }
@@ -913,31 +915,94 @@ export default function ReportsScreen({ navigation, route }: any) {
     console.log(`View all clicked for: ${reportType || 'analytics'}`);
   }, []);
 
-  const dashboard =
-    user?.role === 'admin' ? (
-      <AdminReportsDashboard
-        reports={userReports}
-        projects={projects}
-        volunteers={volunteers}
-        onUploadReport={handleOpenUploadModal}
-        onViewReport={handleViewReport}
-        onViewAnalytics={handleViewAnalytics}
-        loading={loading}
-        onRefresh={onRefresh}
-        refreshing={refreshing}
-      />
-    ) : user?.role === 'partner' ? (
-      <PartnerReportsDashboard
-        reports={userReports}
-        projects={partnerAcceptedProjects}
-        onUploadReport={handleOpenUploadModal}
-        onViewReport={handleViewReport}
-        loading={loading}
-        onRefresh={onRefresh}
-        refreshing={refreshing}
-        projectSummaries={partnerProjectSummaries}
-      />
-    ) : (
+  const dashboard = (() => {
+    if (activeTopTab === 'all') {
+      return <AllReportsView reports={reports} projects={projects} volunteerTimeLogs={volunteerTimeLogs} volunteers={volunteers} onViewReport={handleViewReport} reportType="all" />;
+    }
+    if (activeTopTab === 'volunteer') {
+      if (user?.role === 'admin') {
+        const volunteerOnly = reports.filter(r => r.submitterRole === 'volunteer');
+        return (
+          <VolunteerReportsDashboard
+            reports={volunteerOnly}
+            projects={projects}
+            volunteerTimeLogs={volunteerTimeLogs}
+            volunteerJoinRecords={volunteerJoinRecords}
+            onUploadReport={handleOpenUploadModal}
+            onViewReport={handleViewReport}
+            loading={loading}
+            onRefresh={onRefresh}
+            refreshing={refreshing}
+            isAdminView={true}
+            volunteers={volunteers}
+          />
+        );
+      }
+      return (
+        <VolunteerReportsDashboard
+          reports={userReports}
+          projects={volunteerEventProjects}
+          volunteerTimeLogs={volunteerTimeLogs}
+          volunteerJoinRecords={volunteerJoinRecords}
+          onUploadReport={handleOpenUploadModal}
+          onViewReport={handleViewReport}
+          loading={loading}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+          volunteers={volunteers}
+        />
+      );
+    }
+    if (activeTopTab === 'partner') {
+      const partnerOnly = reports.filter(r => r.submitterRole === 'partner');
+      return (
+        <PartnerReportsDashboard
+          reports={user?.role === 'admin' ? (partnerOnly.length > 0 ? partnerOnly : reports) : userReports}
+          projects={user?.role === 'admin' ? projects : partnerAcceptedProjects}
+          volunteerTimeLogs={volunteerTimeLogs}
+          volunteerJoinRecords={volunteerJoinRecords}
+          onUploadReport={handleOpenUploadModal}
+          onViewReport={handleViewReport}
+          loading={loading}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+          projectSummaries={partnerProjectSummaries}
+          isAdminView={user?.role === 'admin'}
+          volunteers={volunteers}
+        />
+      );
+    }
+    // fallback by role (should not reach due to tabs)
+    if (user?.role === 'admin') {
+      return (
+        <AdminReportsDashboard
+          reports={userReports}
+          projects={projects}
+          volunteers={volunteers}
+          onUploadReport={handleOpenUploadModal}
+          onViewReport={handleViewReport}
+          onViewAnalytics={handleViewAnalytics}
+          loading={loading}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+        />
+      );
+    }
+    if (user?.role === 'partner') {
+      return (
+        <PartnerReportsDashboard
+          reports={userReports}
+          projects={partnerAcceptedProjects}
+          onUploadReport={handleOpenUploadModal}
+          onViewReport={handleViewReport}
+          loading={loading}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+          projectSummaries={partnerProjectSummaries}
+        />
+      );
+    }
+    return (
       <VolunteerReportsDashboard
         reports={userReports}
         projects={volunteerEventProjects}
@@ -948,11 +1013,29 @@ export default function ReportsScreen({ navigation, route }: any) {
         loading={loading}
         onRefresh={onRefresh}
         refreshing={refreshing}
+        volunteers={volunteers}
       />
     );
+  })();
+
+  const renderTopTabs = () => (
+    <View style={styles.topTabs}>
+      {(['all', 'volunteer', 'partner'] as const).map(k => {
+        const label = k === 'all' ? 'All Reports' : k === 'volunteer' ? 'Volunteer Reports' : 'Partner Reports';
+        const active = activeTopTab === k;
+        return (
+          <TouchableOpacity key={k} style={[styles.topTab, active && styles.topTabActive]} onPress={() => setActiveTopTab(k)} activeOpacity={0.8}>
+            <Text style={[styles.topTabText, active && styles.topTabTextActive]}>{label}</Text>
+            {active ? <View style={styles.topTabUnderline} /> : null}
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
 
   return (
     <>
+      {renderTopTabs()}
       {dashboard}
       <ReportUploadModal
         visible={showUploadModal}
@@ -1140,5 +1223,36 @@ const styles = StyleSheet.create({
   emptyStateText: {
     fontSize: 15,
     color: '#64748b',
+  },
+  topTabs: {
+    flexDirection: 'row',
+    gap: 24,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E7E5E4',
+  },
+  topTab: {
+    paddingBottom: 12,
+    alignItems: 'center',
+  },
+  topTabActive: {},
+  topTabText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#6B7280',
+  },
+  topTabTextActive: {
+    color: '#8B5A2B',
+  },
+  topTabUnderline: {
+    position: 'absolute',
+    bottom: -1,
+    left: 0,
+    right: 0,
+    height: 2,
+    backgroundColor: '#C9A86A',
+    borderRadius: 1,
   },
 });

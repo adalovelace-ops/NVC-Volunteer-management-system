@@ -95,7 +95,12 @@ type VolunteerImpactMapProps = {
 };
 
 function getWebGoogleMapsApiKey() {
-  return process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '';
+  return (
+    process.env.GOOGLE_MAPS_WEB_API_KEY ||
+    process.env.VITE_GOOGLE_MAPS_WEB_API_KEY ||
+    process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY ||
+    'AIzaSyDrZWSM9FJ7pURqvnd2lNqK5y0I084kupE'
+  );
 }
 
 function getCurrentWebOrigin() {
@@ -291,7 +296,13 @@ export default function VolunteerImpactMap({
   const displayProjects = selectedStatus
     ? scopedProjects.filter(project => {
         const status = getProjectDisplayStatus(project) as any;
-        return selectedStatus === 'Planned' ? status === 'Planning' || status === 'Planned' : status === selectedStatus;
+        if (selectedStatus === 'Planning') {
+          return status === 'Planning' || status === 'Planned' || (project as any).proposalStage;
+        }
+        if (selectedStatus === 'Active') {
+          return status === 'In Progress' || status === 'Active' || project.status === 'Approved';
+        }
+        return status === selectedStatus;
       })
     : scopedProjects;
 
@@ -590,9 +601,11 @@ export default function VolunteerImpactMap({
   const accountIconName = getAccountIconName(selectedMapStyleKey);
 
   const statusLegend = [
-    { label: 'In Progress', color: '#5b9b57' }, { label: 'Planned', color: '#5f8fdc' },
-    { label: 'Completed', color: '#8e58d6' }, { label: 'On Hold', color: '#e7a23d' },
-    { label: 'Cancelled', color: '#b95258' },
+    { key: 'Planning', label: 'Planning', color: '#2563EB', desc: 'when on proposal stage' },
+    { key: 'Active', label: 'Active', color: '#16A34A', desc: 'approved' },
+    { key: 'On Hold', label: 'On Hold', color: '#D97706', desc: 'manual override admin' },
+    { key: 'Completed', label: 'Completed', color: '#7C3AED', desc: 'none after date' },
+    { key: 'Cancelled', label: 'Cancelled', color: '#DC2626', desc: 'manual override admin' },
   ];
 
   return (
@@ -695,15 +708,56 @@ export default function VolunteerImpactMap({
         {dashboardVariant ? (
           <View style={styles.mapLegend}>
             <Text style={styles.legendTitle}>Project Status</Text>
-            {statusLegend.map(status => <TouchableOpacity key={status.label} style={[styles.legendRow, selectedStatus === status.label && styles.legendRowActive]} onPress={() => setSelectedStatus(current => current === status.label ? null : status.label)}>
-              <MaterialIcons name="location-on" size={24} color={status.color} />
-              <Text style={styles.legendLabel}>{status.label}</Text>
-              {selectedStatus === status.label ? <MaterialIcons name="check" size={16} color={status.color} /> : null}
-            </TouchableOpacity>)}
+            {statusLegend.map(status => {
+              const count = scopedProjects.filter(p => {
+                const s = getProjectDisplayStatus(p) as any;
+                if (status.key === 'Planning') return s === 'Planning' || s === 'Planned' || (p as any).proposalStage;
+                if (status.key === 'Active') return s === 'In Progress' || s === 'Active' || p.status === 'Approved';
+                return s === status.key;
+              }).length;
+
+              return (
+                <TouchableOpacity
+                  key={status.key}
+                  style={[styles.legendRow, selectedStatus === status.key && styles.legendRowActive]}
+                  onPress={() => setSelectedStatus(current => (current === status.key ? null : status.key))}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                    <MaterialIcons name="location-on" size={20} color={status.color} />
+                    <Text style={styles.legendLabel}>{status.label}</Text>
+                  </View>
+                  <View
+                    style={{
+                      backgroundColor: selectedStatus === status.key ? status.color : '#f1f5f9',
+                      paddingHorizontal: 6,
+                      paddingVertical: 1,
+                      borderRadius: 10,
+                      minWidth: 20,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        fontWeight: '800',
+                        color: selectedStatus === status.key ? '#ffffff' : '#475569',
+                      }}
+                    >
+                      {count}
+                    </Text>
+                  </View>
+                  {selectedStatus === status.key ? (
+                    <MaterialIcons name="check" size={14} color={status.color} style={{ marginLeft: 4 }} />
+                  ) : null}
+                </TouchableOpacity>
+              );
+            })}
             <View style={styles.legendDivider} />
             <Text style={styles.legendTotalLabel}>Total Projects</Text>
             <Text style={styles.legendTotal}>{displayProjects.length}</Text>
-            <TouchableOpacity onPress={() => setSelectedStatus(null)}><Text style={styles.legendFootnote}>{selectedStatus ? 'Clear filter' : 'Across Philippines'}</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setSelectedStatus(null)}>
+              <Text style={styles.legendFootnote}>{selectedStatus ? 'Clear filter' : 'Across Philippines'}</Text>
+            </TouchableOpacity>
           </View>
         ) : null}
         {mapError ? (

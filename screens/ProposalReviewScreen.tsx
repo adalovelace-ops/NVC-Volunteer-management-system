@@ -22,6 +22,7 @@ import {
 } from '../models/storage';
 import { useAuth } from '../contexts/AuthContext';
 import InlineLoadError from '../components/InlineLoadError';
+import ProposalCard from '../components/ProposalCard';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
 
 export default function ProposalReviewScreen({ navigation }: any) {
@@ -163,106 +164,6 @@ export default function ProposalReviewScreen({ navigation }: any) {
     setShowModal(true);
   };
 
-  const ProposalCard = ({
-    proposal,
-    onApprove,
-    onReject,
-  }: {
-    proposal: PartnerProjectApplication;
-    onApprove: () => void;
-    onReject: () => void;
-  }) => {
-    const details = proposal.proposalDetails;
-
-    return (
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={styles.cardTitle}>
-            <Text style={styles.cardName}>{proposal.partnerName}</Text>
-            <Text style={styles.cardMeta}>
-              {details?.proposedTitle || details?.targetProjectTitle || getProjectTitle(proposal.projectId)}
-            </Text>
-          </View>
-          <View
-            style={[
-              styles.statusBadge,
-              proposal.status === 'Approved'
-                ? styles.statusApproved
-                : proposal.status === 'Rejected'
-                ? styles.statusRejected
-                : styles.statusPending,
-            ]}
-          >
-            <Text style={styles.statusText}>{proposal.status}</Text>
-          </View>
-        </View>
-
-        <View style={styles.cardContent}>
-          <Text style={styles.cardLabel}>Email:</Text>
-          <Text style={styles.cardValue}>{proposal.partnerEmail}</Text>
-
-          {details?.proposedTitle && (
-            <>
-              <Text style={styles.cardLabel}>Proposed Title:</Text>
-              <Text style={styles.cardValue}>{details.proposedTitle}</Text>
-            </>
-          )}
-
-          {details?.proposedDescription && (
-            <>
-              <Text style={styles.cardLabel}>Description:</Text>
-              <Text style={styles.cardValue}>{details.proposedDescription}</Text>
-            </>
-          )}
-
-          {details?.proposedStartDate && (
-            <>
-              <Text style={styles.cardLabel}>Start Date:</Text>
-              <Text style={styles.cardValue}>{format(new Date(details.proposedStartDate), 'MMM d, yyyy')}</Text>
-            </>
-          )}
-
-          {details?.proposedEndDate && (
-            <>
-              <Text style={styles.cardLabel}>End Date:</Text>
-              <Text style={styles.cardValue}>{format(new Date(details.proposedEndDate), 'MMM d, yyyy')}</Text>
-            </>
-          )}
-
-          {details?.proposedVolunteersNeeded && (
-            <>
-              <Text style={styles.cardLabel}>Volunteers Needed:</Text>
-              <Text style={styles.cardValue}>{details.proposedVolunteersNeeded}</Text>
-            </>
-          )}
-
-          <Text style={styles.cardLabel}>Submitted:</Text>
-          <Text style={styles.cardValue}>{format(new Date(proposal.requestedAt), 'MMM d, yyyy h:mm a')}</Text>
-
-          {proposal.reviewNotes && (
-            <>
-              <Text style={styles.cardLabel}>Review Notes:</Text>
-              <Text style={styles.cardValue}>{proposal.reviewNotes}</Text>
-            </>
-          )}
-        </View>
-
-        {proposal.status === 'Pending' && (
-          <View style={styles.cardActions}>
-            <TouchableOpacity style={[styles.btn, styles.btnApprove]} onPress={onApprove}>
-              <MaterialIcons name="check-circle" size={18} color="#fff" />
-              <Text style={styles.btnText}>Approve</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.btn, styles.btnReject]} onPress={onReject}>
-              <MaterialIcons name="cancel" size={18} color="#fff" />
-              <Text style={styles.btnText}>Reject</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
-    );
-  };
-
   if (!isAdmin) {
     return (
       <View style={styles.centerContainer}>
@@ -299,7 +200,8 @@ export default function ProposalReviewScreen({ navigation }: any) {
             {proposalsPending.map(proposal => (
               <ProposalCard
                 key={proposal.id}
-                proposal={proposal}
+                application={proposal}
+                isAdmin={isAdmin}
                 onApprove={() => openApprovalModal(proposal)}
                 onReject={() => openRejectionModal(proposal)}
               />
@@ -314,7 +216,7 @@ export default function ProposalReviewScreen({ navigation }: any) {
               <Text style={styles.sectionTitle}>Approved ({proposalsApproved.length})</Text>
             </View>
             {proposalsApproved.map(proposal => (
-              <ProposalCard key={proposal.id} proposal={proposal} onApprove={() => {}} onReject={() => {}} />
+              <ProposalCard key={proposal.id} application={proposal} isAdmin={isAdmin} />
             ))}
           </View>
         )}
@@ -326,7 +228,7 @@ export default function ProposalReviewScreen({ navigation }: any) {
               <Text style={styles.sectionTitle}>Rejected ({proposalsRejected.length})</Text>
             </View>
             {proposalsRejected.map(proposal => (
-              <ProposalCard key={proposal.id} proposal={proposal} onApprove={() => {}} onReject={() => {}} />
+              <ProposalCard key={proposal.id} application={proposal} isAdmin={isAdmin} />
             ))}
           </View>
         )}

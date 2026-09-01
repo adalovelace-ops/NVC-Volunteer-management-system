@@ -1236,6 +1236,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   title: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 44,
     lineHeight: 46,
     fontWeight: '700',
@@ -1243,6 +1244,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     marginTop: 4,
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 12,
     color: '#5f687a',
   },
@@ -1257,6 +1259,7 @@ const styles = StyleSheet.create({
   },
   uploadButtonText: {
     color: '#fff',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1270,6 +1273,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   tabItem: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 32,
     color: '#3f4655',
     fontWeight: '500',
@@ -1281,6 +1285,7 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   tabDivider: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 24,
     color: '#9aa2b1',
     fontWeight: '700',
@@ -1293,6 +1298,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   kpiText: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 12,
     color: '#475069',
     fontWeight: '600',
@@ -1349,16 +1355,19 @@ const styles = StyleSheet.create({
   },
   tableActionButtonText: {
     color: '#fff',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 12,
     fontWeight: '800',
   },
   tableTitle: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 18,
     fontWeight: '800',
     color: '#233046',
   },
   tableSubtitle: {
     marginTop: 2,
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 12,
     color: '#617086',
   },
@@ -1367,6 +1376,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   eventSelectorLabel: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 11,
     fontWeight: '800',
     color: '#51607b',
@@ -1392,6 +1402,7 @@ const styles = StyleSheet.create({
     borderColor: '#166534',
   },
   eventSelectorChipText: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 12,
     fontWeight: '700',
     color: '#40506a',
@@ -1400,11 +1411,13 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   selectedEventHint: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 11,
     color: '#617086',
     fontWeight: '600',
   },
   tableCount: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 12,
     fontWeight: '700',
     color: '#40506a',
@@ -1422,12 +1435,14 @@ const styles = StyleSheet.create({
   },
   tableEmptyTitle: {
     marginTop: 8,
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 15,
     fontWeight: '800',
     color: '#344055',
   },
   tableEmptyText: {
     marginTop: 4,
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 11,
     color: '#617086',
   },
@@ -1451,12 +1466,14 @@ const styles = StyleSheet.create({
   tableCell: {
     flex: 1,
     paddingRight: 10,
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 12,
     color: '#2f3a4c',
     fontWeight: '600',
   },
   tableHeaderCell: {
     color: '#51607b',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 11,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
@@ -1477,6 +1494,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#d9f2de',
   },
   statusCellText: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 11,
     fontWeight: '800',
     color: '#245c34',
@@ -1493,6 +1511,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   bigCount: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 78,
     lineHeight: 78,
     color: '#fff',
@@ -1504,6 +1523,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   columnLabel: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 32,
     lineHeight: 34,
     color: '#fff',
@@ -1512,6 +1532,7 @@ const styles = StyleSheet.create({
   columnSubLabel: {
     marginTop: 2,
     color: 'rgba(255,255,255,0.92)',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1524,6 +1545,7 @@ const styles = StyleSheet.create({
   },
   viewAllText: {
     color: '#fff',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 11,
     fontWeight: '700',
   },
@@ -1532,6 +1554,7 @@ const styles = StyleSheet.create({
   },
   filterHeading: {
     color: '#fff',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 13,
     fontWeight: '700',
     marginBottom: 6,
@@ -1548,6 +1571,7 @@ const styles = StyleSheet.create({
   },
   chipText: {
     color: '#fff',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 11,
     fontWeight: '700',
   },
@@ -1569,12 +1593,14 @@ const styles = StyleSheet.create({
   },
   drilldownBackText: {
     color: '#fff',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 11,
     fontWeight: '800',
   },
   drilldownTitle: {
     flex: 1,
     color: '#fff',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 12,
     fontWeight: '800',
   },
@@ -1597,28 +1623,33 @@ const styles = StyleSheet.create({
   reportTitle: {
     flex: 1,
     color: '#fff',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 14,
     fontWeight: '700',
   },
   reportDate: {
     color: 'rgba(255,255,255,0.86)',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 11,
     fontWeight: '700',
   },
   reportMeta: {
     color: 'rgba(255,255,255,0.88)',
     marginTop: 4,
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 11,
   },
   reportSubtitle: {
     color: '#fff',
     marginTop: 6,
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 12,
     fontWeight: '700',
   },
   reportCountText: {
     color: 'rgba(255,255,255,0.86)',
     marginTop: 4,
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 11,
     fontWeight: '600',
   },
@@ -1644,23 +1675,27 @@ const styles = StyleSheet.create({
   accountReportEvent: {
     flex: 1,
     color: '#fff',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 11,
     fontWeight: '700',
   },
   accountReportDate: {
     color: 'rgba(255,255,255,0.82)',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 10,
     fontWeight: '700',
   },
   accountReportTitle: {
     marginTop: 5,
     color: '#fff',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 12,
     fontWeight: '700',
   },
   accountReportType: {
     marginTop: 3,
     color: 'rgba(255,255,255,0.84)',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 10,
     textTransform: 'capitalize',
   },
@@ -1678,6 +1713,7 @@ const styles = StyleSheet.create({
   progressText: {
     marginTop: 5,
     color: 'rgba(255,255,255,0.92)',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 10,
     fontWeight: '700',
   },
@@ -1689,6 +1725,7 @@ const styles = StyleSheet.create({
   },
   emptyCardTitle: {
     color: '#fff',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 15,
     fontWeight: '700',
     marginTop: 8,
@@ -1696,6 +1733,7 @@ const styles = StyleSheet.create({
   emptyCardText: {
     marginTop: 4,
     color: 'rgba(255,255,255,0.9)',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontSize: 11,
     textAlign: 'center',
   },

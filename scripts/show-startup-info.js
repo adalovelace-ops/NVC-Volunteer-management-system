@@ -40,9 +40,8 @@ async function generateQRCode(url) {
 
 async function showInfo() {
   const lanIp = getLanIp();
-  const webUrl = `exp://${lanIp}:8081`;
-  const webUrl = 'http://localhost:8081';
-  const backendUrl = 'http://localhost:8000';
+  const webUrl = `http://${lanIp}:8081`;
+  const backendUrl = `http://${lanIp}:8000`;
   const apiLanUrl = `http://${lanIp}:8000`;
 
   console.log('\x1b[36m╔═══════════════════════════════════════════════════════════╗\x1b[0m');
@@ -84,7 +83,7 @@ async function showInfo() {
   console.log('\n');
 
   console.log('\x1b[32m✨ QUICK TIPS:\x1b[0m');
-  console.log('   • Web: Open http://localhost:8081 in your browser');
+  console.log('   • Web: Open system web URL in your browser');
   console.log('   • Mobile: Scan QR code with mobile web app');
   console.log('   • LAN: Use ' + lanIp + ' for mobile API access');
   console.log('   • Press "w" in dev server for web, "a" for Android, "i" for iOS');

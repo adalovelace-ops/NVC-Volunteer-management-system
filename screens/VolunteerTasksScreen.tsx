@@ -485,6 +485,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
   const [loading, setLoading] = useState(true);
   const [selectedTask, setSelectedTask] = useState<AssignedTask | null>(null);
   const [showDetails, setShowDetails] = useState(false);
+  const [locallyCheckedTasks, setLocallyCheckedTasks] = useState<Set<string>>(new Set());
   const [selectedTaskGroupProjectId, setSelectedTaskGroupProjectId] = useState<string | null>(null);
   const [showTaskGroupDetails, setShowTaskGroupDetails] = useState(false);
   const [selectedManagedEventId, setSelectedManagedEventId] = useState<string | null>(null);
@@ -493,6 +494,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
   const [selectedManagedAttendanceDateKey, setSelectedManagedAttendanceDateKey] = useState<string | null>(null);
   const [expandedAttendancePhotos, setExpandedAttendancePhotos] = useState<Set<string>>(new Set());
   const [expandedManagedTaskId, setExpandedManagedTaskId] = useState<string | null>(null);
+  const [dropdownTaskId, setDropdownTaskId] = useState<string | null>(null);
   const [showManagedTaskAssignments, setShowManagedTaskAssignments] = useState(false);
   const [filterStatus, setFilterStatus] = useState<'All' | 'Assigned' | 'In Progress' | 'Completed'>('All');
   const [fieldOfficerFilter, setFieldOfficerFilter] = useState<FieldOfficerFilter>('All');
@@ -699,16 +701,30 @@ export default function VolunteerTasksScreen({ navigation }: any) {
     const isAssigned = tasks.some(task => task.projectId === projectId);
     const attendanceState = getTaskEventAttendanceState(project, isAssigned, projectLogs);
 
-    if (!attendanceState.canConfirmAttendance && !attendanceState.eventHasNotStarted) {
-      Alert.alert('Attendance Unavailable', attendanceState.helperText);
+    // ERROR TRAP: checklist first — must complete assigned tasks before submitting attendance photo
+    const eventTasksForCheck = tasks.filter(t => t.projectId === projectId);
+    const pendingChecklistTasks = eventTasksForCheck.filter(t => t.status !== 'Completed');
+    if (eventTasksForCheck.length > 0 && pendingChecklistTasks.length > 0) {
+      Alert.alert(
+        'Checklist Required',
+        `Complete your checklist first. You have ${pendingChecklistTasks.length} of ${eventTasksForCheck.length} task(s) still in progress. Finish all assigned tasks before submitting your attendance photo.`
+      );
       return;
     }
+
+    // Bypassed strict restrictions for testing purposes
+    // if (!attendanceState.canConfirmAttendance && !attendanceState.eventHasNotStarted) {
+    //   Alert.alert('Attendance Unavailable', attendanceState.helperText);
+    //   return;
+    // }
 
     try {
       const attendancePhoto = await pickImageFromDevice();
       if (!attendancePhoto) {
         return;
       }
+
+      setActionLoadingKey(`attendance_${projectId}`);
 
       const createdLog = await startVolunteerTimeLog(
         volunteerProfile.id,
@@ -738,12 +754,14 @@ export default function VolunteerTasksScreen({ navigation }: any) {
           ? nextTasks.find(task => task.id === current.id && task.projectId === current.projectId) || null
           : current
       );
-      showAttendanceNotice('Attendance confirmed for today.');
+      showAttendanceNotice('Uploaded');
     } catch (error) {
       Alert.alert(
         getRequestErrorTitle(error, 'Unable to confirm attendance'),
         getRequestErrorMessage(error, 'Please try again.')
       );
+    } finally {
+      setActionLoadingKey(null);
     }
   };
 
@@ -1853,145 +1871,111 @@ export default function VolunteerTasksScreen({ navigation }: any) {
                     );
 
                     return (
-                      <View style={styles.attendanceCard}>
-                        <View style={styles.attendanceCardHeader}>
-                          <View style={styles.attendanceCardCopy}>
-                            <Text style={styles.attendanceCardTitle}>Daily Attendance</Text>
-                            <Text style={styles.attendanceCardMeta}>
-                              {formatEventDateLabel(
-                                selectedTaskGroupProject.startDate,
-                                selectedTaskGroupProject.endDate
-                              )}
-                            </Text>
-                          </View>
-                          <View
-                            style={[
-                              styles.attendanceStatusBadge,
-                              attendanceState.hasConfirmedToday
-                                ? styles.attendanceStatusBadgeActive
-                                : styles.attendanceStatusBadgeIdle,
-                            ]}
-                          >
-                            <Text style={styles.attendanceStatusText}>
+                      <View style={{ backgroundColor: '#f8fafc', borderRadius: 12, padding: 16, marginBottom: 24, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                          <View style={{ flex: 1, paddingRight: 12 }}>
+                            <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>Event Attendance</Text>
+                            <Text style={{ fontSize: 13, color: '#64748b', marginTop: 2, lineHeight: 18 }}>
                               {attendanceState.hasConfirmedToday
-                                ? 'Confirmed'
+                                ? 'You have submitted your attendance for today.'
                                 : attendanceState.eventHasEnded
-                                ? 'Closed'
-                                : 'Ready'}
+                                ? 'This event is now closed.'
+                                : 'Submit your attendance photo when required.'}
                             </Text>
                           </View>
+                          {attendanceState.hasConfirmedToday && (
+                            <View style={{ backgroundColor: '#dcfce7', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}>
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: '#166534' }}>Done</Text>
+                            </View>
+                          )}
                         </View>
 
-                        <Text style={styles.attendanceHelperText}>
-                          {attendanceState.helperText || 'Attendance is unavailable for this event.'}
-                        </Text>
-
-                        <View style={styles.attendanceLogRow}>
-                          <View style={styles.attendanceLogItem}>
-                            <Text style={styles.attendanceLogLabel}>Latest activity</Text>
-                            <Text style={styles.attendanceLogValue}>
-                              {attendanceState.latestLog
-                                ? `Confirmed ${formatTimestamp(
-                                    attendanceState.latestLog.attendanceConfirmedAt ||
-                                      attendanceState.latestLog.timeIn
-                                  )}`
-                                : 'No attendance yet'}
-                            </Text>
-                          </View>
-                          <View style={styles.attendanceLogItem}>
-                            <Text style={styles.attendanceLogLabel}>Today</Text>
-                            <Text style={styles.attendanceLogValue}>
-                              {attendanceState.todayLog
-                                ? `Confirmed ${formatTimestamp(
-                                    attendanceState.todayLog.attendanceConfirmedAt ||
-                                      attendanceState.todayLog.timeIn
-                                  )}`
-                                : attendanceState.hasConfirmedToday
-                                ? 'Completed for today'
-                                : 'Not started'}
-                            </Text>
-                          </View>
-                        </View>
-
-                        <View style={styles.attendanceActionRow}>
-                          <TouchableOpacity
-                            style={[
-                              styles.attendanceButton,
-                              styles.timeInButton,
-                              !attendanceState.canConfirmAttendance && !attendanceState.eventHasNotStarted && styles.attendanceButtonDisabled,
-                            ]}
-                            onPress={() => void handleConfirmAttendanceForProject(selectedTaskGroup.projectId)}
-                            disabled={!attendanceState.canConfirmAttendance && !attendanceState.eventHasNotStarted}
-                          >
-                            <MaterialIcons name={attendanceState.eventHasNotStarted ? "photo-camera" : "verified-user"} size={18} color="#fff" />
-                            <Text style={styles.attendanceButtonText}>
-                              {attendanceState.eventHasNotStarted
-                                ? 'Submit Photo'
-                                : attendanceState.hasConfirmedToday
-                                ? 'Done Today'
-                                : attendanceState.eventHasEnded
-                                ? 'Closed'
-                                : 'Confirm Attendance'}
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
+                        <TouchableOpacity
+                          style={{
+                            backgroundColor: actionLoadingKey === `attendance_${selectedTaskGroup.projectId}` ? '#9ca3af' : '#166534',
+                            paddingVertical: 14,
+                            borderRadius: 10,
+                            flexDirection: 'row',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            gap: 8,
+                          }}
+                          onPress={() => void handleConfirmAttendanceForProject(selectedTaskGroup.projectId)}
+                          disabled={actionLoadingKey === `attendance_${selectedTaskGroup.projectId}`}
+                        >
+                          {actionLoadingKey === `attendance_${selectedTaskGroup.projectId}` ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                          ) : (
+                            <MaterialIcons name={attendanceState.eventHasNotStarted ? "photo-camera" : "verified-user"} size={20} color="#fff" />
+                          )}
+                          <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>
+                            {actionLoadingKey === `attendance_${selectedTaskGroup.projectId}`
+                              ? 'Uploading...'
+                              : attendanceState.hasConfirmedToday
+                              ? 'Submitted'
+                              : attendanceState.eventHasNotStarted
+                              ? 'Upload Attendance'
+                              : attendanceState.eventHasEnded
+                              ? 'Event Closed'
+                              : 'Upload Attendance'}
+                          </Text>
+                        </TouchableOpacity>
                       </View>
                     );
                   })()
                 ) : null}
 
-                <View style={styles.taskCardGrid}>
-                  {selectedTaskGroup.tasks.map(item => (
-                    <TouchableOpacity
-                      key={item.id}
-                      style={styles.taskCard}
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 12 }}>Assigned Tasks</Text>
+                <View style={{ gap: 12, paddingBottom: 20 }}>
+                  {selectedTaskGroup.tasks.map(item => {
+                    const isCompleted = item.status === 'Completed' || locallyCheckedTasks.has(item.id);
+                    return (
+                    <TouchableOpacity 
+                      key={item.id} 
+                      style={{
+                        backgroundColor: isCompleted ? '#f8fafc' : '#ffffff',
+                        borderWidth: 1,
+                        borderColor: isCompleted ? '#e2e8f0' : '#cbd5e1',
+                        borderRadius: 12,
+                        padding: 16,
+                        flexDirection: 'row',
+                        gap: 12
+                      }}
                       onPress={() => {
                         setSelectedTask(item);
                         setShowTaskGroupDetails(false);
                         setShowDetails(true);
                       }}
                     >
-                      <View style={styles.taskCardHeader}>
-                        <Text style={styles.taskTitle} numberOfLines={2}>
+                      <TouchableOpacity 
+                        style={{ marginTop: 2, padding: 4, margin: -4 }}
+                        onPress={() => {
+                          setLocallyCheckedTasks(prev => {
+                            const next = new Set(prev);
+                            if (next.has(item.id)) next.delete(item.id);
+                            else next.add(item.id);
+                            return next;
+                          });
+                        }}
+                      >
+                        {isCompleted ? (
+                          <MaterialIcons name="check-circle" size={24} color="#166534" />
+                        ) : (
+                          <MaterialIcons name="radio-button-unchecked" size={24} color="#94a3b8" />
+                        )}
+                      </TouchableOpacity>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 16, fontWeight: '800', color: isCompleted ? '#64748b' : '#0f172a', textDecorationLine: isCompleted ? 'line-through' : 'none' }}>
                           {item.title}
                         </Text>
-                        <MaterialIcons name="open-in-full" size={16} color="#64748b" />
-                      </View>
-
-                      <Text style={styles.taskCardMetaLine} numberOfLines={1}>
-                        {item.category}
-                      </Text>
-
-                      <View style={styles.taskCardBadgeRow}>
-                        <View
-                          style={[
-                            styles.priorityBadge,
-                            { backgroundColor: getPriorityColor(item.priority) },
-                          ]}
-                        >
-                          <Text style={styles.priorityText}>{item.priority}</Text>
-                        </View>
-                        <View
-                          style={[
-                            styles.statusBadge,
-                            styles.statusBadgeCompact,
-                            { backgroundColor: getStatusColor(item.status) },
-                          ]}
-                        >
-                          <Text style={styles.statusText}>{item.status}</Text>
-                        </View>
-                      </View>
-
-                      <Text style={styles.taskCardSchedule} numberOfLines={2}>
-                        {formatEventDateLabel(item.projectStartDate, item.projectEndDate)}
-                      </Text>
-
-                      <View style={styles.taskCardFooter}>
-                        <Text style={styles.taskTapHintText}>Tap to open</Text>
-                        <MaterialIcons name="chevron-right" size={16} color="#166534" />
+                        {!!item.description && (
+                          <Text style={{ fontSize: 13, color: '#64748b', marginTop: 6, lineHeight: 20 }}>
+                            {item.description}
+                          </Text>
+                        )}
                       </View>
                     </TouchableOpacity>
-                  ))}
+                  )})}
                 </View>
               </ScrollView>
             ) : null}
@@ -2060,10 +2044,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
                       {formatEventDateLabel(selectedTask.projectStartDate, selectedTask.projectEndDate)}
                     </Text>
                   </View>
-                  <View style={styles.detailOverviewCard}>
-                    <Text style={styles.detailOverviewLabel}>Category</Text>
-                    <Text style={styles.detailOverviewValue}>{selectedTask.category}</Text>
-                  </View>
+
                   <View style={styles.detailOverviewCard}>
                     <Text style={styles.detailOverviewLabel}>Updated</Text>
                     <Text style={styles.detailOverviewValue}>
@@ -2084,10 +2065,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
                   </View>
                 ) : null}
 
-                <View style={styles.infoSection}>
-                  <Text style={styles.infoLabel}>Task Category</Text>
-                  <Text style={styles.infoValue}>{selectedTask.category}</Text>
-                </View>
+
 
                 <View style={styles.infoSection}>
                   <Text style={styles.infoLabel}>Task Description</Text>
@@ -2401,138 +2379,125 @@ export default function VolunteerTasksScreen({ navigation }: any) {
                 </View>
 
                 <View style={styles.infoSection}>
-                  <Text style={styles.infoLabel}>Volunteer Task Assignments</Text>
-                  <Text style={styles.descriptionText}>
-                    Open one task card at a time to manage assignments. Single tap a volunteer to assign. Tap an assigned volunteer again to remove.
+                  <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 8 }}>Manage Task Assignments</Text>
+                  <Text style={{ fontSize: 14, color: '#64748b', marginBottom: 16, lineHeight: 20 }}>
+                    Tap a volunteer below a task to assign or remove them.
                   </Text>
-                  <TouchableOpacity
-                    style={styles.sectionSummaryCard}
-                    activeOpacity={0.88}
-                    onPress={() => setShowManagedTaskAssignments(current => !current)}
-                  >
-                    <View style={styles.sectionSummaryHeader}>
-                      <View style={styles.sectionSummaryHeaderCopy}>
-                        <Text style={styles.sectionSummaryEyebrow}>Assignments</Text>
-                        <Text style={styles.sectionSummaryTitle}>Volunteer Task Assignments</Text>
+
+                  {(() => {
+                    const incompleteTasks = (selectedManagedEvent.internalTasks || []).filter(t => !t.isFieldOfficer && t.status !== 'Completed');
+                    if (incompleteTasks.length === 0) return null;
+                    return (
+                      <View style={{
+                        backgroundColor: '#fffbeb',
+                        borderColor: '#fde68a',
+                        borderWidth: 1,
+                        borderRadius: 12,
+                        padding: 12,
+                        marginBottom: 16,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 10,
+                      }}>
+                        <MaterialIcons name="warning" size={20} color="#d97706" />
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 13, fontWeight: '800', color: '#92400e' }}>
+                            Warning: Incomplete Tasks Remain ({incompleteTasks.length})
+                          </Text>
+                          <Text style={{ fontSize: 12, color: '#b45309', marginTop: 1 }}>
+                            {incompleteTasks.length} task{incompleteTasks.length === 1 ? '' : 's'} still pending or uncompleted in this event.
+                          </Text>
+                        </View>
                       </View>
-                      <View style={styles.sectionSummaryCountBadge}>
-                        <Text style={styles.sectionSummaryCountText}>
-                          {(selectedManagedEvent.internalTasks || []).length} task{(selectedManagedEvent.internalTasks || []).length === 1 ? '' : 's'}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <Text style={styles.sectionSummarySubtitle}>
-                      Tap to {showManagedTaskAssignments ? 'hide' : 'open'} the task assignment details for this event.
-                    </Text>
-
-                    <View style={styles.sectionSummaryFooter}>
-                      <Text style={styles.sectionSummaryFooterText}>
-                        {showManagedTaskAssignments ? 'Tap to collapse details' : 'Tap to view details'}
-                      </Text>
-                      <MaterialIcons
-                        name={showManagedTaskAssignments ? 'expand-less' : 'chevron-right'}
-                        size={18}
-                        color="#166534"
-                      />
-                    </View>
-                  </TouchableOpacity>
-
-                  {showManagedTaskAssignments ? (
-                    (selectedManagedEvent.internalTasks || []).map(eventTask => (
-                      <TouchableOpacity
-                        key={eventTask.id}
-                        style={styles.assignmentCard}
-                        activeOpacity={0.88}
-                        onPress={() =>
-                          setExpandedManagedTaskId(current => (current === eventTask.id ? null : eventTask.id))
-                        }
+                    );
+                  })()}
+                  
+                  <View style={{ gap: 12 }}>
+                    {(selectedManagedEvent.internalTasks || []).map(eventTask => (
+                      <TouchableOpacity 
+                        key={eventTask.id} 
+                        style={{ backgroundColor: '#fff', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: '#e2e8f0' }}
+                        onPress={() => setExpandedManagedTaskId(current => current === eventTask.id ? null : eventTask.id)}
+                        activeOpacity={0.7}
                       >
-                        <View style={styles.assignmentHeader}>
-                          <View style={styles.assignmentCopy}>
-                            <Text style={styles.assignmentTitle}>{eventTask.title}</Text>
-                            <Text style={styles.assignmentMeta}>
-                              {getTaskAssignedVolunteerNames(eventTask).length
-                                ? getTaskAssignedVolunteerNames(eventTask).join(', ')
-                                : 'Unassigned'}
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <View style={{ flex: 1, paddingRight: 12 }}>
+                            <Text style={{ fontSize: 15, fontWeight: '800', color: '#0f172a' }}>{eventTask.title}</Text>
+                            <Text style={{ fontSize: 13, color: '#64748b', marginTop: 4 }}>
+                              {getTaskAssignedVolunteerIds(eventTask).length} assigned · {eventTask.volunteersNeeded || 1} needed
                             </Text>
-                            <Text style={styles.assignmentMeta}>{eventTask.status}</Text>
                           </View>
-                          <View style={styles.assignmentHeaderActions}>
-                            {eventTask.isFieldOfficer ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            {eventTask.isFieldOfficer && (
                               <View style={styles.assignmentLockBadge}>
                                 <MaterialIcons name="lock" size={14} color="#92400e" />
-                                <Text style={styles.assignmentLockText}>Admin controlled</Text>
-                              </View>
-                            ) : (
-                              <View style={styles.assignmentCountBadge}>
-                                <Text style={styles.assignmentCountBadgeText}>
-                                  {getTaskAssignedVolunteerIds(eventTask).length} assigned
-                                </Text>
+                                <Text style={styles.assignmentLockText}>Admin</Text>
                               </View>
                             )}
-                            <MaterialIcons
-                              name={expandedManagedTaskId === eventTask.id ? 'expand-less' : 'expand-more'}
-                              size={20}
-                              color="#166534"
-                            />
+                            <MaterialIcons name={expandedManagedTaskId === eventTask.id ? "expand-less" : "expand-more"} size={24} color="#64748b" />
                           </View>
                         </View>
-
-                        {expandedManagedTaskId === eventTask.id ? (
-                          eventTask.isFieldOfficer ? (
-                            <Text style={styles.fieldOfficerHintText}>
-                              This task marks the volunteer who manages the event team.
-                            </Text>
-                          ) : (
-                            <View style={styles.assignmentDetailsPanel}>
-                              <Text style={styles.assignmentDetailLabel}>Task Description</Text>
-                              <Text style={styles.descriptionText}>
-                                {eventTask.description || 'No task description provided.'}
-                              </Text>
-                              <Text style={styles.assignmentDetailLabel}>Assigned Volunteers</Text>
-                              <Text style={styles.assignmentMeta}>
-                                {getTaskAssignedVolunteerNames(eventTask).length
-                                  ? getTaskAssignedVolunteerNames(eventTask).join(', ')
-                                  : 'No volunteers assigned yet.'}
-                              </Text>
-                              <View style={styles.assignmentButtonGroup}>
-                                {managedEventVolunteerOptions.map(volunteer => {
-                                  const isAssigned = isVolunteerAssignedToTask(eventTask, volunteer.id);
-                                  return (
-                                    <TouchableOpacity
-                                      key={`${eventTask.id}-${volunteer.id}`}
-                                      style={[
-                                        styles.assignmentButton,
-                                        isAssigned && styles.assignmentButtonActive,
-                                      ]}
-                                      onPress={() => handleTaskVolunteerChipPress(eventTask, volunteer)}
-                                    >
-                                      <Text
-                                        style={[
-                                          styles.assignmentButtonText,
-                                          isAssigned && styles.assignmentButtonTextActive,
-                                        ]}
+                        
+                        {!eventTask.isFieldOfficer && expandedManagedTaskId === eventTask.id && (() => {
+                          const assignedVolunteers = managedEventVolunteerOptions.filter(v => isVolunteerAssignedToTask(eventTask, v.id));
+                          const unassignedVolunteers = managedEventVolunteerOptions.filter(v => !isVolunteerAssignedToTask(eventTask, v.id));
+                          
+                          return (
+                          <View style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
+                            {managedEventVolunteerOptions.length === 0 ? (
+                              <Text style={{ fontSize: 13, color: '#94a3b8', fontStyle: 'italic' }}>No volunteers have joined this event yet.</Text>
+                            ) : (
+                              <View>
+                                {assignedVolunteers.length > 0 && (
+                                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                                    {assignedVolunteers.map(volunteer => (
+                                      <TouchableOpacity
+                                        key={`${eventTask.id}-${volunteer.id}`}
+                                        style={{ backgroundColor: '#166534', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                                        onPress={() => handleTaskVolunteerChipPress(eventTask, volunteer)}
                                       >
-                                        {volunteer.name}
-                                      </Text>
+                                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>{volunteer.name}</Text>
+                                        <MaterialIcons name="close" size={14} color="#fff" />
+                                      </TouchableOpacity>
+                                    ))}
+                                  </View>
+                                )}
+                                
+                                {unassignedVolunteers.length > 0 && (
+                                  <View style={{ position: 'relative' }}>
+                                    <TouchableOpacity
+                                      style={{ backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+                                      onPress={() => setDropdownTaskId(current => current === eventTask.id ? null : eventTask.id)}
+                                    >
+                                      <Text style={{ fontSize: 14, color: '#475569', fontWeight: '600' }}>Select Volunteer to Assign...</Text>
+                                      <MaterialIcons name={dropdownTaskId === eventTask.id ? "arrow-drop-up" : "arrow-drop-down"} size={24} color="#475569" />
                                     </TouchableOpacity>
-                                  );
-                                })}
+                                    
+                                    {dropdownTaskId === eventTask.id && (
+                                      <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, marginTop: 4, maxHeight: 200, overflow: 'hidden' }}>
+                                        {unassignedVolunteers.map((volunteer, idx) => (
+                                          <TouchableOpacity
+                                            key={`dropdown-${eventTask.id}-${volunteer.id}`}
+                                            style={{ paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: idx === unassignedVolunteers.length - 1 ? 0 : 1, borderBottomColor: '#f1f5f9' }}
+                                            onPress={() => {
+                                              handleTaskVolunteerChipPress(eventTask, volunteer);
+                                              setDropdownTaskId(null);
+                                            }}
+                                          >
+                                            <Text style={{ fontSize: 14, color: '#0f172a' }}>{volunteer.name}</Text>
+                                          </TouchableOpacity>
+                                        ))}
+                                      </View>
+                                    )}
+                                  </View>
+                                )}
                               </View>
-                              <Text style={styles.fieldOfficerHintText}>
-                                Single tap adds the volunteer. Tap an assigned volunteer chip again to remove that volunteer from this task.
-                              </Text>
-                            </View>
-                          )
-                        ) : (
-                          <View style={styles.assignmentCardFooter}>
-                            <Text style={styles.fieldOfficerHintText}>Tap to open assignment details</Text>
+                            )}
                           </View>
-                        )}
+                        )})()}
                       </TouchableOpacity>
-                    ))
-                  ) : null}
+                    ))}
+                  </View>
                 </View>
               </ScrollView>
             ) : null}

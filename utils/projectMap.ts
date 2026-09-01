@@ -1720,20 +1720,8 @@ export function getProjectMarkerColor(
 }
 
 export function getMappedProjects(projects: Project[]): Project[] {
-  // Filter out programs (top-level items that are neither events nor have a parent)
-  // Only show projects and events on the map
-  const projectsAndEvents = projects.filter(project => {
-    // If it has a parent, it's a project or event under a program - include it
-    if (project.parentProjectId) {
-      return true;
-    }
-    // If it's marked as an event, include it
-    if (project.isEvent) {
-      return true;
-    }
-    // Otherwise, it's a top-level program - exclude it
-    return false;
-  });
+  // Include all valid projects, proposals, and events on the map
+  const projectsAndEvents = (projects || []).filter(project => Boolean(project));
 
   const resolvedProjects = projectsAndEvents
     .map(project => resolveProjectMapPlacement(project, projects))

@@ -1504,7 +1504,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
   };
 
   const handleOpenProject = useCallback((projectId: string) => {
-    if (user?.role === 'admin') {
+    if (user?.role === 'admin' || user?.role === 'partner') {
       navigateToAvailableRoute(navigation, 'Lifecycle', { projectId }, {
         routeName: 'Projects',
         params: { projectId },
@@ -2015,17 +2015,27 @@ export default function ProjectsScreen({ navigation, route }: any) {
                             </View>
                           ) : user?.role === 'partner' ? (
                             <View style={styles.nestedEventActionBlock}>
-                              <TouchableOpacity
-                                style={[
-                                  styles.joinButton,
-                                  loadingProjectId === event.id && styles.joinButtonLoading,
-                                ]}
-                                disabled={loadingProjectId === event.id}
-                                onPress={() => handleJoinProject(event.id)}
-                              >
-                                <MaterialIcons name="campaign" size={18} color="#fff" />
-                                <Text style={styles.joinButtonText}>Submit Proposal</Text>
-                              </TouchableOpacity>
+                              <View style={{ flexDirection: 'row', gap: 8 }}>
+                                <TouchableOpacity
+                                  style={[styles.openProgramButton, { flex: 1 }]}
+                                  onPress={() => handleOpenProject(event.id)}
+                                >
+                                  <MaterialIcons name="folder-open" size={18} color="#fff" />
+                                  <Text style={styles.openProgramButtonText}>Open Event</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  style={[
+                                    styles.joinButton,
+                                    { flex: 1 },
+                                    loadingProjectId === event.id && styles.joinButtonLoading,
+                                  ]}
+                                  disabled={loadingProjectId === event.id}
+                                  onPress={() => handleJoinProject(event.id)}
+                                >
+                                  <MaterialIcons name="campaign" size={18} color="#fff" />
+                                  <Text style={styles.joinButtonText}>Proposal</Text>
+                                </TouchableOpacity>
+                              </View>
                             </View>
                           ) : user?.role === 'admin' ? (
                             <View style={styles.nestedEventActionBlock}>
@@ -2306,18 +2316,28 @@ export default function ProjectsScreen({ navigation, route }: any) {
               {user?.role === 'partner' && (
                 <View style={styles.partnerActions}>
                   <Text style={styles.matchReason}>
-                    Partner orgs can submit a project proposal for admin approval.
+                    Manage project lifecycle, volunteers, and track progress just like admin view.
                   </Text>
-                  <TouchableOpacity
-                    style={styles.detailButton}
-                    onPress={() => (item.isEvent ? handleOpenEventDetails(item.id) : handleOpenProgramDetails(item.id))}
-                  >
-                    <MaterialIcons name="info-outline" size={18} color="#166534" />
-                    <Text style={styles.detailButtonText}>View Details</Text>
-                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                    <TouchableOpacity
+                      style={[styles.openProgramButton, { flex: 1, minWidth: 140 }]}
+                      onPress={() => handleOpenProject(item.id)}
+                    >
+                      <MaterialIcons name="folder-open" size={18} color="#fff" />
+                      <Text style={styles.openProgramButtonText}>Open {item.isEvent ? 'Event' : 'Project'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.detailButton, { paddingHorizontal: 12 }]}
+                      onPress={() => (item.isEvent ? handleOpenEventDetails(item.id) : handleOpenProgramDetails(item.id))}
+                    >
+                      <MaterialIcons name="info-outline" size={18} color="#166534" />
+                      <Text style={styles.detailButtonText}>Details</Text>
+                    </TouchableOpacity>
+                  </View>
                   <TouchableOpacity
                     style={[
                       styles.joinButton,
+                      { marginTop: 6 },
                       loadingProjectId === item.id && styles.joinButtonLoading,
                     ]}
                     disabled={loadingProjectId === item.id}
@@ -2338,7 +2358,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
                         {partnerApplication?.status === 'Pending'
                           ? 'Your project proposal is pending admin approval.'
                           : partnerApplication?.status === 'Approved'
-                          ? 'Your project proposal was approved by the admin and is now shown in Projects.'
+                          ? 'Your project proposal was approved by the admin and is now active in Projects.'
                           : 'This proposal was rejected by the admin.'}
                       </Text>
 

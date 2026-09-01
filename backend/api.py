@@ -3,6 +3,10 @@ import json
 import asyncio
 import threading
 import time
+import smtplib
+import secrets
+import ssl
+from email.message import EmailMessage
 from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -140,6 +144,29 @@ class AuthLoginPayload(BaseModel):
     password: str
 
 
+class RegistrationOtpSendPayload(BaseModel):
+    email: str
+
+
+class GcalSyncPayload(BaseModel):
+    recipient_email: str
+    user_name: str
+    synced_count: int = 1
+    synced_at: Optional[str] = None
+    schedule_type: str = "event"
+    calendar_url: str
+    event_title: Optional[str] = None
+    event_date: Optional[str] = None
+    location: Optional[str] = None
+    details: Optional[str] = None
+    subject: Optional[str] = None
+
+
+class RegistrationOtpVerifyPayload(BaseModel):
+    email: str
+    otp: str
+
+
 # Request payload for approving/rejecting user accounts.
 class UserApprovalPayload(BaseModel):
     status: str  # 'approved' or 'rejected'
@@ -251,6 +278,9 @@ class ReportSubmitPayload(BaseModel):
 
 REPORT_MEDIA_FILE_MAX_LENGTH = 500
 APP_TIMEZONE = ZoneInfo("Asia/Manila")
+REGISTRATION_OTP_TTL_SECONDS = 10 * 60
+_registration_otp_lock = threading.Lock()
+_registration_otp_store: dict[str, dict[str, Any]] = {}
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
@@ -2261,26 +2291,6 @@ DEMO_ACCOUNTS = [
         "created_at": "2026-01-01T00:00:00Z",
         "approvalStatus": "approved"
     },
-    {
-        "id": "user-volunteer-1780189738",
-        "email": "volunteer@example.com",
-        "password": "volunteer123",
-        "role": "volunteer",
-        "name": "Volunteer Account",
-        "phone": "09123456789",
-        "created_at": "2026-01-01T00:00:00Z",
-        "approvalStatus": "approved"
-    },
-    {
-        "id": "user-partner-1780189738",
-        "email": "partner@livelihoods.org",
-        "password": "partner123",
-        "role": "partner",
-        "name": "Kabankalan LGU",
-        "phone": "09198765432",
-        "created_at": "2026-01-01T00:00:00Z",
-        "approvalStatus": "approved"
-    },
 ]
 
 def _normalize_phone(phone: str) -> str:
@@ -2360,6 +2370,226 @@ def auth_login(payload: AuthLoginPayload) -> dict[str, Any]:
             print(f"[DEBUG] Error during approval check: {e}")
 
     return {"user": user, "message": "Login successful"}
+
+
+def _cleanup_expired_registration_otps() -> None:
+    now = time.time()
+    with _registration_otp_lock:
+        expired = [email for email, entry in _registration_otp_store.items() if now >= float(entry.get("expiresAt", 0))]
+        for email in expired:
+            _registration_otp_store.pop(email, None)
+
+
+def _send_registration_otp_email(email: str, otp: str) -> None:
+    sender = str(os.getenv("OTP_GMAIL_SENDER", "")).strip()
+    app_password = "".join(str(os.getenv("OTP_GMAIL_APP_PASSWORD", "")).split())
+    if not sender or not app_password:
+        raise HTTPException(
+            status_code=500,
+            detail="OTP email sender is not configured.",
+        )
+
+    message = EmailMessage()
+    message["Subject"] = "Your NVC Connect Verification Code"
+    message["From"] = f"NVC Connect <{sender}>"
+    message["Reply-To"] = sender
+    message["To"] = email
+    message["X-Mailer"] = "NVCConnect"
+    message.set_content(
+        f"Hello,\n\n"
+        f"Your NVC Connect verification code is:\n\n"
+        f"    {otp}\n\n"
+        f"This code expires in 10 minutes.\n\n"
+        f"If you did not request this code, you can safely ignore this email.\n\n"
+        f"Thank you,\nNVC Connect Team\n"
+    )
+
+    context = ssl.create_default_context()
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=20) as smtp:
+            smtp.ehlo()
+            smtp.starttls(context=context)
+            smtp.ehlo()
+            smtp.login(sender, app_password)
+            smtp.send_message(message)
+    except Exception as e587:
+        print(f"[DEBUG] SMTP port 587 failed: {e587}. Trying port 465 with SSL...")
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=20) as smtp:
+                smtp.login(sender, app_password)
+                smtp.send_message(message)
+        except Exception as e465:
+            print(f"[DEBUG] SMTP port 465 also failed: {e465}")
+            raise RuntimeError(f"SMTP ports 587 and 465 both failed. Port 587 error: {e587}. Port 465 error: {e465}")
+
+
+def _send_calendar_sync_email(payload: GcalSyncPayload) -> None:
+    sender = str(os.getenv("OTP_GMAIL_SENDER", "")).strip()
+    app_password = "".join(str(os.getenv("OTP_GMAIL_APP_PASSWORD", "")).split())
+    if not sender or not app_password:
+        print("[WARN] OTP email sender is not configured, skipping calendar sync email.")
+        return
+
+    event_title = payload.event_title or ("Volunteer Event" if payload.schedule_type == "volunteer" else "Partner Project")
+    
+    if payload.subject:
+        subject = payload.subject
+    elif payload.schedule_type == "volunteer":
+        subject = f"Calendar Invitation: Approved for {event_title}"
+    else:
+        subject = f"Calendar Invitation: Partner Project Approved - {event_title}"
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = f"NVC Connect <{sender}>"
+    message["Reply-To"] = sender
+    message["To"] = payload.recipient_email
+    message["X-Mailer"] = "NVCConnect"
+
+    plain_content = (
+        f"Hello {payload.user_name},\n\n"
+        f"Great news! Your {payload.schedule_type} approval has been confirmed.\n\n"
+        f"Event Details:\n"
+        f"• Title: {event_title}\n"
+    )
+    if payload.event_date:
+        plain_content += f"• Schedule: {payload.event_date}\n"
+    if payload.location:
+        plain_content += f"• Location: {payload.location}\n"
+    if payload.details:
+        plain_content += f"• Description: {payload.details}\n"
+
+    plain_content += (
+        f"\n📅 Add to your Google Calendar:\n"
+        f"{payload.calendar_url}\n\n"
+        f"Thank you for being part of the NVC Foundation community!\n\n"
+        f"Warm regards,\nNVC Connect Team\n"
+    )
+    message.set_content(plain_content)
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body {{ font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px; color: #1e293b; }}
+        .container {{ max-width: 580px; margin: 0 auto; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }}
+        .header {{ background-color: #166534; padding: 24px; text-align: center; color: #ffffff; }}
+        .header h1 {{ margin: 0; font-size: 22px; font-weight: 800; }}
+        .header p {{ margin: 6px 0 0; font-size: 14px; opacity: 0.9; }}
+        .content {{ padding: 24px; }}
+        .badge {{ display: inline-block; background-color: #dcfce7; color: #166534; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; text-transform: uppercase; margin-bottom: 12px; }}
+        .card {{ background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0; }}
+        .card-row {{ margin-bottom: 8px; font-size: 14px; line-height: 1.5; }}
+        .card-label {{ font-weight: 700; color: #475569; display: inline-block; width: 90px; }}
+        .card-value {{ color: #0f172a; font-weight: 600; }}
+        .button {{ display: block; text-align: center; background-color: #166534; color: #ffffff !important; font-size: 15px; font-weight: 700; text-decoration: none; padding: 14px 20px; border-radius: 8px; margin: 20px 0; }}
+        .footer {{ padding: 16px 24px; background-color: #f1f5f9; text-align: center; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; }}
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>NVC Connect</h1>
+          <p>Calendar Invitation & Confirmation</p>
+        </div>
+        <div class="content">
+          <span class="badge">Approved</span>
+          <p style="font-size: 16px; margin-top: 4px;">Hello <strong>{payload.user_name}</strong>,</p>
+          <p style="font-size: 14px; color: #475569; line-height: 1.5;">
+            Your {payload.schedule_type} participation has been approved! Below are the confirmed details for your schedule:
+          </p>
+          
+          <div class="card">
+            <div class="card-row">
+              <span class="card-label">Title:</span>
+              <span class="card-value">{event_title}</span>
+            </div>
+            {"<div class='card-row'><span class='card-label'>Schedule:</span><span class='card-value'>" + payload.event_date + "</span></div>" if payload.event_date else ""}
+            {"<div class='card-row'><span class='card-label'>Location:</span><span class='card-value'>" + payload.location + "</span></div>" if payload.location else ""}
+            {"<div class='card-row'><span class='card-label'>Details:</span><span class='card-value'>" + payload.details + "</span></div>" if payload.details else ""}
+          </div>
+
+          <a href="{payload.calendar_url}" class="button" target="_blank">
+            📅 Add to Google Calendar
+          </a>
+
+          <p style="font-size: 13px; color: #64748b; line-height: 1.5;">
+            Clicking the button above will open Google Calendar with this event ready to be saved to your personal schedule.
+          </p>
+        </div>
+        <div class="footer">
+          Negros Volunteers for Change Foundation (NVC)<br/>
+          Building a better future through shared service.
+        </div>
+      </div>
+    </body>
+    </html>
+    """
+    message.add_alternative(html_content, subtype="html")
+
+    context = ssl.create_default_context()
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=20) as smtp:
+            smtp.ehlo()
+            smtp.starttls(context=context)
+            smtp.ehlo()
+            smtp.login(sender, app_password)
+            smtp.send_message(message)
+    except Exception as e587:
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=20) as smtp:
+                smtp.login(sender, app_password)
+                smtp.send_message(message)
+        except Exception:
+            pass
+
+@app.post("/auth/registration-otp/send")
+def send_registration_otp(payload: RegistrationOtpSendPayload) -> dict[str, Any]:
+    email = str(payload.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid email is required.")
+
+    _cleanup_expired_registration_otps()
+    otp = f"{secrets.randbelow(1000000):06d}"
+    with _registration_otp_lock:
+        _registration_otp_store[email] = {
+            "otp": otp,
+            "expiresAt": time.time() + REGISTRATION_OTP_TTL_SECONDS,
+            "attempts": 0,
+        }
+
+    try:
+        _send_registration_otp_email(email, otp)
+    except Exception as exc:
+        with _registration_otp_lock:
+            _registration_otp_store.pop(email, None)
+        raise HTTPException(status_code=500, detail=f"Failed to send verification code: {exc}")
+
+    return {"message": "Verification code sent."}
+
+
+@app.post("/auth/registration-otp/verify")
+def verify_registration_otp(payload: RegistrationOtpVerifyPayload) -> dict[str, Any]:
+    email = str(payload.email or "").strip().lower()
+    otp = str(payload.otp or "").strip()
+    if not email or not otp:
+        raise HTTPException(status_code=400, detail="Email and code are required.")
+
+    _cleanup_expired_registration_otps()
+    with _registration_otp_lock:
+        entry = _registration_otp_store.get(email)
+        if not entry:
+            raise HTTPException(status_code=400, detail="Code expired or not found. Please request a new one.")
+        if str(entry.get("otp")) != otp:
+            entry["attempts"] = int(entry.get("attempts", 0)) + 1
+            if entry["attempts"] >= 5:
+                _registration_otp_store.pop(email, None)
+            raise HTTPException(status_code=400, detail="Invalid verification code.")
+        _registration_otp_store.pop(email, None)
+
+    return {"message": "Email verified."}
 
 
 @app.post("/auth/users/{user_id}/approve")
@@ -2877,27 +3107,27 @@ async def start_volunteer_log(volunteer_id: str, payload: VolunteerTimeLogStartP
 
         now = datetime.now(timezone.utc)
 
-        if bool(project.get("isEvent")) and not _volunteer_is_assigned_to_event_task(
-            connection,
-            volunteer_id,
-            payload.projectId,
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail="You must be assigned to an event task before timing in.",
-            )
+        # if bool(project.get("isEvent")) and not _volunteer_is_assigned_to_event_task(
+        #     connection,
+        #     volunteer_id,
+        #     payload.projectId,
+        # ):
+        #     raise HTTPException(
+        #         status_code=403,
+        #         detail="You must be assigned to an event task before timing in.",
+        #     )
 
-        if bool(project.get("isEvent")) and not _event_attendance_window_has_started(project, now):
-            raise HTTPException(
-                status_code=400,
-                detail="This event has not started yet.",
-            )
-
-        if bool(project.get("isEvent")) and _event_attendance_window_has_ended(project, now):
-            raise HTTPException(
-                status_code=400,
-                detail="This event attendance window has already ended.",
-            )
+        # if bool(project.get("isEvent")) and not _event_attendance_window_has_started(project, now):
+        #     raise HTTPException(
+        #         status_code=400,
+        #         detail="This event has not started yet.",
+        #     )
+        #
+        # if bool(project.get("isEvent")) and _event_attendance_window_has_ended(project, now):
+        #     raise HTTPException(
+        #         status_code=400,
+        #         detail="This event attendance window has already ended.",
+        #     )
 
         attendance_photo = str(payload.attendancePhoto or "").strip()
         if not attendance_photo:
@@ -2916,11 +3146,11 @@ async def start_volunteer_log(volunteer_id: str, payload: VolunteerTimeLogStartP
             ),
             None,
         )
-        if today_log is not None:
-            raise HTTPException(
-                status_code=409,
-                detail="Attendance has already been recorded for this event today.",
-            )
+        # if today_log is not None:
+        #     raise HTTPException(
+        #         status_code=409,
+        #         detail="Attendance has already been recorded for this event today.",
+        #     )
 
         new_log = {
             "id": f"timelog-{int(datetime.now(timezone.utc).timestamp() * 1000)}",
@@ -3094,7 +3324,10 @@ async def request_partner_project_join(payload: PartnerProjectJoinRequestPayload
         )
         if existing_application is not None:
             existing_status = str(existing_application.get("status") or "").strip()
-            if existing_status in {"Pending", "Rejected"}:
+            if existing_status in {"Pending", "Rejected", "Revision Requested", "Needs Revision", "Revision", "Resubmitted"}:
+                is_revision = existing_status in {"Revision Requested", "Needs Revision", "Revision", "Rejected"} or bool((payload.proposalDetails or {}).get("isResubmission")) or bool((payload.proposalDetails or {}).get("isRevision"))
+                new_status = "Resubmitted" if is_revision else "Pending"
+                now_iso = datetime.now(timezone.utc).isoformat()
                 refreshed_application = {
                     **existing_application,
                     "projectId": str(existing_application.get("projectId") or proposal_project_id),
@@ -3106,10 +3339,11 @@ async def request_partner_project_join(payload: PartnerProjectJoinRequestPayload
                         requested_program_module,
                         target_project,
                     ),
-                    "status": "Pending",
-                    "requestedAt": datetime.now(timezone.utc).isoformat(),
-                    "reviewedAt": None if existing_status == "Rejected" else existing_application.get("reviewedAt"),
-                    "reviewedBy": None if existing_status == "Rejected" else existing_application.get("reviewedBy"),
+                    "status": new_status,
+                    "requestedAt": existing_application.get("requestedAt") or now_iso,
+                    "resubmittedAt": now_iso if is_revision else existing_application.get("resubmittedAt"),
+                    "reviewedAt": None if is_revision or existing_status == "Rejected" else existing_application.get("reviewedAt"),
+                    "reviewedBy": None if is_revision or existing_status == "Rejected" else existing_application.get("reviewedBy"),
                     "reviewNotes": None,
                 }
                 _postgres_upsert_hot_item(connection, "partnerProjectApplications", refreshed_application)
@@ -3242,8 +3476,12 @@ async def review_partner_project_application(
 ) -> dict[str, Any]:
     _require_postgres()
     next_status = str(payload.status or "").strip()
-    if next_status not in {"Approved", "Rejected"}:
-        raise HTTPException(status_code=400, detail="Partner application review must approve or reject the request.")
+    valid_review_statuses = {"Approved", "Rejected", "Revision Requested", "Needs Revision", "Revision"}
+    if next_status not in valid_review_statuses:
+        raise HTTPException(status_code=400, detail="Partner application review must approve, reject, or request revision.")
+
+    if next_status in {"Needs Revision", "Revision"}:
+        next_status = "Revision Requested"
 
     reviewed_by = str(payload.reviewedBy or "").strip()
     if not reviewed_by:
@@ -3310,7 +3548,7 @@ async def review_partner_project_application(
                     if str(candidate.get("contactEmail") or "").strip().lower() == partner_email
                 ]
 
-            partner_id = str(partner_records[0].get("id") or "") if partner_records else ""
+            partner_id = str(partner_records[0].get("id") or "") if partner_records else (partner_user_id or str(application.get("partnerId") or ""))
             created_project_id = f"project-proposal-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
             parent_project_id = _normalize_proposal_parent_project_id(
                 proposal_details.get("targetProjectId")
@@ -3436,11 +3674,11 @@ async def review_partner_project_application(
             "status": next_status,
             "reviewedAt": reviewed_at,
             "reviewedBy": reviewed_by,
-            "reviewNotes": review_notes if next_status == "Rejected" else None,
+            "reviewNotes": review_notes if next_status in {"Rejected", "Revision Requested", "Needs Revision", "Revision"} else None,
         }
         _postgres_upsert_hot_item(connection, "partnerProjectApplications", updated_application)
 
-        if next_status in {"Rejected", "Approved"}:
+        if next_status in {"Rejected", "Approved", "Revision Requested", "Needs Revision", "Revision"}:
             broadcast_keys.append("messages")
             proposal_details = updated_application.get("proposalDetails")
             if not isinstance(proposal_details, dict):
@@ -3514,10 +3752,30 @@ async def review_partner_project_application(
     return response
 
 
+def _insert_join_group_message(connection, project_id, user_id):
+    import uuid
+    from psycopg.rows import dict_row
+    ensure_project_group_message_storage()
+    msg_id = str(uuid.uuid4())
+    msg_timestamp = datetime.now(timezone.utc).isoformat()
+    with connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            insert into project_group_messages (
+                id, project_id, sender_id, content, timestamp, kind, attachments
+            ) values (%s, %s, %s, %s, %s, %s, %s)
+            returning id as project_group_messages_id, project_id, sender_id, content, timestamp, kind, need_post, scope_proposal, response_to_message_id, response_action, response_to_title, attachments
+            """,
+            (msg_id, project_id, user_id, "I have joined the event!", msg_timestamp, 'message', '[]')
+        )
+        return cursor.fetchone()
+
+
 @app.post("/volunteer-matches/{match_id}/review")
 # API endpoint that approves or rejects a volunteer join request.
 async def review_volunteer_match(match_id: str, payload: VolunteerMatchReviewPayload) -> dict[str, Any]:
     _require_postgres()
+    broadcast_messages = []
     next_status = str(payload.status or "").strip()
     if next_status not in {"Matched", "Rejected"}:
         raise HTTPException(status_code=400, detail="Volunteer request review must match or reject the request.")
@@ -3576,13 +3834,21 @@ async def review_volunteer_match(match_id: str, payload: VolunteerMatchReviewPay
             _postgres_ensure_volunteer_project_join_record(connection, project_id, volunteer, "VolunteerJoin")
             broadcast_keys.extend([project_storage_key, "volunteerProjectJoins"])
 
+            msg_row = _insert_join_group_message(connection, project_id, volunteer_user_id)
+            if msg_row:
+                broadcast_messages.append((project_id, serialize_project_group_message_row(msg_row)))
+
         updated_volunteer = _postgres_sync_volunteer_engagement_status(connection, volunteer_id)
         if updated_volunteer is not None:
             broadcast_keys.append("volunteers")
 
         connection.commit()
 
+    _projects_snapshot_cache.clear()
     await connection_manager.broadcast_storage_event(list(dict.fromkeys(broadcast_keys)))
+    for p_id, msg in broadcast_messages:
+        _invalidate_collection_cache(["projectGroupMessages"])
+        await connection_manager.broadcast_project_group_message_event(p_id, msg)
     return {"match": updated_match}
 
 
@@ -3590,6 +3856,7 @@ async def review_volunteer_match(match_id: str, payload: VolunteerMatchReviewPay
 # API endpoint that joins a user directly to a project or event.
 async def join_project(project_id: str, payload: ProjectJoinPayload) -> dict[str, Any]:
     _require_postgres()
+    broadcast_messages = []
     with get_connection() as connection:
         project, project_storage_key = _postgres_get_project_like_item_by_id(connection, project_id)
         if project is None or project_storage_key is None:
@@ -3615,6 +3882,10 @@ async def join_project(project_id: str, payload: ProjectJoinPayload) -> dict[str
         }
         _postgres_upsert_hot_item(connection, project_storage_key, updated_project)
 
+        msg_row = _insert_join_group_message(connection, project_id, payload.userId)
+        if msg_row:
+            broadcast_messages.append((project_id, serialize_project_group_message_row(msg_row)))
+
         volunteer_profile = volunteer
         if volunteer is not None:
             _postgres_ensure_volunteer_project_join_record(connection, project_id, volunteer, "VolunteerJoin")
@@ -3622,7 +3893,11 @@ async def join_project(project_id: str, payload: ProjectJoinPayload) -> dict[str
 
         connection.commit()
 
+    _projects_snapshot_cache.clear()
     await connection_manager.broadcast_storage_event([project_storage_key, "volunteerProjectJoins", "volunteers"])
+    for p_id, msg in broadcast_messages:
+        _invalidate_collection_cache(["projectGroupMessages"])
+        await connection_manager.broadcast_project_group_message_event(p_id, msg)
     return {"project": updated_project, "volunteerProfile": volunteer_profile}
 
 
@@ -4604,6 +4879,14 @@ async def clear_storage() -> dict[str, str]:
     await connection_manager.broadcast_storage_event(list(HOT_STORAGE_TABLES.keys()) + list(SPECIAL_STORAGE_KEYS))
     return {"status": "ok"}
 
+
+@app.post("/notify/gcal-sync")
+async def notify_gcal_sync(payload: GcalSyncPayload) -> dict[str, Any]:
+    try:
+        _send_calendar_sync_email(payload)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/admin/clear-cache")
 async def clear_all_caches() -> dict[str, Any]:

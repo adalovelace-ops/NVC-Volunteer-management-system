@@ -1,5 +1,5 @@
 import { launchImageLibrary } from 'react-native-image-picker';
-import { pick } from 'react-native-document-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { Linking, Platform } from 'react-native';
 import { compressImage } from './imageCompression';
 
@@ -203,25 +203,28 @@ export async function pickDocumentFromDevice(): Promise<string | null> {
   }
 
   try {
-    const result = await pick({
-      presentationStyle: 'formSheet',
-      copyTo: 'cachesDirectory',
+    const result = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
     });
 
-    if (!result || result.length === 0) {
+    if (result.canceled || !result.assets || result.assets.length === 0) {
       return null;
     }
 
-    const asset = result[0] as any;
-    if (asset.base64) {
-      return `data:${asset.mimeType || 'application/octet-stream'};base64,${asset.base64}`;
+    const asset = result.assets[0];
+    
+    // On web, if we want a data URI, we can read the file object directly
+    if (Platform.OS === 'web' && asset.file) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target?.result as string);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(asset.file as File);
+      });
     }
 
     return asset.uri;
   } catch (error) {
-    if (error instanceof Error && error.message === 'User cancelled document picker') {
-      return null;
-    }
     throw error;
   }
 }

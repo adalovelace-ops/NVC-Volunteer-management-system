@@ -5,8 +5,8 @@
   "orientation": "portrait",
   "description": "Volunteer and Community Engagement Platform",
   "env": {
-    "apiBaseUrl": "http://127.0.0.1:8000",
-    "webApiBaseUrl": "http://127.0.0.1:8000",
+    "apiBaseUrl": "http://YOUR_SYSTEM_IP:8000",
+    "webApiBaseUrl": "http://YOUR_SYSTEM_IP:8000",
     "googleMapsWebApiKey": ""
   },
   "permissions": {

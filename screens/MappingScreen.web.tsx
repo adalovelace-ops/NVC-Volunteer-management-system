@@ -1,600 +1,249 @@
 import React, { useEffect, useRef, useState } from 'react';
-import ModernTheme from '../utils/modernTheme';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
+  ScrollView,
   Alert,
   Modal,
   ActivityIndicator,
-  Image,
-  ScrollView,
 } from 'react-native';
-import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+import { MaterialIcons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import { useAuth } from '../contexts/AuthContext';
-import { Partner, Project, Volunteer, VolunteerProjectJoinRecord } from '../models/types';
-import {
-  getAllPartners,
-  getAllVolunteers,
-  getProjectsScreenSnapshot,
-  subscribeToStorageChanges,
-} from '../models/storage';
-import { navigateToAvailableRoute } from '../utils/navigation';
-import { withImpactMapFallbackProjects } from '../utils/impactMapFallbacks';
+import { Project } from '../models/types';
+import { getAllProjects } from '../models/storage';
 import {
   PHILIPPINES_BOUNDS,
   PHILIPPINES_WEB_CENTER,
-  getMappedProjects,
   getProjectMarkerColor,
-  getPrimaryProjectImageSource,
 } from '../utils/projectMap';
-import { getPartnerForMappedProject, getProjectIdsForPartnerUser } from '../utils/mapProjectLinks';
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
-import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
-import { createGoogleMapsMarkerIcon, loadGoogleMaps } from '../utils/webGoogleMaps';
-import { getProjectVolunteerMapEntries } from '../utils/projectVolunteers';
 
 const MapHost = 'div' as any;
-const MAP_FIT_PADDING_PX = 64;
-const MAP_MAX_FIT_ZOOM = 12;
-const MAP_SINGLE_MARKER_ZOOM = 10;
 
-type MapStylePresetKey = 'projects-view' | 'events-view' | 'volunteers-view' | 'partners-view';
+// Resolves the Google Maps web API key from environment or Expo runtime config.
+function getWebGoogleMapsApiKey(): string {
+  const fromEnv =
+    process.env.GOOGLE_MAPS_WEB_API_KEY ||
+    process.env.VITE_GOOGLE_MAPS_WEB_API_KEY ||
+    process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY;
 
-type MapStylePreset = {
-  key: MapStylePresetKey;
-  label: string;
-  description: string;
-  mapTypeId: 'roadmap' | 'terrain' | 'hybrid';
-  accentColor: string;
-  chipBg: string;
-  chipBorder: string;
-  shellBg: string;
-  shellBorder: string;
-  errorBg: string;
-  errorBorder: string;
-};
+  if (fromEnv && typeof fromEnv === 'string' && fromEnv.trim().length > 0) {
+    return fromEnv.trim();
+  }
 
-type VolunteerMapAccountOption = {
-  id: string;
-  label: string;
-  projectIds: string[];
-  mappedProjectCount?: number;
-};
+  const constantsAny = Constants as typeof Constants & {
+    manifest?: { extra?: Record<string, unknown> };
+    manifest2?: { extra?: { expoClient?: { extra?: Record<string, unknown> } } };
+  };
 
-function escapeHtml(value: string): string {
+  const fromExpoConfig = Constants.expoConfig?.extra?.webGoogleMapsApiKey;
+  const fromManifest = constantsAny.manifest?.extra?.webGoogleMapsApiKey;
+  const fromManifest2 = constantsAny.manifest2?.extra?.expoClient?.extra?.webGoogleMapsApiKey;
+
+  const resolvedKey =
+    fromExpoConfig ??
+    fromManifest ??
+    fromManifest2 ??
+    'AIzaSyDrZWSM9FJ7pURqvnd2lNqK5y0I084kupE';
+
+  return typeof resolvedKey === 'string' && resolvedKey.trim().length > 0
+    ? resolvedKey.trim()
+    : 'AIzaSyDrZWSM9FJ7pURqvnd2lNqK5y0I084kupE';
+}
+
+// Loads the Google Maps browser script once and reuses the same promise.
+function loadGoogleMapsScript(apiKey: string) {
+  const browserWindow = window as Window & {
+    google?: any;
+    __googleMapsScriptPromise?: Promise<void>;
+  };
+
+  if (browserWindow.google?.maps) {
+    return Promise.resolve();
+  }
+
+  if (browserWindow.__googleMapsScriptPromise) {
+    return browserWindow.__googleMapsScriptPromise;
+  }
+
+  browserWindow.__googleMapsScriptPromise = new Promise<void>((resolve, reject) => {
+    const existingScript = document.getElementById('google-maps-js-api') as HTMLScriptElement | null;
+
+    const handleLoad = () => {
+      if (browserWindow.google?.maps) {
+        resolve();
+        return;
+      }
+
+      reject(new Error('Google Maps JavaScript API did not initialize.'));
+    };
+
+    const handleError = () => reject(new Error('Failed to load Google Maps JavaScript API.'));
+
+    if (existingScript) {
+      existingScript.addEventListener('load', handleLoad, { once: true });
+      existingScript.addEventListener('error', handleError, { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.id = 'google-maps-js-api';
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}`;
+    script.async = true;
+    script.defer = true;
+    script.addEventListener('load', handleLoad, { once: true });
+    script.addEventListener('error', handleError, { once: true });
+    document.head.appendChild(script);
+  });
+
+  return browserWindow.__googleMapsScriptPromise;
+}
+
+// Escapes dynamic strings before they are injected into Google Maps HTML content.
+function escapeHtml(value: string) {
   return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+    .replace(/'/g, '&#39;');
 }
 
-const MAP_STYLE_PRESETS: MapStylePreset[] = [
-  {
-    key: 'projects-view',
-    label: 'Projects',
-    description: 'Overview of all active community projects across the Philippines.',
-    mapTypeId: 'roadmap',
-    accentColor: '#1d4ed8',
-    chipBg: '#eff6ff',
-    chipBorder: '#bfdbfe',
-    shellBg: '#dbeafe',
-    shellBorder: '#bfdbfe',
-    errorBg: 'rgba(219, 234, 254, 0.92)',
-    errorBorder: '#bfdbfe',
-  },
-  {
-    key: 'events-view',
-    label: 'Events',
-    description: 'Inspect scheduled volunteer events and field activities.',
-    mapTypeId: 'roadmap',
-    accentColor: '#b45309',
-    chipBg: '#fffbeb',
-    chipBorder: '#fde68a',
-    shellBg: '#fef3c7',
-    shellBorder: '#fde68a',
-    errorBg: 'rgba(254, 243, 199, 0.92)',
-    errorBorder: '#fde68a',
-  },
-  {
-    key: 'volunteers-view',
-    label: 'Volunteers',
-    description: 'Green roadmap styling and volunteer event participation.',
-    mapTypeId: 'roadmap',
-    accentColor: '#166534',
-    chipBg: '#f0fdf4',
-    chipBorder: '#bbf7d0',
-    shellBg: '#dcfce7',
-    shellBorder: '#bbf7d0',
-    errorBg: 'rgba(220, 252, 231, 0.92)',
-    errorBorder: '#bbf7d0',
-  },
-  {
-    key: 'partners-view',
-    label: 'Partners',
-    description: 'Blue roadmap styling for partner planning and project footprints.',
-    mapTypeId: 'roadmap',
-    accentColor: '#0f766e',
-    chipBg: '#ecfeff',
-    chipBorder: '#a5f3fc',
-    shellBg: '#e0f2fe',
-    shellBorder: '#bae6fd',
-    errorBg: 'rgba(224, 242, 254, 0.92)',
-    errorBorder: '#bae6fd',
-  },
-];
-
-function getWebGoogleMapsApiKey() {
-  return process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '';
-}
-
-function getCurrentWebOrigin() {
-  if (typeof window === 'undefined' || !window.location?.origin) {
-    return 'http://localhost';
-  }
-
-  return window.location.origin;
-}
-
-function getGoogleMapsErrorMessage(error: unknown, apiKey: string) {
-  const currentOrigin = getCurrentWebOrigin();
-
-  if (!apiKey.trim()) {
-    return 'Google Maps web key is missing. Add GOOGLE_MAPS_WEB_API_KEY to .env and restart the web app.';
-  }
-
-  const message = error instanceof Error ? error.message : '';
-  
-  if (message.includes('did not initialize')) {
-    return `Google Maps failed to initialize.\n\nTroubleshooting:\n• Verify "Maps JavaScript API" is ENABLED in Google Cloud Console\n• Check your API key is valid\n• Current URL: ${currentOrigin}\n• Clear browser cache and try again`;
-  }
-
-  return `Google Maps could not load: ${message || 'Unknown error. Check browser console for details.'}`;
-}
-
-// Displays the web version of the project map using the Google Maps JavaScript API.
+// Displays the web version of the project map using Google Maps JavaScript API.
 export default function MappingScreen({ navigation }: any) {
   const { user } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [volunteers, setVolunteers] = useState<Volunteer[]>([]);
-  const [partners, setPartners] = useState<Partner[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [showDetails, setShowDetails] = useState(false);
-  const [showMapStyleMenu, setShowMapStyleMenu] = useState(false);
-  const [showVolunteerMenu, setShowVolunteerMenu] = useState(false);
-  const [selectedMapStyleKey, setSelectedMapStyleKey] = useState<MapStylePresetKey>('projects-view');
-  const [selectedVolunteerId, setSelectedVolunteerId] = useState<string | null>(null);
-  const [volunteerJoinRecords, setVolunteerJoinRecords] = useState<VolunteerProjectJoinRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [mapError, setMapError] = useState<string | null>(null);
+  const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
+  const googleMapsApiKey = getWebGoogleMapsApiKey();
   const mapElementRef = useRef<HTMLDivElement | null>(null);
-  const mapInstanceRef = useRef<any>(null);
-  const markerRefs = useRef<Array<{ marker: any; listener: { remove: () => void } }>>([]);
-  const infoWindowRef = useRef<any>(null);
-  const infoWindowCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const infoWindowHoveringRef = useRef(false);
-  const markerHoveringRef = useRef(false);
-  const openInfoWindowProjectIdRef = useRef<string | null>(null);
-  const webGoogleMapsApiKey = getWebGoogleMapsApiKey();
-  const volunteerMapAccounts: VolunteerMapAccountOption[] = React.useMemo(
-    () =>
-      [...volunteers]
-        .sort((left, right) => left.name.localeCompare(right.name))
-        .map(volunteer => {
-          const explicitJoinedEventIds = new Set(
-            volunteerJoinRecords
-              .filter(
-                record =>
-                  record.volunteerId === volunteer.id ||
-                  record.volunteerUserId === volunteer.userId
-              )
-              .map(record => record.projectId)
-          );
 
-          const joinedEventProjectIds = projects
-            .filter(
-              project =>
-                project.isEvent &&
-                (
-                  explicitJoinedEventIds.has(project.id) ||
-                  (project.joinedUserIds || []).includes(volunteer.userId) ||
-                  (project.volunteers || []).includes(volunteer.id) ||
-                  (project.internalTasks || []).some(task =>
-                    task.assignedVolunteerId === volunteer.id ||
-                    (task.assignedVolunteerIds || []).includes(volunteer.id)
-                  )
-                )
-            )
-            .map(project => project.id);
-
-          return {
-            id: volunteer.id,
-            label: volunteer.name,
-            projectIds: joinedEventProjectIds,
-          };
-        }),
-    [projects, volunteers, volunteerJoinRecords]
-  );
-
-  const availableVolunteerMapAccounts = React.useMemo(() => {
-    const mappedIds = new Set(getMappedProjects(projects).map(project => project.id));
-    return volunteerMapAccounts
-      .map(account => ({
-        ...account,
-        projectIds: Array.from(new Set((account.projectIds || []).filter(id => mappedIds.has(id)))),
-      }))
-      .filter(account => account.projectIds.length > 0);
-  }, [projects, volunteerMapAccounts]);
-
-  useEffect(() => {
-    setSelectedVolunteerId(current =>
-      current && availableVolunteerMapAccounts.some(account => account.id === current)
-        ? current
-        : availableVolunteerMapAccounts[0]?.id || null
-    );
-  }, [availableVolunteerMapAccounts]);
-
-  const selectedVolunteerAccount =
-    selectedVolunteerId
-      ? availableVolunteerMapAccounts.find(account => account.id === selectedVolunteerId) || null
-      : availableVolunteerMapAccounts[0] || null;
-
-  const displayProjects = React.useMemo(() => {
-    if (selectedMapStyleKey === 'projects-view') {
-      return projects.filter(p => !p.isEvent);
-    }
-    if (selectedMapStyleKey === 'events-view') {
-      return projects.filter(p => p.isEvent);
-    }
-    if (selectedMapStyleKey === 'volunteers-view') {
-      if (!selectedVolunteerAccount) {
-        return projects.filter(p => p.isEvent);
-      }
-      const allowedProjectIds = new Set(selectedVolunteerAccount.projectIds);
-      return projects.filter(project => allowedProjectIds.has(project.id));
-    }
-    if (selectedMapStyleKey === 'partners-view') {
-      return projects;
-    }
-    return projects;
-  }, [projects, selectedMapStyleKey, selectedVolunteerAccount]);
-
-  const mappedProjects = React.useMemo(() => {
-    const result = getMappedProjects(displayProjects);
-    console.log('[MAP DEBUG] Total displayProjects:', displayProjects.length);
-    console.log('[MAP DEBUG] displayProjects:', displayProjects.map(p => ({
-      id: p.id,
-      title: p.title,
-      parentProjectId: p.parentProjectId,
-      isEvent: p.isEvent,
-      lat: p.location?.latitude,
-      lng: p.location?.longitude
-    })));
-    console.log('[MAP DEBUG] Filtered mappedProjects:', result.length);
-    console.log('[MAP DEBUG] mappedProjects:', result.map(p => ({
-      id: p.id,
-      title: p.title,
-      parentProjectId: p.parentProjectId,
-      lat: p.location.latitude,
-      lng: p.location.longitude
-    })));
-    return result;
-  }, [displayProjects]);
-  const markerVolunteerEntriesByProjectId = React.useMemo(
-    () =>
-      new Map(
-        mappedProjects.map(project => [
-          project.id,
-          getProjectVolunteerMapEntries(project, volunteers, volunteerJoinRecords),
-        ])
-      ),
-    [mappedProjects, volunteers, volunteerJoinRecords]
-  );
-  const selectedMapStyle =
-    MAP_STYLE_PRESETS.find(preset => preset.key === selectedMapStyleKey) || MAP_STYLE_PRESETS[0];
-  const featuredProject = mappedProjects[0] || null;
-  const statusLegend = [
-    { label: 'In Progress', color: '#5B9B57' },
-    { label: 'Planned', color: '#5F8FDC' },
-    { label: 'Completed', color: '#8E58D6' },
-    { label: 'On Hold', color: '#E7A23D' },
-    { label: 'Cancelled', color: '#B95258' },
+  const statusCategories = [
+    { key: 'Planning', label: 'Planning (Draft)', tag: 'Draft', color: '#2563EB', desc: 'Draft / Upcoming' },
+    { key: 'In Progress', label: 'In Progress (Active)', tag: 'Active', color: '#16A34A', desc: 'Active' },
+    { key: 'On Hold', label: 'On Hold (Not Active Yet)', tag: 'Not Active Yet', color: '#D97706', desc: 'Not Active Yet / Paused' },
+    { key: 'Completed', label: 'Completed (Closed)', tag: 'Closed', color: '#7C3AED', desc: 'Closed Projects' },
+    { key: 'Cancelled', label: 'Cancelled', tag: 'Cancel Project', color: '#DC2626', desc: 'Cancel Project' },
   ];
+
+  const filteredProjects = selectedStatus
+    ? projects.filter(p => {
+        const s = getProjectDisplayStatus(p) as any;
+        if (selectedStatus === 'Planning') return s === 'Planning' || s === 'Planned' || (p as any).proposalStage;
+        if (selectedStatus === 'In Progress' || selectedStatus === 'Active') return s === 'In Progress' || s === 'Active' || p.status === 'Approved';
+        return s === selectedStatus;
+      })
+    : projects;
 
   useEffect(() => {
     void loadProjects();
-  }, [user]);
+  }, []);
 
   useEffect(() => {
-    return subscribeToStorageChanges(
-      ['projects', 'events', 'volunteers', 'partnerProjectApplications', 'volunteerProjectJoins'],
-      () => {
-        void loadProjects();
-      }
-    );
-  }, [user]);
-
-  const clearMarkers = () => {
-    if (infoWindowRef.current) {
-      try {
-        infoWindowRef.current.close();
-      } catch {
-        // ignore
-      }
+    if (!googleMapsApiKey) {
+      setMapError('Google Maps web key is missing. Add GOOGLE_MAPS_WEB_API_KEY to .env.');
+      return;
     }
-    markerRefs.current.forEach(({ marker, listener }) => {
-      listener.remove();
-      marker.setMap(null);
-    });
-    markerRefs.current = [];
-  };
 
-  useEffect(() => {
     if (!mapElementRef.current) {
       return;
     }
 
     let cancelled = false;
+    const browserWindow = window as Window & {
+      google?: any;
+      gm_authFailure?: () => void;
+    };
+
+    browserWindow.gm_authFailure = () => {
+      if (!cancelled) {
+        setMapError('Google Maps rejected the web key. Check Maps JavaScript API and localhost referrer restrictions.');
+      }
+    };
 
     const renderMap = async () => {
       try {
-        const googleMaps = await loadGoogleMaps(webGoogleMapsApiKey);
-        if (cancelled || !mapElementRef.current) {
+        await loadGoogleMapsScript(googleMapsApiKey);
+        if (cancelled || !mapElementRef.current || !browserWindow.google?.maps) {
           return;
         }
 
-        if (!mapInstanceRef.current) {
-          mapInstanceRef.current = new googleMaps.maps.Map(mapElementRef.current, {
-            center: PHILIPPINES_WEB_CENTER,
-            zoom: 6,
-            minZoom: 5,
-            mapTypeId: selectedMapStyle.mapTypeId,
-            mapTypeControl: false,
-            streetViewControl: false,
-            fullscreenControl: true,
-            zoomControl: true,
-            restriction: {
-              latLngBounds: PHILIPPINES_BOUNDS,
-              strictBounds: false,
-            },
-          });
-        } else {
-          mapInstanceRef.current.setOptions({ mapTypeId: selectedMapStyle.mapTypeId });
-        }
-
-        const map = mapInstanceRef.current;
-        clearMarkers();
         setMapError(null);
-        if (!infoWindowRef.current) {
-          infoWindowRef.current = new googleMaps.maps.InfoWindow();
-        }
 
-        if (mappedProjects.length === 0) {
-          console.log('[MAP DEBUG] No mapped projects - showing default view');
-          map.setCenter(PHILIPPINES_WEB_CENTER);
-          map.setZoom(6);
-          return;
-        }
+        const map = new browserWindow.google.maps.Map(mapElementRef.current, {
+          center: PHILIPPINES_WEB_CENTER,
+          zoom: 6,
+          minZoom: 5,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: false,
+          restriction: {
+            latLngBounds: PHILIPPINES_BOUNDS,
+            strictBounds: false,
+          },
+        });
 
-        console.log('[MAP DEBUG] Creating markers for', mappedProjects.length, 'projects');
-        const bounds = new googleMaps.maps.LatLngBounds();
+        const bounds = new browserWindow.google.maps.LatLngBounds();
+        const infoWindow = new browserWindow.google.maps.InfoWindow();
 
-        mappedProjects.forEach(project => {
-          console.log('[MAP DEBUG] Creating marker for:', project.title, 'at', project.location.latitude, project.location.longitude);
-          const marker = new googleMaps.maps.Marker({
+        filteredProjects.forEach((project, index) => {
+          const marker = new browserWindow.google.maps.Marker({
+            map,
             position: {
               lat: project.location.latitude,
               lng: project.location.longitude,
             },
-            map,
             title: project.title,
-            icon: createGoogleMapsMarkerIcon(
-              googleMaps,
-              getProjectMarkerColor(project),
-              markerVolunteerEntriesByProjectId.get(project.id)?.length || 0
-            ),
+            label: {
+              text: String(index + 1),
+              color: '#ffffff',
+              fontWeight: '700',
+            },
+            icon: {
+              path: browserWindow.google.maps.SymbolPath.CIRCLE,
+              fillColor: getProjectMarkerColor(project),
+              fillOpacity: 1,
+              strokeColor: '#ffffff',
+              strokeOpacity: 1,
+              strokeWeight: 2,
+              scale: 12,
+            },
           });
 
-          const listener = marker.addListener('click', () => {
+          bounds.extend(marker.getPosition());
+
+          marker.addListener('click', () => {
+            infoWindow.setContent(`
+              <div style="width:220px;padding:14px;font-family:Arial,sans-serif;">
+                <div style="margin-bottom:8px;font-size:16px;font-weight:700;color:#111827;">
+                  ${escapeHtml(project.title)}
+                </div>
+                <div style="display:inline-block;margin-bottom:10px;padding:4px 10px;border-radius:999px;color:#fff;font-size:11px;font-weight:700;background:${getProjectMarkerColor(project)};">
+                  ${escapeHtml(project.isEvent ? 'Event' : 'Program')}
+                </div>
+                <div style="margin-bottom:6px;font-size:12px;color:#4b5563;"><strong>Status:</strong> ${escapeHtml(project.status)}</div>
+                <div style="margin-bottom:6px;font-size:12px;color:#4b5563;"><strong>Location:</strong> ${project.location.latitude.toFixed(4)}, ${project.location.longitude.toFixed(4)}</div>
+                <div style="font-size:12px;color:#4b5563;"><strong>Volunteers Needed:</strong> ${project.volunteersNeeded}</div>
+              </div>
+            `);
+            infoWindow.open({ anchor: marker, map });
             setSelectedProject(project);
             setShowDetails(true);
           });
-
-          const buildHoverContent = () => {
-            const projectVolunteerEntries =
-              markerVolunteerEntriesByProjectId.get(project.id) ||
-              getProjectVolunteerMapEntries(project, volunteers, volunteerJoinRecords);
-
-            const partner = getPartnerForMappedProject(project, partners);
-
-            const container = document.createElement('div');
-            container.style.minWidth = '220px';
-            container.style.maxWidth = '280px';
-            container.style.fontFamily = 'DM Sans, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
-            container.style.fontSize = '12px';
-            container.style.lineHeight = '16px';
-
-            const header = document.createElement('div');
-            header.innerHTML = `<div style="font-weight:700;color:#0f172a;margin-bottom:4px;">${escapeHtml(project.title)}</div><div style="font-weight:700;color:#475569;margin-bottom:6px;">${project.isEvent ? 'Event' : 'Project'}</div>`;
-            container.appendChild(header);
-
-            if (partner && !project.isEvent) {
-              const partnerRow = document.createElement('button');
-              partnerRow.type = 'button';
-              partnerRow.dataset.kind = 'partner';
-              partnerRow.dataset.id = partner.id;
-              partnerRow.style.display = 'block';
-              partnerRow.style.width = '100%';
-              partnerRow.style.textAlign = 'left';
-              partnerRow.style.border = '0';
-              partnerRow.style.background = 'transparent';
-              partnerRow.style.padding = '6px 0';
-              partnerRow.style.cursor = 'pointer';
-              partnerRow.innerHTML = `<span style="font-weight:600;color:#0f766e;">Partner:</span> <span style="color:#0f172a;text-decoration:underline;">${escapeHtml(partner.name)}</span>`;
-              container.appendChild(partnerRow);
-            }
-
-            const volunteerHeader = document.createElement('div');
-            volunteerHeader.style.marginTop = partner ? '6px' : '0';
-            volunteerHeader.style.fontWeight = '600';
-            volunteerHeader.style.color = '#166534';
-            volunteerHeader.textContent = `Volunteers (${projectVolunteerEntries.length})`;
-            container.appendChild(volunteerHeader);
-
-            if (projectVolunteerEntries.length === 0) {
-              const empty = document.createElement('div');
-              empty.style.color = '#64748b';
-              empty.style.paddingTop = '4px';
-              empty.textContent = 'No volunteers joined yet.';
-              container.appendChild(empty);
-            } else {
-              projectVolunteerEntries.slice(0, 8).forEach(item => {
-                const row = document.createElement('button');
-                row.type = 'button';
-                row.dataset.kind = 'volunteer';
-                row.dataset.id = item.volunteerId || item.id;
-                row.style.display = 'block';
-                row.style.width = '100%';
-                row.style.textAlign = 'left';
-                row.style.border = '0';
-                row.style.background = 'transparent';
-                row.style.padding = '5px 0';
-                row.style.cursor = 'pointer';
-                row.style.color = '#0f172a';
-                row.style.textDecoration = 'underline';
-                row.textContent = item.label;
-                container.appendChild(row);
-              });
-              if (projectVolunteerEntries.length > 8) {
-                const more = document.createElement('div');
-                more.style.color = '#64748b';
-                more.style.paddingTop = '4px';
-                more.textContent = `+${projectVolunteerEntries.length - 8} more`;
-                container.appendChild(more);
-              }
-            }
-
-            container.addEventListener('click', (event) => {
-              const target = event.target as HTMLElement | null;
-              const button = target?.closest?.('button') as HTMLButtonElement | null;
-              const kind = button?.dataset?.kind;
-              const id = button?.dataset?.id;
-              if (!kind || !id) {
-                return;
-              }
-              if (kind === 'volunteer') {
-                navigateToAvailableRoute(navigation, 'Volunteers', { volunteerId: id }, { routeName: 'Map' });
-              } else if (kind === 'partner') {
-                navigateToAvailableRoute(navigation, 'Partners', { partnerId: id }, { routeName: 'Map' });
-              }
-              try {
-                infoWindowRef.current?.close?.();
-              } catch {
-                // ignore
-              }
-            });
-
-            // Keep the popup open when hovering it.
-            container.addEventListener('mouseenter', () => {
-              infoWindowHoveringRef.current = true;
-              if (infoWindowCloseTimerRef.current) {
-                clearTimeout(infoWindowCloseTimerRef.current);
-                infoWindowCloseTimerRef.current = null;
-              }
-            });
-            container.addEventListener('mouseleave', () => {
-              infoWindowHoveringRef.current = false;
-              if (infoWindowCloseTimerRef.current) {
-                clearTimeout(infoWindowCloseTimerRef.current);
-              }
-              infoWindowCloseTimerRef.current = setTimeout(() => {
-                if (markerHoveringRef.current) {
-                  return;
-                }
-                try {
-                  infoWindowRef.current?.close?.();
-                  openInfoWindowProjectIdRef.current = null;
-                } catch {
-                  // ignore
-                }
-              }, 200);
-            });
-
-            return container;
-          };
-
-          const hoverOpenListener = marker.addListener('mouseover', () => {
-            if (!infoWindowRef.current) {
-              return;
-            }
-            markerHoveringRef.current = true;
-            if (infoWindowCloseTimerRef.current) {
-              clearTimeout(infoWindowCloseTimerRef.current);
-              infoWindowCloseTimerRef.current = null;
-            }
-            if (openInfoWindowProjectIdRef.current === project.id) {
-              return;
-            }
-            const content = buildHoverContent();
-            infoWindowRef.current.setContent(content);
-            infoWindowRef.current.open({ map, anchor: marker });
-            openInfoWindowProjectIdRef.current = project.id;
-          });
-
-          const hoverCloseListener = marker.addListener('mouseout', () => {
-            markerHoveringRef.current = false;
-            if (infoWindowCloseTimerRef.current) {
-              clearTimeout(infoWindowCloseTimerRef.current);
-            }
-            infoWindowCloseTimerRef.current = setTimeout(() => {
-              if (infoWindowHoveringRef.current || markerHoveringRef.current) {
-                return;
-              }
-              try {
-                infoWindowRef.current?.close?.();
-                openInfoWindowProjectIdRef.current = null;
-              } catch {
-                // ignore
-              }
-            }, 150);
-          });
-
-          markerRefs.current.push({ marker, listener });
-          markerRefs.current.push({ marker, listener: hoverOpenListener });
-          markerRefs.current.push({ marker, listener: hoverCloseListener });
-          bounds.extend({
-            lat: project.location.latitude,
-            lng: project.location.longitude,
-          });
         });
 
-        if (mappedProjects.length === 1) {
-          const onlyProject = mappedProjects[0];
-          console.log('[MAP DEBUG] Single project - zooming to:', onlyProject.title, 'at zoom', MAP_SINGLE_MARKER_ZOOM);
-          map.setCenter({
-            lat: onlyProject.location.latitude,
-            lng: onlyProject.location.longitude,
-          });
-          map.setZoom(MAP_SINGLE_MARKER_ZOOM);
-          console.log('[MAP DEBUG] Zoom set to:', MAP_SINGLE_MARKER_ZOOM);
-          return;
+        if (filteredProjects.length > 0) {
+          map.fitBounds(bounds, 48);
         }
-
-        console.log('[MAP DEBUG] Multiple projects - fitting bounds');
-        map.fitBounds(bounds, MAP_FIT_PADDING_PX);
-        setTimeout(() => {
-          const zoom = map.getZoom?.();
-          if (typeof zoom === 'number' && zoom > MAP_MAX_FIT_ZOOM) {
-            map.setZoom(MAP_MAX_FIT_ZOOM);
-          }
-        }, 0);
       } catch (error) {
         if (!cancelled) {
-          clearMarkers();
-          setMapError(getGoogleMapsErrorMessage(error, webGoogleMapsApiKey));
+          setMapError('Google Maps could not load. Check that Maps JavaScript API is enabled for the web key.');
         }
       }
     };
@@ -603,87 +252,22 @@ export default function MappingScreen({ navigation }: any) {
 
     return () => {
       cancelled = true;
-      clearMarkers();
+      if (browserWindow.gm_authFailure) {
+        delete browserWindow.gm_authFailure;
+      }
     };
-  }, [
-    mappedProjects,
-    selectedMapStyle.mapTypeId,
-    webGoogleMapsApiKey,
-    markerVolunteerEntriesByProjectId,
-    partners,
-    navigation,
-  ]);
+  }, [googleMapsApiKey, filteredProjects]);
 
-  // Loads map projects and narrows visibility based on the active role.
+  // Loads all projects so they can be rendered as web map markers.
   const loadProjects = async () => {
     try {
-      const snapshot = await getProjectsScreenSnapshot(user, [
-        'projects',
-        'partnerProjectApplications',
-        'volunteerJoinRecords',
-        'volunteerProfile',
-      ]);
-      const allPartners = await getAllPartners();
-      const mapSourceProjects = withImpactMapFallbackProjects(
-        snapshot.projects,
-        snapshot.partnerApplications,
-        snapshot.volunteerJoinRecords
-      );
-      const partnerProjectIds = new Set(
-        user?.role === 'partner'
-          ? getProjectIdsForPartnerUser(
-              user,
-              allPartners,
-              mapSourceProjects,
-              snapshot.partnerApplications
-            )
-          : []
-      );
-      const joinedVolunteerProjectIds = new Set(
-        snapshot.volunteerJoinRecords.map(record => record.projectId)
-      );
-
-      const visibleProjects =
-        user?.role === 'partner'
-          ? mapSourceProjects.filter(
-              project => partnerProjectIds.has(project.id)
-            )
-          : user?.role === 'volunteer'
-          ? mapSourceProjects.filter(
-              project =>
-                joinedVolunteerProjectIds.has(project.id) ||
-                (snapshot.volunteerProfile && (project.volunteers || []).includes(snapshot.volunteerProfile.id)) ||
-                (snapshot.volunteerProfile && (project.internalTasks || []).some(task =>
-                  task.assignedVolunteerId === snapshot.volunteerProfile?.id ||
-                  (task.assignedVolunteerIds || []).includes(snapshot.volunteerProfile?.id || '')
-                ))
-            )
-          : mapSourceProjects;
-
-      console.log('[MAP DEBUG] loadProjects - snapshot.projects:', snapshot.projects.length);
-      console.log('[MAP DEBUG] loadProjects - mapSourceProjects:', mapSourceProjects.length);
-      console.log('[MAP DEBUG] loadProjects - visibleProjects:', visibleProjects.length);
-      console.log('[MAP DEBUG] loadProjects - visibleProjects details:', visibleProjects.map(p => ({
-        id: p.id,
-        title: p.title,
-        parentProjectId: p.parentProjectId,
-        isEvent: p.isEvent
-      })));
-      setProjects(visibleProjects);
-      setVolunteerJoinRecords(snapshot.volunteerJoinRecords || []);
-      setPartners(allPartners);
-      const allVolunteers = await getAllVolunteers();
-      setVolunteers(allVolunteers);
+      const allProjects = await getAllProjects();
+      setProjects(allProjects);
       setLoading(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading projects for map:', error);
       setProjects([]);
-      setVolunteers([]);
-      setPartners([]);
-      Alert.alert(
-        getRequestErrorTitle(error, 'Database Unavailable'),
-        getRequestErrorMessage(error, 'Failed to load projects from Postgres.')
-      );
+      Alert.alert('Database Unavailable', error?.message || 'Failed to load projects from Postgres.');
       setLoading(false);
     }
   };
@@ -695,15 +279,11 @@ export default function MappingScreen({ navigation }: any) {
     }
 
     setShowDetails(false);
-    if (user?.role === 'admin') {
-      navigateToAvailableRoute(navigation, 'Lifecycle', { projectId: selectedProject.id }, {
-        routeName: 'Projects',
-        params: { projectId: selectedProject.id },
-      });
-      return;
+    if (selectedProject.isEvent) {
+      navigation.navigate('VolunteerEventsScreen', { eventId: selectedProject.id });
+    } else {
+      navigation.navigate('ProjectLifecycleScreen', { projectId: selectedProject.id });
     }
-
-    navigateToAvailableRoute(navigation, 'Projects', { projectId: selectedProject.id });
   };
 
   if (loading) {
@@ -718,110 +298,117 @@ export default function MappingScreen({ navigation }: any) {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <View style={styles.headerTopRow}>
-          <View style={styles.mapTitleGroup}>
-            <View style={styles.titleIconShell}>
-              <MaterialIcons name="location-on" size={30} color="#5A8F52" />
-            </View>
-            <View style={styles.headerTextBlock}>
-              <Text style={styles.headerTitle}>Community Impact Map</Text>
-              <Text style={styles.headerSubtitle}>Switch between admin, volunteer, and partner{`\n`}views to inspect mapped project activity.</Text>
-            </View>
-          </View>
-          <TouchableOpacity style={styles.workspaceButton} onPress={() => setShowMapStyleMenu(true)}>
-            <MaterialIcons name="business" size={28} color="#5A8F52" />
-            <Text style={styles.workspaceButtonText}>Negrense Volunteers for Change (NVC)</Text>
-            <MaterialIcons name="keyboard-arrow-down" size={24} color="#334155" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.viewButton} onPress={() => setShowMapStyleMenu(true)}>
-            <MaterialIcons name="tune" size={27} color="#5A8F52" />
-            <Text style={styles.viewButtonText}>{selectedMapStyle.label}</Text>
-            <MaterialIcons name="keyboard-arrow-down" size={24} color="#334155" />
-          </TouchableOpacity>
-        </View>
+        <Text style={styles.headerTitle}>Negros Programs and Events</Text>
+        <Text style={styles.headerSubtitle}>Marker map for Negros Occidental, Philippines</Text>
       </View>
 
-      {selectedMapStyleKey === 'volunteers-view' && availableVolunteerMapAccounts.length > 0 ? (
-        <View style={styles.volunteerPickerRow}>
-          <TouchableOpacity
-            style={[
-              styles.mapStyleButton,
-              styles.volunteerPickerButton,
-              {
-                backgroundColor: selectedMapStyle.chipBg,
-                borderColor: selectedMapStyle.chipBorder,
-              },
-            ]}
-            onPress={() => setShowVolunteerMenu(true)}
-          >
-            <MaterialIcons name="person-outline" size={18} color={selectedMapStyle.accentColor} />
-            <Text
-              style={[styles.mapStyleButtonText, styles.volunteerPickerText, { color: selectedMapStyle.accentColor }]}
-              numberOfLines={1}
-            >
-              {selectedVolunteerAccount?.label || 'Choose volunteer'}
-            </Text>
-            <MaterialIcons
-              name="keyboard-arrow-down"
-              size={22}
-              color={selectedMapStyle.accentColor}
-            />
-          </TouchableOpacity>
-        </View>
-      ) : null}
-
-      <View
-        style={[
-          styles.webMapContainer,
-          {
-            backgroundColor: selectedMapStyle.shellBg,
-            borderBottomColor: selectedMapStyle.shellBorder,
-          },
-        ]}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{
+          paddingHorizontal: 16,
+          paddingVertical: 10,
+          gap: 8,
+          backgroundColor: '#ffffff',
+          borderBottomWidth: 1,
+          borderBottomColor: '#f1f5f9',
+        }}
       >
+        <TouchableOpacity
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            borderRadius: 20,
+            backgroundColor: selectedStatus === null ? '#1e293b' : '#f1f5f9',
+          }}
+          onPress={() => setSelectedStatus(null)}
+        >
+          <Text style={{ fontSize: 12, fontWeight: '700', color: selectedStatus === null ? '#ffffff' : '#475569' }}>
+            All
+          </Text>
+          <View
+            style={{
+              backgroundColor: selectedStatus === null ? '#334155' : '#e2e8f0',
+              paddingHorizontal: 6,
+              paddingVertical: 1,
+              borderRadius: 10,
+            }}
+          >
+            <Text style={{ fontSize: 10, fontWeight: '800', color: selectedStatus === null ? '#ffffff' : '#475569' }}>
+              {projects.length}
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        {statusCategories.map(cat => {
+          const count = projects.filter(p => {
+            const s = getProjectDisplayStatus(p) as any;
+            if (cat.key === 'Planning') return s === 'Planning' || s === 'Planned' || (p as any).proposalStage;
+            if (cat.key === 'Active') return s === 'In Progress' || s === 'Active' || p.status === 'Approved';
+            return s === cat.key;
+          }).length;
+          const isActive = selectedStatus === cat.key;
+
+          return (
+            <TouchableOpacity
+              key={cat.key}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 20,
+                backgroundColor: isActive ? cat.color : '#f1f5f9',
+              }}
+              onPress={() => setSelectedStatus(current => (current === cat.key ? null : cat.key))}
+            >
+              <View
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  backgroundColor: isActive ? '#ffffff' : cat.color,
+                }}
+              />
+              <Text style={{ fontSize: 12, fontWeight: '700', color: isActive ? '#ffffff' : '#334155' }}>
+                {cat.label}
+              </Text>
+              <View
+                style={{
+                  backgroundColor: isActive ? 'rgba(255,255,255,0.25)' : '#e2e8f0',
+                  paddingHorizontal: 6,
+                  paddingVertical: 1,
+                  borderRadius: 10,
+                }}
+              >
+                <Text style={{ fontSize: 10, fontWeight: '800', color: isActive ? '#ffffff' : '#475569' }}>
+                  {count}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
+      <View style={styles.webMapContainer}>
         <MapHost ref={mapElementRef} style={styles.webMapFrame} />
-        <View style={styles.mapLegend}>
-          <Text style={styles.legendTitle}>Project Status</Text>
-          {statusLegend.map(status => (
-            <View key={status.label} style={styles.legendRow}>
-              <MaterialIcons name="location-on" size={25} color={status.color} />
-              <Text style={styles.legendText}>{status.label}</Text>
-            </View>
-          ))}
-          <View style={styles.legendDivider} />
-          <Text style={styles.legendTotalLabel}>Total Projects</Text>
-          <Text style={styles.legendTotal}>{mappedProjects.length}</Text>
-          <Text style={styles.legendFootnote}>Across Philippines</Text>
-        </View>
         {mapError ? (
-          <View style={[styles.mapErrorOverlay, { backgroundColor: selectedMapStyle.errorBg }]}>
-            <View style={[styles.mapErrorCard, { borderColor: selectedMapStyle.errorBorder }]}>
-              <Text style={styles.mapErrorTitle}>Google Maps unavailable</Text>
-              <Text style={styles.mapErrorText}>{mapError}</Text>
+          <View style={styles.errorOverlay}>
+            <View style={styles.errorCard}>
+              <Text style={styles.errorTitle}>Google Maps is not available.</Text>
+              <Text style={styles.errorText}>{mapError}</Text>
             </View>
           </View>
         ) : null}
       </View>
 
-      {featuredProject ? (
-        <TouchableOpacity style={styles.featuredProjectCard} activeOpacity={0.88} onPress={() => { setSelectedProject(featuredProject); setShowDetails(true); }}>
-          <View style={styles.featuredIconShell}><MaterialIcons name="school" size={45} color="#4C8249" /></View>
-          <View style={styles.featuredCopy}>
-            <Text style={styles.featuredTitle} numberOfLines={1}>{featuredProject.title}</Text>
-            <View style={styles.featuredBadges}>
-              <View style={styles.categoryBadge}><Text style={styles.categoryBadgeText}>{featuredProject.category}</Text></View>
-              <View style={styles.progressBadge}><View style={styles.progressDot} /><Text style={styles.progressBadgeText}>{getProjectDisplayStatus(featuredProject)}</Text></View>
-            </View>
-            <View style={styles.featuredMeta}>
-              <View style={styles.metaItem}><MaterialIcons name="location-on" size={23} color="#5B6470" /><Text style={styles.metaText} numberOfLines={1}>{featuredProject.location.address || 'Philippines'}</Text></View>
-              <View style={styles.metaItem}><MaterialIcons name="calendar-today" size={20} color="#5B6470" /><Text style={styles.metaText}>{new Date(featuredProject.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</Text></View>
-            </View>
-          </View>
-          <View style={styles.volunteerSummary}><MaterialIcons name="groups-2" size={40} color="#5B6470" /><View><Text style={styles.volunteerNumber}>{(markerVolunteerEntriesByProjectId.get(featuredProject.id) || []).length} / {featuredProject.volunteersNeeded || 0}</Text><Text style={styles.volunteerLabel}>Volunteers</Text></View></View>
-          <View style={styles.cardDivider} />
-          <View style={styles.detailsButton}><Text style={styles.detailsButtonText}>View Details</Text><MaterialIcons name="arrow-forward" size={24} color="#4C8249" /></View>
-        </TouchableOpacity>
-      ) : null}
+      <View style={styles.projectListContainer}>
+        <Text style={styles.projectListTitle}>Negros markers ({filteredProjects.length})</Text>
+      </View>
 
       <Modal animationType="slide" transparent visible={showDetails} onRequestClose={() => setShowDetails(false)}>
         <View style={styles.centeredView}>
@@ -831,25 +418,10 @@ export default function MappingScreen({ navigation }: any) {
             </TouchableOpacity>
 
             {selectedProject && (
-              <ScrollView style={styles.modalContent}>
-                {(() => {
-                  const projectImageSource = getPrimaryProjectImageSource(selectedProject);
-                  if (!projectImageSource) {
-                    return null;
-                  }
-
-                  return (
-                    <Image
-                      source={projectImageSource}
-                      style={styles.projectPhoto}
-                      resizeMode="cover"
-                    />
-                  );
-                })()}
-
+              <View style={styles.modalContent}>
                 <View style={styles.statusBadge}>
-                  <View style={[styles.statusDot, { backgroundColor: getProjectStatusColor(selectedProject) }]} />
-                  <Text style={styles.statusText}>{getProjectDisplayStatus(selectedProject)}</Text>
+                  <View style={[styles.statusDot, { backgroundColor: getProjectStatusColor(selectedProject.status) }]} />
+                  <Text style={styles.statusText}>{selectedProject.status}</Text>
                 </View>
 
                 <Text style={styles.projectTitle}>{selectedProject.title}</Text>
@@ -857,16 +429,8 @@ export default function MappingScreen({ navigation }: any) {
 
                 <View style={styles.infoGrid}>
                   <View style={styles.infoItem}>
-                    <Text style={styles.infoLabel}>Type</Text>
-                    <Text style={styles.infoValue}>
-                      {selectedProject.isEvent ? 'Event' : 'Project'}
-                    </Text>
-                  </View>
-                  <View style={styles.infoItem}>
                     <Text style={styles.infoLabel}>Category</Text>
-                    <Text style={styles.infoValue}>
-                      {selectedProject.programModule || selectedProject.category}
-                    </Text>
+                    <Text style={styles.infoValue}>{selectedProject.category}</Text>
                   </View>
                   <View style={styles.infoItem}>
                     <Text style={styles.infoLabel}>Volunteers Needed</Text>
@@ -874,105 +438,16 @@ export default function MappingScreen({ navigation }: any) {
                   </View>
                 </View>
 
-                <View style={styles.infoGrid}>
-                  <View style={styles.infoItem}>
-                    <Text style={styles.infoLabel}>Place</Text>
-                    <Text style={styles.infoValue}>
-                      {selectedProject.location.address || 'Place to be announced'}
-                    </Text>
-                  </View>
-                </View>
-
                 <TouchableOpacity
                   style={styles.viewDetailsButton}
                   onPress={handleOpenProjectDetails}
                 >
-                  <Text style={styles.viewDetailsButtonText}>
-                    {user?.role === 'admin' ? 'Open Program Management Suite' : 'View Full Details'}
-                  </Text>
+                  <Text style={styles.viewDetailsButtonText}>View Full Details</Text>
                 </TouchableOpacity>
-              </ScrollView>
+              </View>
             )}
           </View>
         </View>
-      </Modal>
-
-      <Modal
-        animationType="fade"
-        transparent
-        visible={showMapStyleMenu}
-        onRequestClose={() => setShowMapStyleMenu(false)}
-      >
-        <TouchableOpacity
-          style={styles.menuBackdrop}
-          activeOpacity={1}
-          onPress={() => setShowMapStyleMenu(false)}
-        >
-          <View style={styles.mapStyleMenu}>
-            <Text style={styles.mapStyleMenuTitle}>Choose map style</Text>
-            {MAP_STYLE_PRESETS.map(preset => {
-              const isActive = preset.key === selectedMapStyleKey;
-
-              return (
-                <TouchableOpacity
-                  key={preset.key}
-                  style={[styles.mapStyleMenuItem, isActive && styles.mapStyleMenuItemActive]}
-                  onPress={() => {
-                    setSelectedMapStyleKey(preset.key);
-                    setShowMapStyleMenu(false);
-                  }}
-                >
-                  <View style={styles.mapStyleMenuItemTextWrap}>
-                    <Text style={styles.mapStyleMenuItemTitle}>{preset.label}</Text>
-                    <Text style={styles.mapStyleMenuItemDescription}>{preset.description}</Text>
-                  </View>
-                  {isActive ? <MaterialIcons name="check" size={20} color="#2563eb" /> : null}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
-      <Modal
-        animationType="fade"
-        transparent
-        visible={showVolunteerMenu}
-        onRequestClose={() => setShowVolunteerMenu(false)}
-      >
-        <TouchableOpacity
-          style={styles.menuBackdrop}
-          activeOpacity={1}
-          onPress={() => setShowVolunteerMenu(false)}
-        >
-          <View style={styles.mapStyleMenu}>
-            <Text style={styles.mapStyleMenuTitle}>Choose volunteer</Text>
-            <ScrollView style={styles.accountList} showsVerticalScrollIndicator={false}>
-              {availableVolunteerMapAccounts.map(account => {
-                const isActive = account.id === selectedVolunteerAccount?.id;
-                return (
-                  <TouchableOpacity
-                    key={account.id}
-                    style={[styles.mapStyleMenuItem, isActive && styles.mapStyleMenuItemActive]}
-                    onPress={() => {
-                      setSelectedVolunteerId(account.id);
-                      setShowVolunteerMenu(false);
-                    }}
-                  >
-                    <View style={styles.mapStyleMenuItemTextWrap}>
-                      <Text style={styles.mapStyleMenuItemTitle}>{account.label}</Text>
-                      <Text style={styles.mapStyleMenuItemDescription}>
-                        {account.projectIds.length} mapped
-                        {account.projectIds.length === 1 ? ' project' : ' projects'}
-                      </Text>
-                    </View>
-                    {isActive ? <MaterialIcons name="check" size={20} color={selectedMapStyle.accentColor} /> : null}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        </TouchableOpacity>
       </Modal>
     </View>
   );
@@ -981,279 +456,96 @@ export default function MappingScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#f5f5f5',
   },
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: ModernTheme.colors.background.secondary,
+    backgroundColor: '#f5f5f5',
   },
   loadingText: {
-    marginTop: ModernTheme.spacing[4],
-    fontSize: ModernTheme.typography.fontSize.lg,
-    color: ModernTheme.colors.text.secondary,
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666',
   },
   webMapContainer: {
     position: 'relative',
-    height: 490,
-    marginHorizontal: 31,
-    borderRadius: 20,
-    backgroundColor: ModernTheme.colors.neutral[200],
-    borderBottomWidth: 0,
-    borderBottomColor: 'transparent',
+    height: 420,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e6e6e6',
     overflow: 'hidden',
   },
   webMapFrame: {
     width: '100%',
     height: '100%',
   },
-  mapErrorOverlay: {
+  errorOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(219, 234, 254, 0.92)',
-    paddingHorizontal: ModernTheme.spacing[6],
+    backgroundColor: 'rgba(239, 246, 241, 0.92)',
+    paddingHorizontal: 24,
   },
-  mapErrorCard: {
+  errorCard: {
     maxWidth: 420,
-    paddingHorizontal: ModernTheme.spacing[5],
-    paddingVertical: ModernTheme.spacing[6],
-    backgroundColor: ModernTheme.colors.background.card,
-    borderRadius: ModernTheme.borderRadius.xl,
-    borderWidth: 0,
-    borderColor: 'transparent',
-    ...ModernTheme.shadows.lg,
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    backgroundColor: '#ffffff',
+    borderRadius: 22,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 24,
+    shadowOffset: {
+      width: 0,
+      height: 12,
+    },
+    elevation: 8,
   },
-  mapErrorTitle: {
-    fontSize: ModernTheme.typography.fontSize.lg,
-    fontWeight: '700' as const,
-    color: ModernTheme.colors.text.primary,
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#12243d',
     textAlign: 'center',
-    marginBottom: ModernTheme.spacing[2.5],
+    marginBottom: 12,
   },
-  mapErrorText: {
-    fontSize: ModernTheme.typography.fontSize.sm,
-    lineHeight: 20,
-    color: ModernTheme.colors.text.secondary,
+  errorText: {
+    fontSize: 13,
+    lineHeight: 21,
+    color: '#243b53',
     textAlign: 'center',
   },
   header: {
-    backgroundColor: ModernTheme.colors.background.card,
-    paddingHorizontal: 31,
-    paddingTop: 15,
-    paddingBottom: 32,
-    borderBottomWidth: 0,
-    borderBottomColor: 'transparent',
-    ...ModernTheme.shadows.sm,
-  },
-  headerTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 22,
-  },
-  headerTextBlock: {
-    flex: 1,
+    backgroundColor: '#fff',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
   },
   headerTitle: {
-    fontSize: 25,
-    fontWeight: '700' as const,
-    color: ModernTheme.colors.text.primary,
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
   },
   headerSubtitle: {
-    fontSize: 17,
-    lineHeight: 25,
-    color: '#68758A',
-    marginTop: 3,
-  },
-  mapStyleButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  mapStyleButtonText: {
     fontSize: 12,
-    fontWeight: '700',
+    color: '#999',
+    marginTop: 4,
   },
   projectListContainer: {
     backgroundColor: '#fff',
     paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 10,
+    paddingVertical: 8,
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
-    maxHeight: 180,
   },
   projectListTitle: {
     fontSize: 13,
     color: '#666',
     fontWeight: '600',
   },
-  markerList: {
-    marginTop: 8,
-  },
-  markerListItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
-  },
-  markerListPin: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  markerListPinText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  markerListCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  markerListName: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#0f172a',
-  },
-  markerListMeta: {
-    marginTop: 2,
-    fontSize: 11,
-    color: '#64748b',
-  },
-  mapTitleGroup: {
-    flex: 1,
-    minWidth: 360,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 20,
-  },
-  titleIconShell: {
-    width: 78,
-    height: 78,
-    borderRadius: 39,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#F2F8F1',
-  },
-  workspaceButton: {
-    width: 460,
-    height: 70,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 23,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-  },
-  workspaceButtonText: {
-    flex: 1,
-    color: '#263244',
-    fontSize: 17,
-    fontWeight: '800',
-  },
-  viewButton: {
-    width: 296,
-    height: 70,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 22,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-  },
-  viewButtonText: {
-    flex: 1,
-    color: '#263244',
-    fontSize: 17,
-    fontWeight: '800',
-    textTransform: 'capitalize',
-  },
-  mapLegend: {
-    position: 'absolute',
-    top: 27,
-    left: 31,
-    width: 196,
-    borderRadius: 15,
-    paddingTop: 20,
-    overflow: 'hidden',
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    shadowColor: '#334155',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.11,
-    shadowRadius: 12,
-    elevation: 4,
-  },
-  legendTitle: {
-    marginHorizontal: 23,
-    marginBottom: 14,
-    color: '#263244',
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  legendRow: {
-    height: 38,
-    paddingHorizontal: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  legendText: { color: '#596579', fontSize: 15, fontWeight: '600' },
-  legendDivider: { height: 1, backgroundColor: '#E1E7ED', marginTop: 10 },
-  legendTotalLabel: { marginHorizontal: 23, marginTop: 18, color: '#39465A', fontSize: 14, fontWeight: '800' },
-  legendTotal: { marginHorizontal: 23, marginTop: 8, color: '#4D894B', fontSize: 36, fontWeight: '800' },
-  legendFootnote: { marginHorizontal: 23, marginBottom: 21, color: '#6B778B', fontSize: 14, fontWeight: '600' },
-  featuredProjectCard: {
-    minHeight: 160,
-    marginHorizontal: 31,
-    marginTop: 30,
-    paddingHorizontal: 28,
-    paddingVertical: 27,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#E4E9EE',
-    backgroundColor: '#FFFFFF',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 25,
-    shadowColor: '#334155',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.05,
-    shadowRadius: 9,
-    elevation: 2,
-  },
-  featuredIconShell: { width: 90, height: 104, borderRadius: 17, backgroundColor: '#F0F8EF', alignItems: 'center', justifyContent: 'center' },
-  featuredCopy: { flex: 1, alignSelf: 'stretch', justifyContent: 'center', minWidth: 280 },
-  featuredTitle: { color: '#172238', fontSize: 25, fontWeight: '800' },
-  featuredBadges: { marginTop: 9, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  categoryBadge: { borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6, backgroundColor: '#F0F8EF' },
-  categoryBadgeText: { color: '#4B8649', fontSize: 15, fontWeight: '800' },
-  progressBadge: { borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6, backgroundColor: '#F0F8EF', flexDirection: 'row', alignItems: 'center', gap: 7 },
-  progressDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: '#5A9855' },
-  progressBadgeText: { color: '#4B8649', fontSize: 15, fontWeight: '800' },
-  featuredMeta: { marginTop: 17, flexDirection: 'row', alignItems: 'center', gap: 24 },
-  metaItem: { maxWidth: 300, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  metaText: { color: '#485569', fontSize: 16, fontWeight: '600' },
-  volunteerSummary: { width: 250, paddingLeft: 24, borderLeftWidth: 1, borderLeftColor: '#E4E9EE', flexDirection: 'row', alignItems: 'center', gap: 17 },
-  volunteerNumber: { color: '#263244', fontSize: 17, fontWeight: '800' },
-  volunteerLabel: { marginTop: 2, color: '#536074', fontSize: 15, fontWeight: '600' },
-  cardDivider: { width: 1, height: 57, backgroundColor: '#E4E9EE' },
-  detailsButton: { width: 186, height: 54, borderWidth: 2, borderColor: '#78A974', borderRadius: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 14 },
-  detailsButtonText: { color: '#4C8249', fontSize: 16, fontWeight: '800' },  centeredView: {
+  centeredView: {
     flex: 1,
     justifyContent: 'flex-end',
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -1300,13 +592,6 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 12,
   },
-  projectPhoto: {
-    width: '100%',
-    height: 180,
-    borderRadius: 14,
-    marginBottom: 20,
-    backgroundColor: '#e5e7eb',
-  },
   description: {
     fontSize: 14,
     color: '#666',
@@ -1345,70 +630,5 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
-  },
-  menuBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.35)',
-    justifyContent: 'flex-start',
-    alignItems: 'flex-end',
-    paddingTop: 78,
-    paddingRight: 16,
-  },
-  volunteerPickerRow: {
-    paddingHorizontal: 18,
-    paddingBottom: 12,
-    alignItems: 'flex-end',
-  },
-  volunteerPickerButton: {
-    maxWidth: 320,
-  },
-  volunteerPickerText: {
-    flex: 1,
-  },
-  accountList: {
-    maxHeight: 340,
-  },
-  mapStyleMenu: {
-    width: 290,
-    backgroundColor: '#ffffff',
-    borderRadius: 18,
-    padding: 14,
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.18,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 10,
-  },
-  mapStyleMenuTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#0f172a',
-    marginBottom: 10,
-  },
-  mapStyleMenuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-  },
-  mapStyleMenuItemActive: {
-    backgroundColor: '#eff6ff',
-  },
-  mapStyleMenuItemTextWrap: {
-    flex: 1,
-  },
-  mapStyleMenuItemTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  mapStyleMenuItemDescription: {
-    marginTop: 2,
-    fontSize: 12,
-    lineHeight: 16,
-    color: '#64748b',
   },
 });

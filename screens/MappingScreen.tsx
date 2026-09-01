@@ -36,7 +36,7 @@ import {
   getProjectMarkerColor,
 } from '../utils/projectMap';
 import { getPartnerForMappedProject, getProjectIdsForPartnerUser } from '../utils/mapProjectLinks';
-import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
+import { getProjectDisplayStatus, getProjectStatusColor, getProjectStatusLabel } from '../utils/projectStatus';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
 import { getProjectVolunteerMapEntries } from '../utils/projectVolunteers';
 
@@ -254,7 +254,7 @@ export default function MappingScreen({ navigation }: any) {
                 longitude: project.location.longitude,
               }}
               title={`${index + 1}. ${project.title}`}
-              description={`${project.isEvent ? 'Event' : 'Project'} | ${getProjectDisplayStatus(project)}`}
+              description={`${project.isEvent ? 'Event' : 'Project'} | ${getProjectStatusLabel(project)}`}
               onPress={() => handleProjectSelection(project.id)}
             >
               <PhotoMapMarker
@@ -402,7 +402,7 @@ export default function MappingScreen({ navigation }: any) {
                     {selectedProject.location.address || selectedProject.description}
                   </Text>
                   <View style={styles.volunteerMetaRow}>
-                    <Text style={styles.volunteerMetaChip}>{getProjectDisplayStatus(selectedProject)}</Text>
+                    <Text style={styles.volunteerMetaChip}>{getProjectStatusLabel(selectedProject)}</Text>
                     <Text style={styles.volunteerMetaChip}>
                       {new Date(selectedProject.startDate).toLocaleDateString()}
                     </Text>
@@ -476,7 +476,7 @@ export default function MappingScreen({ navigation }: any) {
                       { backgroundColor: getProjectStatusColor(selectedProject) },
                     ]}
                   />
-                  <Text style={styles.statusText}>{getProjectDisplayStatus(selectedProject)}</Text>
+                  <Text style={styles.statusText}>{getProjectStatusLabel(selectedProject)}</Text>
                 </View>
 
                 <Text style={styles.projectTitle}>{selectedProject.title}</Text>

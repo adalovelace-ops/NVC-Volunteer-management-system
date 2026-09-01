@@ -1,77 +1,139 @@
-/**
- * Google Calendar & Gmail Notification Integration Service
- * Automatically triggers email notifications and Google Calendar sync links / ICS dynamic invites
- * whenever a volunteer project request is approved or a partner proposal is approved.
- */
+import { Linking } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export interface EventCalendarDetails {
+export interface CalendarConfig {
+  calendarId: string;
+  apiKey: string;
+}
+
+const STORAGE_KEY_GCAL_ID = 'gcal_id';
+const STORAGE_KEY_GCAL_KEY = 'gcal_key';
+
+const DEFAULT_CALENDAR_ID = 'en.philippines#holiday@group.v.calendar.google.com';
+
+/**
+ * Reads Google Calendar settings from AsyncStorage or fallback defaults.
+ */
+export async function getStoredCalendarConfig(): Promise<CalendarConfig> {
+  try {
+    const storedId = await AsyncStorage.getItem(STORAGE_KEY_GCAL_ID);
+    const storedKey = await AsyncStorage.getItem(STORAGE_KEY_GCAL_KEY);
+    const defaultApiKey =
+      process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY ||
+      process.env.GOOGLE_MAPS_WEB_API_KEY ||
+      process.env.GOOGLE_MAPS_API_KEY ||
+      '';
+
+    return {
+      calendarId: storedId || DEFAULT_CALENDAR_ID,
+      apiKey: storedKey || defaultApiKey,
+    };
+  } catch (err) {
+    console.error('Failed to read stored calendar config:', err);
+    return {
+      calendarId: DEFAULT_CALENDAR_ID,
+      apiKey: '',
+    };
+  }
+}
+
+/**
+ * Saves Google Calendar settings to AsyncStorage.
+ */
+export async function saveStoredCalendarConfig(calendarId: string, apiKey: string): Promise<void> {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEY_GCAL_ID, calendarId.trim());
+    await AsyncStorage.setItem(STORAGE_KEY_GCAL_KEY, apiKey.trim());
+  } catch (err) {
+    console.error('Failed to save calendar config:', err);
+    throw err;
+  }
+}
+
+/**
+ * Formats a Date object or date string into UTC YYYYMMDDTHHmmssZ format for Google Calendar URLs.
+ */
+function formatGoogleCalendarDate(dateInput?: string | Date | null): string {
+  if (!dateInput) {
+    const now = new Date();
+    return now.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+  }
+
+  const dateObj = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+  if (isNaN(dateObj.getTime())) {
+    const now = new Date();
+    return now.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+  }
+
+  return dateObj.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+}
+
+/**
+ * Opens Google Calendar web interface with pre-filled event details.
+ * Allows volunteers and partners to add any project or event to their personal Google Calendar in one click.
+ */
+export function getGoogleCalendarEventTemplateUrl({
+  title,
+  details = '',
+  location = '',
+  startDate,
+  endDate,
+}: {
   title: string;
-  description: string;
-  startDate: string;
-  endDate?: string;
+  details?: string;
   location?: string;
+  startDate?: string | Date;
+  endDate?: string | Date;
+}): string {
+  const startStr = formatGoogleCalendarDate(startDate);
+  const endStr = formatGoogleCalendarDate(endDate || (startDate ? new Date(new Date(startDate).getTime() + 2 * 3600 * 1000) : null));
+
+  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
+    title
+  )}&details=${encodeURIComponent(details)}&location=${encodeURIComponent(location)}&dates=${startStr}/${endStr}`;
 }
 
 /**
- * Builds a direct web Google Calendar "Add to Calendar" link
+ * Opens Google Calendar web interface with pre-filled event details.
+ * Allows volunteers and partners to add any project or event to their personal Google Calendar in one click.
  */
-export function buildGoogleCalendarUrl(event: EventCalendarDetails): string {
-  const formatGCalDate = (isoStr: string): string => {
-    try {
-      const d = new Date(isoStr);
-      if (Number.isNaN(d.getTime())) return new Date().toISOString().replace(/-|:|\.\d\d\d/g, '');
-      return d.toISOString().replace(/-|:|\.\d\d\d/g, '');
-    } catch {
-      return '';
-    }
-  };
+export async function openAddGoogleCalendarEvent(params: Parameters<typeof getGoogleCalendarEventTemplateUrl>[0]): Promise<void> {
+  const url = getGoogleCalendarEventTemplateUrl(params);
 
-  const start = formatGCalDate(event.startDate);
-  const end = event.endDate ? formatGCalDate(event.endDate) : start;
-  const dates = `${start}/${end}`;
-
-  const params = new URLSearchParams({
-    action: 'TEMPLATE',
-    text: event.title,
-    details: event.description,
-    location: event.location || 'Negrense Volunteers for Change (NVC)',
-    dates,
-  });
-
-  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+  try {
+    await Linking.openURL(url);
+  } catch (err) {
+    console.error('Failed to open Google Calendar template link:', err);
+  }
 }
 
 /**
- * Triggers automated system Gmail notification and Google Calendar event sync link
+ * Fetches events from Google Calendar API v3 safely with error handling.
  */
-export async function sendEmailNotificationAndCalendarSync(params: {
-  recipientEmail: string;
-  recipientName: string;
-  subject: string;
-  messageText: string;
-  eventDetails?: EventCalendarDetails;
-}): Promise<void> {
-  const { recipientEmail, recipientName, subject, messageText, eventDetails } = params;
-
-  let calendarUrl = '';
-  if (eventDetails) {
-    calendarUrl = buildGoogleCalendarUrl(eventDetails);
+export async function fetchGoogleCalendarEvents(
+  calendarId: string,
+  apiKey: string,
+  timeMin: string,
+  timeMax: string
+): Promise<{ items: any[]; error?: string }> {
+  if (!calendarId || !apiKey) {
+    return { items: [], error: 'Google Calendar API Key or Calendar ID is not configured.' };
   }
 
-  console.log(`[EMAIL & CALENDAR SYNC] Sending notification to ${recipientName} <${recipientEmail}>`);
-  console.log(`[EMAIL & CALENDAR SYNC] Subject: ${subject}`);
-  console.log(`[EMAIL & CALENDAR SYNC] Body: ${messageText}`);
-  if (calendarUrl) {
-    console.log(`[EMAIL & CALENDAR SYNC] Google Calendar Sync Link: ${calendarUrl}`);
-  }
+  const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
+    calendarId
+  )}/events?key=${apiKey}&timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&orderBy=startTime`;
 
-  // If in web browser environment, prompt Google Calendar sync window if available
-  if (typeof window !== 'undefined' && calendarUrl && window.open) {
-    try {
-      // Auto register / trigger sync window in background or tab
-      window.open(calendarUrl, '_blank', 'noopener,noreferrer');
-    } catch {
-      // Popup blocked or non-interactive context
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      const msg = errData.error?.message || `Google Calendar API returned status ${res.status}`;
+      return { items: [], error: msg };
     }
+    const data = await res.json();
+    return { items: data.items || [] };
+  } catch (err: any) {
+    return { items: [], error: err?.message || 'Network error fetching Google Calendar events.' };
   }
 }

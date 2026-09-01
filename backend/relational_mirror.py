@@ -46,6 +46,8 @@ RELATIONAL_TABLE_DDL = [
     "alter table users add column if not exists approved_by text",
     "alter table users add column if not exists approved_at text",
     "alter table users add column if not exists rejection_reason text",
+    "alter table users add column if not exists volunteer_membership_sheet text",
+    "alter table users add column if not exists partner_application text",
     f"""
     create table if not exists partners (
       id text primary key,
@@ -252,6 +254,8 @@ RELATIONAL_TABLE_DDL = [
     "alter table projects add column if not exists location_region text",
     "alter table projects add column if not exists location_city text",
     "alter table projects add column if not exists location_barangay text",
+    "alter table projects add column if not exists attachment_url text",
+    "alter table projects add column if not exists documents text not null default '[]'",
     "create index if not exists projects_partner_id_idx on projects (partner_id)",
     "create index if not exists projects_parent_project_id_idx on projects (parent_project_id)",
     "create index if not exists projects_status_idx on projects (status)",
@@ -576,6 +580,8 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             ("approved_by", False),
             ("approved_at", False),
             ("rejection_reason", False),
+            ("volunteer_membership_sheet", False),
+            ("partner_application", False),
             ("created_at", False),
         ],
     },
@@ -697,6 +703,8 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             ("skills_needed", False),
             ("volunteer_requirements", False),
             ("internal_tasks", False),
+            ("attachment_url", False),
+            ("documents", False),
             ("created_at", False),
             ("updated_at", False),
         ],
@@ -1294,6 +1302,8 @@ def _normalize_row(key: str, item: dict[str, Any]) -> tuple[Any, ...]:
             item.get("approvedBy"),
             item.get("approvedAt"),
             item.get("rejectionReason"),
+            _json_dump(item.get("volunteerMembershipSheet"), {}),
+            _json_dump(item.get("partnerApplication"), {}),
             item.get("createdAt"),
         )
 
@@ -1409,6 +1419,8 @@ def _normalize_row(key: str, item: dict[str, Any]) -> tuple[Any, ...]:
             _normalize_skills_needed(item),
             _normalize_string_list(item.get("volunteerRequirements")),
             _json_dump(item.get("internalTasks"), []),
+            item.get("attachmentUrl"),
+            _json_dump(item.get("documents"), []),
             item.get("createdAt"),
             item.get("updatedAt"),
         )
@@ -1659,6 +1671,8 @@ def _row_to_item(key: str, row: dict[str, Any]) -> dict[str, Any]:
             "approvedBy": row.get("approved_by"),
             "approvedAt": row.get("approved_at"),
             "rejectionReason": row.get("rejection_reason"),
+            "volunteerMembershipSheet": _json_load(row.get("volunteer_membership_sheet"), {}),
+            "partnerApplication": _json_load(row.get("partner_application"), {}),
             "createdAt": row["created_at"],
         }
 
@@ -1774,6 +1788,8 @@ def _row_to_item(key: str, row: dict[str, Any]) -> dict[str, Any]:
             "skillsNeeded": row.get("skills_needed") or [],
             "volunteerRequirements": row.get("volunteer_requirements") or [],
             "internalTasks": _json_load(row.get("internal_tasks"), []),
+            "attachmentUrl": row.get("attachment_url"),
+            "documents": _json_load(row.get("documents"), []),
             "createdAt": row.get("created_at"),
             "updatedAt": row.get("updated_at"),
         }

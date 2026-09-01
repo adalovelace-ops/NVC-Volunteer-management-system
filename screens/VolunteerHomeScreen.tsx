@@ -8,10 +8,15 @@ import {
   Platform,
   Linking,
   Alert,
+  Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
-import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+import { MaterialIcons, Ionicons } from '@expo/vector-icons';
+import presImage from '../assets/pres.png';
+import livelihoodImage from '../assets/programs/livelihood.jpg';
+import nutritionImage from '../assets/programs/nutrition.jpg';
+import educationImage from '../assets/programs/education.jpg';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
@@ -224,6 +229,7 @@ export default function VolunteerHomeScreen() {
           </View>
           <View style={styles.storyCard}>
             <View style={styles.storyImg}>
+              <Image source={presImage} style={{ width: '100%', height: '100%', position: 'absolute' }} resizeMode="cover" />
               <Text style={styles.quoteMark}>“”</Text>
             </View>
             <View style={styles.storyBody}>
@@ -286,6 +292,79 @@ export default function VolunteerHomeScreen() {
               <Text style={styles.btnSolidText}>Volunteer now</Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        {/* OUR PROGRAMS */}
+        <View style={styles.section}>
+          <View style={styles.sectionHead}>
+            <Text style={styles.sectionTitle}>Our Programs</Text>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.programsContainer}
+          >
+            <View style={styles.programCard}>
+              <View style={styles.programImg}>
+                <Image
+                  source={nutritionImage}
+                  style={{ width: '100%', height: '100%' }}
+                  resizeMode="cover"
+                />
+              </View>
+              <View style={styles.programBody}>
+                <Text style={styles.programName}>Nutrition</Text>
+                <Text style={styles.programDesc}>
+                  NVC manufactures Mingo, a nutritious instant complementary food. We run a
+                  nutrition program using Mingo for children of impoverished families to help
+                  them build strong bodies and sharp minds.
+                </Text>
+                <TouchableOpacity style={styles.programLearn} onPress={handleSeeMission} activeOpacity={0.85}>
+                  <Text style={styles.programLearnText}>Learn more</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={styles.programCard}>
+              <View style={styles.programImg}>
+                <Image
+                  source={educationImage}
+                  style={{ width: '100%', height: '100%' }}
+                  resizeMode="cover"
+                />
+              </View>
+              <View style={styles.programBody}>
+                <Text style={styles.programName}>Education</Text>
+                <Text style={styles.programDesc}>
+                  NVC’s education projects enhance the quality of schooling for children of the
+                  poor. These range from infrastructure projects, provision of school supplies,
+                  and assisting teachers become better at their craft.
+                </Text>
+                <TouchableOpacity style={styles.programLearn} onPress={handleSeeMission} activeOpacity={0.85}>
+                  <Text style={styles.programLearnText}>Learn more</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={styles.programCard}>
+              <View style={styles.programImg}>
+                <Image
+                  source={livelihoodImage}
+                  style={{ width: '100%', height: '100%' }}
+                  resizeMode="cover"
+                />
+              </View>
+              <View style={styles.programBody}>
+                <Text style={styles.programName}>Livelihood</Text>
+                <Text style={styles.programDesc}>
+                  To help improve the lives of families in the communities we serve, our
+                  livelihood projects give adults various opportunities to earn or increase
+                  their income.
+                </Text>
+                <TouchableOpacity style={styles.programLearn} onPress={handleSeeMission} activeOpacity={0.85}>
+                  <Text style={styles.programLearnText}>Learn more</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
         </View>
       </ScrollView>
     </View>
@@ -561,6 +640,53 @@ const styles = StyleSheet.create({
     backgroundColor: '#DED2B4',
     marginHorizontal: 20,
     marginTop: 26,
+  },
+  programsContainer: {
+    paddingRight: 20,
+  },
+  programCard: {
+    width: 230,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#DED2B4',
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginRight: 12,
+  },
+  programImg: {
+    height: 120,
+    backgroundColor: '#E3D8BC',
+  },
+  programBody: {
+    padding: 14,
+  },
+  programName: {
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#22201B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 8,
+  },
+  programDesc: {
+    fontSize: 11.5,
+    lineHeight: 16,
+    color: '#5B564C',
+    marginBottom: 12,
+  },
+  programLearn: {
+    backgroundColor: '#1F3A2E',
+    paddingVertical: 9,
+    borderRadius: 100,
+    alignItems: 'center',
+  },
+  programLearnText: {
+    color: '#ffffff',
+    fontWeight: '700',
+    fontSize: 12,
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
   },
   giveCard: {
     marginHorizontal: 20,

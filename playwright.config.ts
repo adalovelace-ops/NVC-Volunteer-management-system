@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests/e2e',
+  globalSetup: './tests/e2e/global-setup',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 0,
@@ -13,7 +14,7 @@ export default defineConfig({
     ['list'],
   ],
   use: {
-    baseURL: process.env.BASE_URL || 'http://localhost:8081',
+    baseURL: process.env.BASE_URL || 'http://YOUR_SYSTEM_IP:8081',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -44,7 +45,7 @@ export default defineConfig({
 
   webServer: {
     command: 'npm run web',
-    url: 'http://localhost:8081',
+    url: 'http://YOUR_SYSTEM_IP:8081',
     reuseExistingServer: true,
     timeout: 120000,
   },

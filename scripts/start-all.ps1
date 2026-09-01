@@ -82,18 +82,18 @@ for ($i = 0; $i -lt 60; $i++) {
   }
 
   try {
-    $resp = Invoke-WebRequest -Uri 'http://localhost:8081' -Method Get -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
+    $resp = Invoke-WebRequest -Uri "http://$($env:COMPUTERNAME):8081" -Method Get -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
     if ($resp.StatusCode -eq 200) {
       $webReady = $true
       Write-Host "  Web app is ready!" -ForegroundColor Green
       Write-Host ""
       Write-Host "  Opening browsers (1 desktop + 1 mobile view)..." -ForegroundColor Cyan
-      Write-Host "    - Desktop Web: http://localhost:8081" -ForegroundColor Gray
-      Write-Host "    - Mobile Web:  http://localhost:8081?mode=mobile" -ForegroundColor Gray
+      Write-Host "    - Desktop Web: http://$($env:COMPUTERNAME):8081" -ForegroundColor Gray
+      Write-Host "    - Mobile Web:  http://$($env:COMPUTERNAME):8081?mode=mobile" -ForegroundColor Gray
       Write-Host ""
-      Start-Process "http://localhost:8081"
+      Start-Process "http://$($env:COMPUTERNAME):8081"
       Start-Sleep -Milliseconds 800
-      Start-Process "http://localhost:8081?mode=mobile"
+      Start-Process "http://$($env:COMPUTERNAME):8081?mode=mobile"
       break
     }
   } catch {
@@ -103,12 +103,12 @@ for ($i = 0; $i -lt 60; $i++) {
 }
 
 if (-not $webReady) {
-  Write-Warning "  Web app did not start in time. You may need to open http://localhost:8081 manually."
+  Write-Warning "  Web app did not start in time. You may need to open the system web URL manually."
 }
 
 Write-Host ""
 Write-Host "  Volunteer System is running."
-Write-Host "  Desktop Web: http://localhost:8081"
-Write-Host "  Mobile Web:  http://localhost:8081?mode=mobile"
+Write-Host "  Desktop Web: http://$($env:COMPUTERNAME):8081"
+Write-Host "  Mobile Web:  http://$($env:COMPUTERNAME):8081?mode=mobile"
 Write-Host "  Run npm stop to stop backend and web app."
 Write-Host ""

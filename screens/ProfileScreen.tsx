@@ -18,6 +18,7 @@ import { Picker } from '@react-native-picker/picker';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useFocusEffect } from '@react-navigation/native';
 import InlineLoadError from '../components/InlineLoadError';
+import LogoutConfirmationModal from '../components/LogoutConfirmationModal';
 import { useAuth } from '../contexts/AuthContext';
 import {
   getAllProjects,
@@ -262,31 +263,11 @@ export default function ProfileScreen() {
     setPhotoTimestamp(Date.now());
   }, [user?.profilePhoto]);
 
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+
   // Confirms logout before clearing the signed-in session.
   const handleLogout = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (window.confirm('Are you sure you want to logout?')) {
-        logout().catch(() => {
-          window.alert('Failed to logout. Please try again.');
-        });
-      }
-      return;
-    }
-
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Logout',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await logout();
-          } catch (error) {
-            Alert.alert('Error', 'Failed to logout. Please try again.');
-          }
-        },
-      },
-    ]);
+    setShowLogoutModal(true);
   };
 
   // Opens the profile editor after refreshing the current draft values.
@@ -865,31 +846,33 @@ export default function ProfileScreen() {
       {/* User Account Details */}
       <View style={styles.sectionBlock}>
         <Text style={styles.sectionTitleText}>User Account Details</Text>
-        <View style={styles.detailInfoCard}>
-          <Text style={styles.detailInfoLabel}>Name</Text>
-          <Text style={styles.detailInfoValue}>{user?.name || 'Not provided'}</Text>
-        </View>
-        <View style={styles.detailInfoCard}>
-          <Text style={styles.detailInfoLabel}>Email</Text>
-          <Text style={styles.detailInfoValue}>{user?.email || 'Not provided'}</Text>
-        </View>
-        <View style={styles.detailInfoCard}>
-          <Text style={styles.detailInfoLabel}>Phone</Text>
-          <Text style={styles.detailInfoValue}>{user?.phone || 'Not provided'}</Text>
-        </View>
-        <View style={styles.detailInfoCard}>
-          <Text style={styles.detailInfoLabel}>Profile Type</Text>
-          <Text style={styles.detailInfoValue}>{user?.userType || 'Not provided'}</Text>
-        </View>
-        <View style={styles.detailInfoCard}>
-          <Text style={styles.detailInfoLabel}>Approval Status</Text>
-          <Text style={styles.detailInfoValue}>{user?.approvalStatus || 'Not provided'}</Text>
-        </View>
-        <View style={styles.detailInfoCard}>
-          <Text style={styles.detailInfoLabel}>Submitted</Text>
-          <Text style={styles.detailInfoValue}>
-            {user?.createdAt ? new Date(user.createdAt).toLocaleString() : 'Not provided'}
-          </Text>
+        <View style={{ backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8, borderWidth: 1, borderColor: '#e2e8f0', gap: 16 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#f1f5f9', paddingBottom: 12 }}>
+            <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '600' }}>Name</Text>
+            <Text style={{ fontSize: 14, color: '#0f172a', fontWeight: '500' }}>{user?.name || 'Not provided'}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#f1f5f9', paddingBottom: 12 }}>
+            <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '600' }}>Email</Text>
+            <Text style={{ fontSize: 14, color: '#0f172a', fontWeight: '500' }}>{user?.email || 'Not provided'}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#f1f5f9', paddingBottom: 12 }}>
+            <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '600' }}>Phone</Text>
+            <Text style={{ fontSize: 14, color: '#0f172a', fontWeight: '500' }}>{user?.phone || 'Not provided'}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#f1f5f9', paddingBottom: 12 }}>
+            <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '600' }}>Profile Type</Text>
+            <Text style={{ fontSize: 14, color: '#0f172a', fontWeight: '500', textTransform: 'capitalize' }}>{user?.userType || 'Not provided'}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#f1f5f9', paddingBottom: 12 }}>
+            <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '600' }}>Approval Status</Text>
+            <Text style={{ fontSize: 14, color: '#0f172a', fontWeight: '500' }}>{user?.approvalStatus || 'Not provided'}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingBottom: 8 }}>
+            <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '600' }}>Submitted</Text>
+            <Text style={{ fontSize: 14, color: '#0f172a', fontWeight: '500' }}>
+              {user?.createdAt ? new Date(user.createdAt).toLocaleString() : 'Not provided'}
+            </Text>
+          </View>
         </View>
       </View>
 
@@ -978,6 +961,44 @@ export default function ProfileScreen() {
                 )}
               </View>
             </View>
+
+            <View style={styles.regItem}>
+              <View style={styles.regIconWrap}>
+                <MaterialIcons name="badge" size={18} color="#166534" />
+              </View>
+              <View style={styles.regTextWrap}>
+                <Text style={styles.regLabel}>VALID ID</Text>
+                {volunteerProfile.validIdPhoto || user?.volunteerMembershipSheet?.validIdPhoto ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                    <Text style={[styles.regValue, { flex: 1 }]} numberOfLines={1}>
+                      {isImageMediaUri(volunteerProfile.validIdPhoto || user?.volunteerMembershipSheet?.validIdPhoto)
+                        ? getAttachmentLabel(volunteerProfile.validIdPhoto || user?.volunteerMembershipSheet?.validIdPhoto || '')
+                        : (volunteerProfile.validIdPhoto || user?.volunteerMembershipSheet?.validIdPhoto)}
+                    </Text>
+                    {isImageMediaUri(volunteerProfile.validIdPhoto || user?.volunteerMembershipSheet?.validIdPhoto) ? (
+                      <TouchableOpacity
+                        onPress={async () => {
+                          try {
+                            await openAttachmentUri((volunteerProfile.validIdPhoto || user?.volunteerMembershipSheet?.validIdPhoto) || '');
+                          } catch (error: any) {
+                            Alert.alert(
+                              'Unable to Open ID',
+                              error?.message || 'ID photo could not be opened.',
+                            );
+                          }
+                        }}
+                        style={styles.attachmentIconButton}
+                      >
+                        <MaterialIcons name="visibility" size={16} color="#166534" />
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                ) : (
+                  <Text style={styles.regValue}>Not provided</Text>
+                )}
+              </View>
+            </View>
+
 
             <View style={styles.regItem}>
               <View style={styles.regIconWrap}>
@@ -1297,6 +1318,12 @@ export default function ProfileScreen() {
         <MaterialIcons name="logout" size={20} color="#ffffff" style={{ marginRight: 8 }} />
         <Text style={styles.logoutButtonText}>Logout</Text>
       </TouchableOpacity>
+
+      <LogoutConfirmationModal
+        visible={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+        onConfirm={logout}
+      />
 
       {/* Edit Profile Modal */}
       <Modal visible={showEditModal} animationType="slide" onRequestClose={handleCancelEdit}>

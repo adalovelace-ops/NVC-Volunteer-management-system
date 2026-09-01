@@ -24,10 +24,16 @@ export default defineConfig(({ mode }) => {
     define: {
       __DEV__: JSON.stringify(mode !== 'production'),
       'global': 'globalThis',
+      'process.env.EXPO_OS': JSON.stringify('web'),
+      'process.env.GOOGLE_MAPS_WEB_API_KEY': JSON.stringify(env.GOOGLE_MAPS_WEB_API_KEY || 'AIzaSyDrZWSM9FJ7pURqvnd2lNqK5y0I084kupE'),
+      'process.env.VITE_GOOGLE_MAPS_WEB_API_KEY': JSON.stringify(env.GOOGLE_MAPS_WEB_API_KEY || 'AIzaSyDrZWSM9FJ7pURqvnd2lNqK5y0I084kupE'),
       'process.env': JSON.stringify({
         NODE_ENV: mode === 'production' ? 'production' : 'development',
         VOLCRE_API_BASE_URL: env.VOLCRE_API_BASE_URL || '',
-        VOLCRE_WEB_API_BASE_URL: env.VOLCRE_WEB_API_BASE_URL || '',        GOOGLE_MAPS_WEB_API_KEY: env.GOOGLE_MAPS_WEB_API_KEY || '',        VITE_GOOGLE_MAPS_WEB_API_KEY: env.VITE_GOOGLE_MAPS_WEB_API_KEY || '',
+        VOLCRE_WEB_API_BASE_URL: env.VOLCRE_WEB_API_BASE_URL || '',
+        GOOGLE_MAPS_WEB_API_KEY: env.GOOGLE_MAPS_WEB_API_KEY || 'AIzaSyDrZWSM9FJ7pURqvnd2lNqK5y0I084kupE',
+        VITE_GOOGLE_MAPS_WEB_API_KEY: env.GOOGLE_MAPS_WEB_API_KEY || 'AIzaSyDrZWSM9FJ7pURqvnd2lNqK5y0I084kupE',
+        EXPO_OS: 'web',
       }),
     },
     server: {

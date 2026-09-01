@@ -2,7 +2,8 @@ import Constants from 'expo-constants';
 import { NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isAbortLikeError } from '../utils/requestErrors';
-import { sendEmailNotificationAndCalendarSync } from '../utils/calendarSync';
+import { sendGoogleCalendarSyncEmail } from '../utils/googleCalendarSync';
+import { getGoogleCalendarEventTemplateUrl } from '../utils/calendarSync';
 
 // Safe Platform accessor for web environments
 function getPlatformOS(): string {
@@ -13,10 +14,10 @@ function getPlatformOS(): string {
     return 'web';
   }
 }
+
 import {
   AdminPlanningCalendar,
-  AdminPlanningItem,
-  AdvocacyFocus,
+  AdminPlanningItem,  AdvocacyFocus,
   AppSettings,
   ImpactHubReportType,
   PartnerReport,
@@ -672,6 +673,30 @@ async function notifyPartnerAboutProjectJoinReview(
       }
     )
   );
+
+  if (application.status === 'Approved') {
+    const projectTitle = application.proposalDetails?.proposedTitle || application.proposalDetails?.targetProjectTitle || requestedProgramModule || 'Program';
+    try {
+      await sendSystemMessage(
+        reviewedBy,
+        application.partnerUserId,
+        `Your proposal for "${projectTitle}" has been submitted and has been approved.`
+      );
+    } catch (msgErr) {
+      console.warn('Failed sending partner approval confirmation system message:', msgErr);
+    }
+  } else if (application.status === 'Revision Requested' || application.status === 'Needs Revision') {
+    const projectTitle = application.proposalDetails?.proposedTitle || application.proposalDetails?.targetProjectTitle || requestedProgramModule || 'Program';
+    try {
+      await sendSystemMessage(
+        reviewedBy,
+        application.partnerUserId,
+        `Your proposal for "${projectTitle}" requires revision: "${reviewNotes || 'Please update and resubmit.'}". You can now edit and resubmit.`
+      );
+    } catch (msgErr) {
+      console.warn('Failed sending partner revision request system message:', msgErr);
+    }
+  }
 
   if (application.status === 'Approved') {
     const project = await getProject(application.projectId);
@@ -2992,6 +3017,65 @@ export async function createUserAccount(input: {
   return createdUser;
 }
 
+// Cancels and withdraws a submitted registration for volunteer or partner accounts.
+export async function cancelUserRegistration(userIdOrEmailOrPhone: string): Promise<void> {
+  const normalizedKey = userIdOrEmailOrPhone.trim().toLowerCase();
+  if (!normalizedKey) return;
+
+  const users = (await getStorageItem<User[]>(STORAGE_KEYS.USERS)) || [];
+  const targetUser = users.find(
+    u =>
+      u.id.toLowerCase() === normalizedKey ||
+      (u.email && u.email.trim().toLowerCase() === normalizedKey) ||
+      (u.phone && normalizeAccountPhone(u.phone) === normalizeAccountPhone(normalizedKey))
+  );
+
+  const targetId = targetUser?.id || normalizedKey;
+  const targetEmail = targetUser?.email?.trim().toLowerCase();
+  const targetPhone = targetUser?.phone ? normalizeAccountPhone(targetUser.phone) : '';
+
+  // Remove from users
+  const updatedUsers = users.filter(
+    u =>
+      u.id !== targetId &&
+      (!targetEmail || u.email?.trim().toLowerCase() !== targetEmail) &&
+      (!targetPhone || normalizeAccountPhone(u.phone) !== targetPhone)
+  );
+  await setStorageItem(STORAGE_KEYS.USERS, updatedUsers);
+
+  // Remove volunteer records
+  const volunteers = (await getStorageItem<Volunteer[]>(STORAGE_KEYS.VOLUNTEERS)) || [];
+  const updatedVolunteers = volunteers.filter(
+    v =>
+      v.userId !== targetId &&
+      v.id !== `volunteer-${targetId}` &&
+      (!targetEmail || v.email?.trim().toLowerCase() !== targetEmail) &&
+      (!targetPhone || normalizeAccountPhone(v.phone) !== targetPhone)
+  );
+  await setStorageItem(STORAGE_KEYS.VOLUNTEERS, updatedVolunteers);
+
+  // Remove partner records
+  const partners = (await getStorageItem<Partner[]>(STORAGE_KEYS.PARTNERS)) || [];
+  const updatedPartners = partners.filter(
+    p =>
+      p.ownerUserId !== targetId &&
+      p.id !== `partner-${targetId}` &&
+      (!targetEmail || p.contactEmail?.trim().toLowerCase() !== targetEmail) &&
+      (!targetPhone || normalizeAccountPhone(p.contactPhone) !== targetPhone)
+  );
+  await setStorageItem(STORAGE_KEYS.PARTNERS, updatedPartners);
+
+  // Remove partner applications
+  const partnerApps = (await getStorageItem<PartnerApplication[]>(STORAGE_KEYS.PARTNER_APPLICATIONS)) || [];
+  const updatedPartnerApps = partnerApps.filter(
+    a =>
+      a.partnerUserId !== targetId &&
+      (!targetEmail || a.contactEmail?.trim().toLowerCase() !== targetEmail) &&
+      (!targetPhone || normalizeAccountPhone(a.contactPhone) !== targetPhone)
+  );
+  await setStorageItem(STORAGE_KEYS.PARTNER_APPLICATIONS, updatedPartnerApps);
+}
+
 // Looks up a single user by id.
 // OPTIMIZED: Use cached getStorageItemFast instead of slow getStorageItem
 export async function getUser(id: string): Promise<User | null> {
@@ -4350,15 +4434,21 @@ import {
   saveMessage as fbSaveMessage,
   saveProjectGroupMessage as fbSaveProjectGroupMessage,
   deleteProjectGroupChat as fbDeleteProjectGroupChat,
+  deleteMessage as fbDeleteMessage,
+  deleteProjectGroupMessage as fbDeleteProjectGroupMessage,
   getMessagesForUser as fbGetMessagesForUser,
   getConversation as fbGetConversation,
   getProjectGroupMessages as fbGetProjectGroupMessages,
   markMessageAsRead as fbMarkMessageAsRead,
   type MessageSubscriptionEvent,
-  subscribeToMessages as fbSubscribeToMessages
+  subscribeToMessages as fbSubscribeToMessages,
+  setTypingStatus as fbSetTypingStatus,
+  subscribeToTypingStatus as fbSubscribeToTypingStatus
 } from '../lib/messages';
 
 export { type MessageSubscriptionEvent };
+export const setTypingStatus = fbSetTypingStatus;
+export const subscribeToTypingStatus = fbSubscribeToTypingStatus;
 
 // Message Storage
 export async function saveMessage(message: Message): Promise<void> {
@@ -4377,6 +4467,24 @@ export async function saveProjectGroupMessage(message: ProjectGroupMessage): Pro
 export async function deleteProjectGroupChat(projectId: string): Promise<void> {
   await fbDeleteProjectGroupChat(projectId);
   invalidateMessageCache(undefined, undefined, projectId);
+  notifyWebMessageUpdate();
+}
+
+export async function deleteMessage(messageId: string, senderId?: string, recipientId?: string, projectId?: string): Promise<void> {
+  await fbDeleteMessage(messageId);
+  if (senderId && recipientId) {
+    invalidateMessageCache(senderId, recipientId);
+    invalidateMessageCache(recipientId, senderId);
+  } else if (senderId) {
+    invalidateMessageCache(senderId);
+  }
+  if (projectId) invalidateMessageCache(undefined, undefined, projectId);
+  notifyWebMessageUpdate();
+}
+
+export async function deleteProjectGroupMessage(messageId: string, projectId?: string): Promise<void> {
+  await fbDeleteProjectGroupMessage(messageId);
+  if (projectId) invalidateMessageCache(undefined, undefined, projectId);
   notifyWebMessageUpdate();
 }
 
@@ -4669,6 +4777,7 @@ export async function reviewVolunteerProjectMatch(
 
   try {
     const volunteer = await getVolunteer(payload.match.volunteerId);
+    const volunteerUser = volunteer?.userId ? await getUser(volunteer.userId) : null;
     await notifyVolunteerAboutProjectMatchDecision(
       payload.match.projectId,
       volunteer?.userId || '',
@@ -4676,6 +4785,46 @@ export async function reviewVolunteerProjectMatch(
       nextStatus,
       'request'
     );
+    if (nextStatus === 'Matched') {
+      try {
+        await reconcileApprovedVolunteerEventMemberships();
+      } catch (reconcileErr) {
+        console.error('Error auto-adding approved volunteer to event GC:', reconcileErr);
+      }
+
+      // Send Calendar Confirmation Email to Approved Volunteer
+      void (async () => {
+        try {
+          const project = await getProject(payload.match.projectId);
+          const recipientEmail = volunteer?.email || volunteerUser?.email;
+          const recipientName = volunteer?.name || volunteerUser?.name || 'Volunteer';
+
+          if (recipientEmail && project) {
+            const calendarUrl = getGoogleCalendarEventTemplateUrl({
+              title: project.title,
+              details: project.description,
+              location: project.locationVenue || project.location?.address || '',
+              startDate: project.startDate,
+              endDate: project.endDate,
+            });
+            await sendGoogleCalendarSyncEmail({
+              recipientEmail: recipientEmail.trim(),
+              userName: recipientName,
+              syncedCount: 1,
+              role: 'volunteer',
+              calendarUrl,
+              eventTitle: project.title,
+              eventDate: `${project.startDate.slice(0, 10)}${project.endDate ? ' to ' + project.endDate.slice(0, 10) : ''}`,
+              location: project.locationVenue || project.location?.address || '',
+              details: project.description,
+              subject: `Calendar Invitation: Approved for ${project.title}`,
+            });
+          }
+        } catch (calErr) {
+          console.error('Failed sending volunteer event calendar invitation email:', calErr);
+        }
+      })();
+    }
   } catch (error) {
     console.error('Error notifying volunteer about request review:', error);
   }
@@ -4730,6 +4879,12 @@ export async function assignVolunteerToProject(
 
   await saveVolunteerProjectMatch(assignedMatch);
   await ensureVolunteerProjectJoinRecord(projectId, volunteerId, 'AdminMatch');
+
+  try {
+    await reconcileApprovedVolunteerEventMemberships();
+  } catch (reconcileErr) {
+    console.error('Error auto-adding assigned volunteer to event GC:', reconcileErr);
+  }
 
   try {
     await notifyVolunteerAboutProjectMatchDecision(
@@ -4848,7 +5003,7 @@ export async function reconcileApprovedVolunteerEventMemberships(): Promise<void
     .forEach(match => {
       const project = projectById.get(match.projectId);
       const volunteer = volunteerById.get(match.volunteerId);
-      if (!project?.isEvent || !volunteer || existingKeys.has(`${match.projectId}:${match.volunteerId}`)) {
+      if (!project || !volunteer || existingKeys.has(`${match.projectId}:${match.volunteerId}`)) {
         return;
       }
 
@@ -5085,14 +5240,15 @@ export async function submitPartnerProgramProposal(
   await updatePartnerProjectApplicationCache(payload.application);
 
   // Notify admin (and confirm to partner) about the new proposal.
-  // Send messages asynchronously so proposal submission returns promptly.
-  void notifyAdminAboutPartnerProjectJoin(payload.application.projectId, {
-    id: partnerUser.id,
-    name: partnerUser.name,
-    email: partnerUser.email || '',
-  }, payload.application).catch(error => {
+  try {
+    await notifyAdminAboutPartnerProjectJoin(payload.application.projectId, {
+      id: partnerUser.id,
+      name: partnerUser.name,
+      email: partnerUser.email || '',
+    }, payload.application);
+  } catch (error) {
     console.warn('Failed to notify admin about partner proposal:', error);
-  });
+  }
 
   return payload.application;
 }
@@ -5105,10 +5261,10 @@ export async function requestPartnerProjectJoin(
   return submitPartnerProgramProposal(projectId, partnerUser);
 }
 
-// Approves or rejects a partner join request.
+// Approves, rejects, or requests revision for a partner join request.
 export async function reviewPartnerProjectApplication(
   applicationId: string,
-  status: 'Approved' | 'Rejected',
+  status: 'Approved' | 'Rejected' | 'Revision Requested' | 'Needs Revision' | 'Revision',
   reviewedBy: string,
   reviewNotes?: string
 ): Promise<PartnerProjectApplication> {
@@ -5141,6 +5297,46 @@ export async function reviewPartnerProjectApplication(
 
   // Send notification card back to partner with review result
   void notifyPartnerAboutProjectJoinReview(payload.application, reviewedBy);
+
+  // Send Google Calendar sync email to partner
+  if (status === 'Approved') {
+    void (async () => {
+      try {
+        const project = payload.project || (await getProject(payload.application.projectId));
+        const partnerId = payload.application.partnerId || payload.application.partnerUserId;
+        let partnerUser: User | null = null;
+        if (partnerId) {
+          partnerUser = (await getUser(partnerId)) || (await getUserByEmail(partnerId));
+        }
+        const recipientEmail = payload.application.contactEmail || partnerUser?.email;
+        const recipientName = payload.application.partnerName || partnerUser?.name || 'Partner';
+
+        if (recipientEmail && project) {
+          const calendarUrl = getGoogleCalendarEventTemplateUrl({
+            title: project.title,
+            details: project.description,
+            location: project.locationVenue || project.location?.address || '',
+            startDate: project.startDate,
+            endDate: project.endDate,
+          });
+          await sendGoogleCalendarSyncEmail({
+            recipientEmail: recipientEmail.trim(),
+            userName: recipientName,
+            syncedCount: 1,
+            role: 'partner',
+            calendarUrl,
+            eventTitle: project.title,
+            eventDate: `${project.startDate.slice(0, 10)}${project.endDate ? ' to ' + project.endDate.slice(0, 10) : ''}`,
+            location: project.locationVenue || project.location?.address || '',
+            details: project.description,
+            subject: `Calendar Invitation: Partner Project Approved - ${project.title}`,
+          });
+        }
+      } catch (calErr) {
+        console.error('Failed sending partner project calendar invitation email:', calErr);
+      }
+    })();
+  }
 
   return payload.application;
 }

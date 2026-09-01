@@ -91,6 +91,8 @@ import {
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
 import { getAttachmentLabel, getPrimaryReportMediaUri, isImageMediaUri, openAttachmentUri, pickDocumentFromDevice, pickImageFromDevice } from '../utils/media';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
+import { sendGoogleCalendarSyncEmail } from '../utils/googleCalendarSync';
+import { getGoogleCalendarEventTemplateUrl } from '../utils/calendarSync';
 import {
   composePhilippineAddress,
   getBarangaysByCity,
@@ -636,11 +638,11 @@ const createEmptyProjectDraft = (
   isEvent,
 });
 
-const createEmptyProjectTaskDraft = (): ProjectTaskDraft => ({
+const createEmptyProjectTaskDraft = (volunteersNeeded: number | string = '1'): ProjectTaskDraft => ({
   title: '',
   description: '',
   category: 'General',
-  volunteersNeeded: '1',
+  volunteersNeeded: String(volunteersNeeded || '1'),
   priority: 'Medium',
   status: 'Unassigned',
   assignedVolunteerIds: [],
@@ -1061,6 +1063,7 @@ interface InlineProjectFormProps {
   format: any;
   handleSearchMapLocation: (query: string) => void;
   handleMarkerPositionChange: (lat: number, lng: number) => void;
+  allProjects?: Project[];
 }
 
 const InlineProjectForm = React.memo(({
@@ -1093,6 +1096,7 @@ const InlineProjectForm = React.memo(({
   format,
   handleSearchMapLocation,
   handleMarkerPositionChange,
+  allProjects,
 }: InlineProjectFormProps) => {
   const selectedLocationRegion = PHRegions.find(r => r.code === projectRegionCode);
   const selectedLocationCity = projectLocationCities.find(c => c.code === projectCityCode);
@@ -1311,17 +1315,50 @@ const InlineProjectForm = React.memo(({
         <View style={{ flex: 2.2, gap: 12 }}>
           {/* Section 1 */}
           {renderSectionHeader(1, '1. PROJECT INFORMATION', 'Basic information about your project.')}
-          <FieldRow isDesktop={isDesktop}>
-            <FieldContainer label="Project Name" required>
-              <TextInput
-                style={inputStyle}
-                placeholder="e.g., Mingo Meals Program, Brgy. Alangilan"
-                placeholderTextColor="#94a3b8"
-                value={projectDraft.title}
-                onChangeText={value => handleProjectDraftChange('title', value)}
-              />
-            </FieldContainer>
-            <FieldContainer label="Program" required>
+          {(() => {
+            const isDuplicateTitle = Boolean(
+              projectDraft.title &&
+              projectDraft.title.trim().length >= 2 &&
+              (allProjects || []).some(p =>
+                p.id !== editingProjectId &&
+                p.title &&
+                p.title.trim().toLowerCase() === projectDraft.title.trim().toLowerCase()
+              )
+            );
+            return (
+              <FieldRow isDesktop={isDesktop}>
+                <FieldContainer label="Project Name" required>
+                  <TextInput
+                    style={[
+                      inputStyle,
+                      isDuplicateTitle && { borderColor: '#f59e0b', backgroundColor: '#fffbeb' }
+                    ]}
+                    placeholder="e.g., Mingo Meals Program, Brgy. Alangilan"
+                    placeholderTextColor="#94a3b8"
+                    value={projectDraft.title}
+                    onChangeText={value => handleProjectDraftChange('title', value)}
+                  />
+                  {isDuplicateTitle ? (
+                    <View style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                      backgroundColor: '#fffbeb',
+                      borderWidth: 1,
+                      borderColor: '#fde68a',
+                      borderRadius: 6,
+                      paddingHorizontal: 8,
+                      paddingVertical: 5,
+                      marginTop: 6,
+                    }}>
+                      <MaterialIcons name="warning-amber" size={15} color="#d97706" />
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#b45309', flex: 1 }}>
+                        Warning: A program, project, or event with this title already exists.
+                      </Text>
+                    </View>
+                  ) : null}
+                </FieldContainer>
+                <FieldContainer label="Program" required>
               <View style={pickerContainerStyle}>
                 <Picker
                   selectedValue={projectDraft.program_id}
@@ -1348,6 +1385,8 @@ const InlineProjectForm = React.memo(({
               </View>
             </FieldContainer>
           </FieldRow>
+            );
+          })()}
 
           <FieldRow isDesktop={isDesktop}>
             <FieldContainer label="Short Description" required>
@@ -1613,20 +1652,42 @@ const InlineProjectForm = React.memo(({
                   </Text>
                 </View>
 
-                <TouchableOpacity
-                  onPress={handlePickProjectDocument}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 2 }}
-                >
-                  <MaterialIcons name="upload-file" size={18} color="#2563eb" />
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 12, color: '#64748b' }}>Document Attachment</Text>
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#2563eb' }} numberOfLines={1}>
-                      {projectDraft.attachmentUrl
-                        ? projectDraft.attachmentUrl.split('/').pop() || 'Attached document'
-                        : 'Upload document'}
-                    </Text>
+                {!projectDraft.isEvent && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 2 }}>
+                    <TouchableOpacity
+                      onPress={async () => {
+                        if (projectDraft.attachmentUrl) {
+                          try {
+                            await openAttachmentUri(projectDraft.attachmentUrl);
+                          } catch (error: any) {
+                            Alert.alert('Unable to Open Document', error?.message || 'Attachment could not be opened.');
+                          }
+                        } else {
+                          await handlePickProjectDocument();
+                        }
+                      }}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}
+                    >
+                      <MaterialIcons name="upload-file" size={18} color="#2563eb" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 12, color: '#64748b' }}>Document Attachment</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#2563eb' }} numberOfLines={1}>
+                          {projectDraft.attachmentUrl
+                            ? projectDraft.attachmentUrl.split('/').pop() || 'Attached document'
+                            : 'Upload document'}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                    {projectDraft.attachmentUrl ? (
+                      <TouchableOpacity
+                        onPress={handlePickProjectDocument}
+                        style={{ padding: 4, marginLeft: 4 }}
+                      >
+                        <MaterialIcons name="edit" size={16} color="#64748b" />
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
-                </TouchableOpacity>
+                )}
               </View>
             )}
           </View>
@@ -1656,7 +1717,9 @@ const InlineProjectForm = React.memo(({
             >
               <MaterialIcons name="add-circle-outline" size={16} color="#fff" />
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>
-                {editingProjectId ? 'Update Project' : 'Create Project'}
+                {editingProjectId
+                  ? (projectDraft.isEvent ? 'Update Event' : 'Update Project')
+                  : (projectDraft.isEvent ? 'Create Event' : 'Create Project')}
               </Text>
             </TouchableOpacity>
 
@@ -1678,7 +1741,9 @@ const InlineProjectForm = React.memo(({
               }}
             >
               <MaterialIcons name="save" size={16} color="#166534" />
-              <Text style={{ color: '#166534', fontWeight: '700', fontSize: 13 }}>Save as Draft</Text>
+              <Text style={{ color: '#166534', fontWeight: '700', fontSize: 13 }}>
+                {projectDraft.isEvent ? 'Save Event as Draft' : 'Save as Draft'}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1773,9 +1838,44 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const [attendanceFilter, setAttendanceFilter] = useState<'All' | 'Present' | 'Absent' | 'Late'>('All');
   const [programTracks, setProgramTracks] = useState<ProgramTrack[]>([]);
   const [showStatusModal, setShowStatusModal] = useState(false);
+  const [showExtendScheduleModal, setShowExtendScheduleModal] = useState(false);
+  const [showForceCloseConfirmModal, setShowForceCloseConfirmModal] = useState(false);
+  const [extendDaysSelection, setExtendDaysSelection] = useState<number>(7);
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [activeInlineCreateProjectProgramId, setActiveInlineCreateProjectProgramId] = useState<string | null>(null);
   const [activeInlineCreateEventProjectId, setActiveInlineCreateEventProjectId] = useState<string | null>(null);
+  const [projectToDeleteConfirm, setProjectToDeleteConfirm] = useState<Project | null>(null);
+  const [isDeletingProject, setIsDeletingProject] = useState(false);
+
+  const isProjectProposer = (proj: Project | null | undefined): boolean => {
+    if (!proj) return false;
+    if (isAdmin) return true;
+    if (user?.role === 'partner') {
+      const userPartner = partners.find(p =>
+        p.ownerUserId === user.id ||
+        (p.contactEmail && p.contactEmail.toLowerCase() === user.email?.toLowerCase())
+      );
+      const matchesPartner = (pId: string | undefined): boolean => {
+        if (!pId) return false;
+        const matchesId = userPartner ? pId === userPartner.id : false;
+        const matchesUserId = pId === user.id;
+        const matchesOwnerId = userPartner?.ownerUserId ? pId === userPartner.ownerUserId : false;
+        return matchesId || matchesUserId || matchesOwnerId;
+      };
+
+      if (matchesPartner(proj.partnerId)) {
+        return true;
+      }
+
+      if (proj.isEvent && proj.parentProjectId) {
+        const parent = projects.find(p => !p.isEvent && p.id === proj.parentProjectId);
+        if (parent && matchesPartner(parent.partnerId)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
 
   const startInlineProjectCreation = (trackId: string, trackTitle: string, proposal?: any) => {
     setEditingProjectId(null);
@@ -1879,6 +1979,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const [projectEditorMode, setProjectEditorMode] = useState<'project' | 'event' | null>(null);
   const [isProjectSaveSuccess, setIsProjectSaveSuccess] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [taskToDeleteId, setTaskToDeleteId] = useState<string | null>(null);
   const [showParticipantsSection, setShowParticipantsSection] = useState(false);
   const [isTaskSaveSuccess, setIsTaskSaveSuccess] = useState(false);
   const [taskSaveSuccessMessage, setTaskSaveSuccessMessage] = useState('');
@@ -1957,6 +2058,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     { type: 'Notification', value: '30', unit: 'minutes' }
   ]);
   const [isSavingEvent, setIsSavingEvent] = useState(false);
+  const [postEventJustPosted, setPostEventJustPosted] = useState(false);
   const [projectRegionCode, setProjectRegionCode] = useState('');
   const [projectCityCode, setProjectCityCode] = useState('');
   const [projectBarangayCode, setProjectBarangayCode] = useState('');
@@ -2014,7 +2116,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         setSelectedProgramWebModule(null);
       }
     }
-    
+  }, [route?.name, route?.params?.programSuiteNavKey, route?.params?.programSuiteView, route?.params?.projectId]);
+
+  useEffect(() => {
     if (route?.params?.projectId && projects.length > 0) {
       const targetId = route.params.projectId;
       const targetProject = projects.find(p => p.id === targetId);
@@ -2024,7 +2128,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         navigation?.setParams?.({ projectId: undefined });
       }
     }
-  }, [route?.name, route?.params?.programSuiteNavKey, route?.params?.programSuiteView, route?.params?.projectId, projects]);
+  }, [route?.params?.projectId, projects, selectedProject?.id, navigation]);
 
   const switchProgramSuiteView = (nextView: ProgramSuiteView) => {
     setProgramSuiteView(nextView);
@@ -2125,29 +2229,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   }, []);
 
   const handleDeleteProject = (project: Project) => {
-    Alert.alert(
-      'Delete Project',
-      `Are you sure you want to delete "${project.title}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' as const },
-        {
-          text: 'Delete',
-          style: 'destructive' as const,
-          onPress: async () => {
-            try {
-              if (project.isEvent) {
-                await deleteEvent(project.id);
-              } else {
-                await deleteProject(project.id);
-              }
-              void loadProjects();
-            } catch (err) {
-              Alert.alert('Error', 'Failed to delete project.');
-            }
-          }
-        }
-      ]
-    );
+    setProjectToDeleteConfirm(project);
   };
 
   const handleCreateProjectFromCalendar = () => {
@@ -2170,7 +2252,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       // Split refresh into a lightweight immediate load and deferred heavy loads
       const refreshLight = async () => {
         // Essential UI data loaded first to render the screen quickly
-        await Promise.all([loadProjects(), loadPartners()]);
+        await Promise.all([loadProjects(), loadPartners(), loadAllPartnerApplications()]);
 
         // Load selected-project details synchronously so selection works immediately
         if (selectedProject?.id) {
@@ -2188,7 +2270,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         void loadVolunteers();
         void loadAllVolunteerMatches();
         void loadVolunteerTimeLogs();
-        void loadAllPartnerApplications();
         void loadAllPartnerReports();
         void loadProgramTracks();
         void loadPlanningData();
@@ -2611,6 +2692,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     shouldRestoreListScrollRef.current = true;
     setSelectedProject(project);
     await Promise.all([
+      loadPartners(),
+      loadAllPartnerApplications(),
       loadStatusUpdates(project.id),
       loadPartnerReportsForProject(project.id),
       loadVolunteerJoinsForProject(project.id),
@@ -2921,62 +3004,11 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   };
 
   const handleDeleteEventRecord = (event: Project) => {
-    if (!isAdmin || !event.isEvent) {
+    if (!event.isEvent || (!isAdmin && !isProjectProposer(event))) {
+      Alert.alert('Access Restricted', 'Only admin or the proposing partner can delete this event.');
       return;
     }
-
-    const doDelete = async () => {
-      const previousSelectedProject = selectedProject;
-      const previousProjects = projects;
-      setActionLoadingKey(`deleteEvent-${event.id}`);
-      setProjects(currentProjects => currentProjects.filter(project => project.id !== event.id));
-      setSelectedProject(currentProject =>
-        currentProject?.id === event.id ? null : currentProject
-      );
-
-      try {
-        // Delete from backend
-        await deleteProjectLikeRecord(event);
-
-        // Force clear cache to ensure fresh data
-        clearStorageCache(['events', 'projects', 'statusUpdates', 'volunteerProjectJoins', 'volunteerMatches', 'volunteerTimeLogs']);
-
-        // Wait a bit to ensure backend deletion propagates
-        await new Promise(resolve => setTimeout(resolve, 300));
-
-        // Reload fresh data
-        await loadProjects();
-
-        showTaskSaveNotice(`Event "${event.title}" was deleted successfully.`, 1200);
-      } catch (error) {
-        setProjects(previousProjects);
-        setSelectedProject(previousSelectedProject);
-        const errorMsg = getRequestErrorMessage(error, 'Failed to delete event.');
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.alert(`${getRequestErrorTitle(error)}\n\n${errorMsg}`);
-        } else {
-          Alert.alert(getRequestErrorTitle(error), errorMsg);
-        }
-      } finally {
-        setActionLoadingKey(null);
-      }
-    };
-
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (window.confirm(`Delete "${event.title}"? This cannot be undone.`)) {
-        void doDelete();
-      }
-      return;
-    }
-
-    Alert.alert(
-      'Delete Event',
-      `Delete "${event.title}"? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => void doDelete() },
-      ]
-    );
+    setProjectToDeleteConfirm(event);
   };
 
   // Updates a single project draft field without replacing the entire object.
@@ -3495,10 +3527,70 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
   // Creates or updates a project record from the modal form.
   const handleSaveProjectRecord = async () => {
-    if (!isAdmin) {
-      Alert.alert('Access Restricted', 'Only admin accounts can manage projects.');
+    if (isSavingEvent) return;
+    setIsSavingEvent(true);
+
+    // Allow partners to manage events/projects that they proposed
+    const tempExistingProject = editingProjectId
+      ? projects.find(project => project.id === editingProjectId) || null
+      : null;
+    const tempResolvedEventParentProjectId =
+      projectDraft.isEvent
+        ? (
+          projectDraft.parentProjectId?.trim()
+          || (!selectedProject?.isEvent ? selectedProject?.id : '')
+        )
+        : '';
+    const tempResolvedEventParentProject =
+      projectDraft.isEvent && tempResolvedEventParentProjectId
+        ? projects.find(project => !project.isEvent && project.id === tempResolvedEventParentProjectId) || null
+        : null;
+
+    let isAuthorizedPartner = false;
+    if (user?.role === 'partner') {
+      const userPartner = partners.find(p =>
+        p.ownerUserId === user.id ||
+        (p.contactEmail && p.contactEmail.toLowerCase() === user.email?.toLowerCase())
+      );
+      const matchesPartner = (pId: string | undefined): boolean => {
+        if (!pId) return false;
+        const matchesId = userPartner ? pId === userPartner.id : false;
+        const matchesUserId = pId === user.id;
+        const matchesOwnerId = userPartner?.ownerUserId ? pId === userPartner.ownerUserId : false;
+        return matchesId || matchesUserId || matchesOwnerId;
+      };
+
+      if (projectDraft.isEvent) {
+        if (tempResolvedEventParentProject && matchesPartner(tempResolvedEventParentProject.partnerId)) {
+          isAuthorizedPartner = true;
+        } else if (tempExistingProject) {
+          if (matchesPartner(tempExistingProject.partnerId)) {
+            isAuthorizedPartner = true;
+          }
+          const parentProj = projects.find(p => !p.isEvent && p.id === tempExistingProject.parentProjectId);
+          if (parentProj && matchesPartner(parentProj.partnerId)) {
+            isAuthorizedPartner = true;
+          }
+        }
+      } else {
+        if (matchesPartner(projectDraft.partnerId)) {
+          isAuthorizedPartner = true;
+        } else if (tempExistingProject && matchesPartner(tempExistingProject.partnerId)) {
+          isAuthorizedPartner = true;
+        }
+      }
+      // Fallback: allow any partner to post/make events (UI already gates to own projects)
+      if (!isAuthorizedPartner && user?.role === 'partner' && projectDraft.isEvent) {
+        isAuthorizedPartner = true;
+      }
+    }
+
+    if (!isAdmin && !isAuthorizedPartner) {
+      setIsSavingEvent(false);
+      Alert.alert('Access Restricted', 'Only admin accounts or the proposing partner can manage projects.');
       return;
     }
+
 
     const failProjectSaveValidation = (message: string) => {
       setActionLoadingKey(null);
@@ -3573,6 +3665,32 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           : 'Fill in all required fields: title, description, start date, end date, region, city, and place.'
       );
       return;
+    }
+
+    // Duplicate title check & warning
+    const trimmedTitle = projectDraft.title.trim().toLowerCase();
+    const duplicateItem = projects.find(project =>
+      project.id !== editingProjectId &&
+      project.title &&
+      project.title.trim().toLowerCase() === trimmedTitle
+    );
+
+    if (duplicateItem) {
+      const duplicateType = duplicateItem.isEvent ? 'an event' : duplicateItem.parentProjectId ? 'a project' : 'a program/project';
+      const shouldProceed = await new Promise<boolean>(resolve => {
+        Alert.alert(
+          'Duplicate Title Warning',
+          `"${projectDraft.title.trim()}" already exists as ${duplicateType}. Do you want to proceed with this duplicate title?`,
+          [
+            { text: 'Cancel & Change Title', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Proceed Anyway', onPress: () => resolve(true) },
+          ]
+        );
+      });
+      if (!shouldProceed) {
+        setIsSavingEvent(false);
+        return;
+      }
     }
 
     // For projects (non-events), preserve parentProjectId if it was set (for grouping in programs)
@@ -3769,6 +3887,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       await loadProjects();
       setIsSavingEvent(false);
       setActionLoadingKey(null);
+      if (savedProject.isEvent) {
+        setPostEventJustPosted(true);
+        setTimeout(() => setPostEventJustPosted(false), 2500);
+      }
       const successTitle = isEditingExistingRecord
         ? savedProject.isEvent
           ? 'Event Edit Completed'
@@ -3793,18 +3915,26 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         );
         if (savedProject.isEvent) {
           const googleUrl = getGoogleCalendarEventUrl(projectToSave);
-          Linking.openURL(googleUrl).catch(err => {
-            console.error('Failed to open Google Calendar link:', err);
-          });
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.open(googleUrl, '_blank');
+          } else {
+            Linking.openURL(googleUrl).catch(err => {
+              console.error('Failed to open Google Calendar link:', err);
+            });
+          }
         }
         Alert.alert(successTitle, successMessage);
       } else if (savedProject.isEvent) {
         closeProjectModal();
         showTaskSaveNotice('Event created. The new event was saved and is now visible in the live project flow.');
         const googleUrl = getGoogleCalendarEventUrl(projectToSave);
-        Linking.openURL(googleUrl).catch(err => {
-          console.error('Failed to open Google Calendar link:', err);
-        });
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.open(googleUrl, '_blank');
+        } else {
+          Linking.openURL(googleUrl).catch(err => {
+            console.error('Failed to open Google Calendar link:', err);
+          });
+        }
         Alert.alert('Event Created', 'Event was created and saved successfully.', [
           { text: 'OK' },
         ]);
@@ -3827,72 +3957,12 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
   // Confirms and deletes the currently edited project record.
   const handleDeleteProjectRecord = () => {
-    if (!selectedProject || !isAdmin) {
+    if (!selectedProject) return;
+    if (!isAdmin && !isProjectProposer(selectedProject)) {
+      Alert.alert('Access Restricted', 'Only admin or the proposing partner can delete this project.');
       return;
     }
-
-    const selectedRecordType = selectedProject.isEvent ? 'Event' : 'Project';
-    const projectToDelete = selectedProject;
-    const doDelete = async () => {
-      try {
-        // Optimistically remove from UI
-        setProjects(currentProjects => currentProjects.filter(project => project.id !== projectToDelete.id));
-
-        // Delete from backend
-        await deleteProjectLikeRecord(projectToDelete);
-
-        // Force clear cache to ensure fresh data
-        clearStorageCache(['projects', 'events', 'statusUpdates', 'volunteerProjectJoins', 'volunteerMatches', 'volunteerTimeLogs', 'partnerProjectApplications', 'partnerReports']);
-
-        // Wait a bit to ensure backend deletion propagates
-        await new Promise(resolve => setTimeout(resolve, 300));
-
-        // Navigate back and clear related state
-        handleReturnToProjectList();
-        setStatusUpdates([]);
-        setAllPartnerApplications([]);
-        setPartnerReports([]);
-        setVolunteerJoinRecords([]);
-
-        // Reload fresh data
-        await loadProjects();
-
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.alert(`Deleted\n\n${projectToDelete.isEvent ? 'Event removed.' : 'Project removed.'}`);
-        } else {
-          Alert.alert('Deleted', projectToDelete.isEvent ? 'Event removed.' : 'Project removed.');
-        }
-      } catch (error) {
-        // On error, reload to restore correct state
-        await loadProjects();
-        const errorMsg = getRequestErrorMessage(error, `Failed to delete ${selectedRecordType.toLowerCase()}.`);
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.alert(`${getRequestErrorTitle(error)}\n\n${errorMsg}`);
-        } else {
-          Alert.alert(getRequestErrorTitle(error), errorMsg);
-        }
-      }
-    };
-
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (window.confirm(`Delete "${projectToDelete.title}"? This will remove its related join records, applications, and logs.`)) {
-        void doDelete();
-      }
-      return;
-    }
-
-    Alert.alert(
-      `Delete ${selectedRecordType}`,
-      `Delete ${projectToDelete.title}? This will remove its related join records, applications, and logs.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => void doDelete(),
-        },
-      ]
-    );
+    setProjectToDeleteConfirm(selectedProject);
   };
 
   // Adds a new lifecycle status update to the selected project.
@@ -4238,6 +4308,24 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
     try {
       await reviewVolunteerProjectMatch(requestEntry.id, nextStatus, user.id);
+      
+      if (nextStatus === 'Matched' && requestEntry.volunteerEmail) {
+        const calendarUrl = getGoogleCalendarEventTemplateUrl({
+          title: selectedProject.title,
+          details: selectedProject.description,
+          location: selectedProject.locationVenue || selectedProject.location?.address || '',
+          startDate: selectedProject.startDate,
+          endDate: selectedProject.endDate,
+        });
+        void sendGoogleCalendarSyncEmail({
+          recipientEmail: requestEntry.volunteerEmail,
+          userName: requestEntry.volunteerName,
+          syncedCount: 1,
+          role: 'volunteer',
+          calendarUrl
+        });
+      }
+
       void loadAllVolunteerMatches();
       void loadVolunteerMatchesForProject(selectedProject.id);
       void loadVolunteerJoinsForProject(selectedProject.id);
@@ -4262,51 +4350,683 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   };
 
   const handleDeleteProjectFromCard = (project: Project) => {
-    if (project.isEvent) {
-      handleDeleteEventRecord(project);
+    if (!isAdmin && !isProjectProposer(project)) {
+      Alert.alert('Access Restricted', 'Only admin or the proposing partner can delete this project.');
+      return;
+    }
+    setProjectToDeleteConfirm(project);
+  };
+
+  const handleCancelDeleteProject = () => {
+    if (isDeletingProject) return;
+    setProjectToDeleteConfirm(null);
+  };
+
+  const handleConfirmDeleteProject = async () => {
+    const projectToDelete = projectToDeleteConfirm;
+    if (!projectToDelete) return;
+    const isDeletingSelected = selectedProject?.id === projectToDelete.id;
+    const isEvent = Boolean(projectToDelete.isEvent);
+    const previousProjects = projects;
+    const previousSelectedProject = selectedProject;
+    setIsDeletingProject(true);
+    setActionLoadingKey(`delete-${projectToDelete.id}`);
+    try {
+      setProjects(currentProjects => currentProjects.filter(p => p.id !== projectToDelete.id));
+      if (isDeletingSelected) setSelectedProject(null);
+
+      await deleteProjectLikeRecord(projectToDelete);
+
+      clearStorageCache(
+        isEvent
+          ? ['events', 'projects', 'statusUpdates', 'volunteerProjectJoins', 'volunteerMatches', 'volunteerTimeLogs']
+          : ['projects', 'events', 'statusUpdates', 'volunteerProjectJoins', 'volunteerMatches', 'volunteerTimeLogs', 'partnerProjectApplications', 'partnerReports']
+      );
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      if (isDeletingSelected) {
+        handleReturnToProjectList();
+        setStatusUpdates([]);
+        setAllPartnerApplications([]);
+        setPartnerReports([]);
+        setVolunteerJoinRecords([]);
+      }
+
+      await loadProjects();
+      setProjectToDeleteConfirm(null);
+      showTaskSaveNotice(
+        isEvent ? `Event "${projectToDelete.title}" was deleted successfully.` : `Project "${projectToDelete.title}" was deleted successfully.`,
+        1200
+      );
+    } catch (error) {
+      setProjects(previousProjects);
+      if (isDeletingSelected) setSelectedProject(previousSelectedProject);
+      await loadProjects();
+      const errorMsg = getRequestErrorMessage(error, isEvent ? 'Failed to delete event.' : 'Failed to delete project.');
+      Alert.alert(getRequestErrorTitle(error), errorMsg);
+    } finally {
+      setIsDeletingProject(false);
+      setActionLoadingKey(null);
+    }
+  };
+
+  const renderDeleteConfirmModal = () => (
+    <Modal
+      visible={!!projectToDeleteConfirm}
+      transparent
+      animationType="fade"
+      onRequestClose={handleCancelDeleteProject}
+    >
+      <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+        <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 24, width: '100%', maxWidth: 420, borderWidth: 1, borderColor: '#e2e8f0' }}>
+          <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#fef2f2', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+            <MaterialIcons name="delete-forever" size={28} color="#dc2626" />
+          </View>
+          <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a', marginBottom: 8 }}>
+            Delete "{projectToDeleteConfirm?.title}"?
+          </Text>
+          <Text style={{ fontSize: 14, color: '#64748b', lineHeight: 20, marginBottom: 24 }}>
+            This will remove its related join records, applications, and logs.
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <TouchableOpacity
+              style={{ flex: 1, backgroundColor: '#f1f5f9', borderRadius: 10, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}
+              onPress={handleCancelDeleteProject}
+              disabled={isDeletingProject}
+              activeOpacity={0.8}
+            >
+              <Text style={{ fontSize: 14, fontWeight: '700', color: '#475569' }}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ flex: 1, backgroundColor: isDeletingProject ? '#fca5a5' : '#dc2626', borderRadius: 10, paddingVertical: 12, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
+              onPress={handleConfirmDeleteProject}
+              disabled={isDeletingProject}
+              activeOpacity={0.8}
+            >
+              {isDeletingProject ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <MaterialIcons name="delete" size={18} color="#fff" />
+              )}
+              <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>{isDeletingProject ? 'Deleting...' : 'Delete'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  const handleExtendProjectSchedule = async (additionalDays = 7) => {
+    const currentProj = getCurrentSelectedProject() || selectedProject;
+    if (!currentProj) return;
+
+    try {
+      setActionLoadingKey('extendSchedule');
+      const baseDate = currentProj.endDate ? new Date(currentProj.endDate) : new Date();
+      const validBaseDate = isNaN(baseDate.getTime()) ? new Date() : baseDate;
+      const newEndDate = new Date(validBaseDate.getTime() + additionalDays * 24 * 60 * 60 * 1000);
+      const now = new Date().toISOString();
+
+      const updatedProject: Project = {
+        ...currentProj,
+        status: 'In Progress',
+        manualStatus: 'In Progress',
+        statusMode: 'Manual',
+        endDate: newEndDate.toISOString(),
+        updatedAt: now,
+      };
+
+      const statusUpdate: StatusUpdate = {
+        id: `status-${Date.now()}`,
+        projectId: currentProj.id,
+        status: 'In Progress',
+        description: `Schedule extended by ${additionalDays} days (new end date: ${newEndDate.toLocaleDateString()}) to complete remaining tasks. Project remains Active.`,
+        source: 'Manual',
+        updatedBy: user?.id || '',
+        updatedAt: now,
+      };
+
+      await saveProjectLikeRecord(updatedProject);
+      await saveStatusUpdate(statusUpdate);
+      clearStorageCache(['projects', 'events', 'statusUpdates']);
+
+      setProjects(currentProjects =>
+        currentProjects.map(p =>
+          p.id === updatedProject.id ? updatedProject : p
+        )
+      );
+      setSelectedProject(updatedProject);
+      setShowStatusModal(false);
+      setShowExtendScheduleModal(false);
+      showTaskSaveNotice(`Schedule extended by ${additionalDays} days. Project remains Active.`, 2200);
+      await Promise.all([
+        loadStatusUpdates(currentProj.id),
+        loadProjects(),
+      ]);
+    } catch (error) {
+      Alert.alert(
+        getRequestErrorTitle(error),
+        getRequestErrorMessage(error, 'Failed to extend project schedule.')
+      );
+    } finally {
+      setActionLoadingKey(null);
+    }
+  };
+
+  const handleForceCloseProject = async () => {
+    const currentProj = getCurrentSelectedProject() || selectedProject;
+    if (!currentProj) return;
+    const projectTasks = Array.isArray(currentProj.internalTasks) ? currentProj.internalTasks : [];
+    const incompleteTasks = projectTasks.filter(t => !t.isFieldOfficer && t.status !== 'Completed');
+
+    try {
+      setActionLoadingKey('forceClose');
+      const now = new Date().toISOString();
+      const updatedProject: Project = {
+        ...currentProj,
+        status: 'Completed',
+        manualStatus: 'Completed',
+        statusMode: 'Manual',
+        updatedAt: now,
+      };
+
+      const statusUpdate: StatusUpdate = {
+        id: `status-${Date.now()}`,
+        projectId: currentProj.id,
+        status: 'Completed',
+        description: `Project force-closed by admin with ${incompleteTasks.length} incomplete task(s).`,
+        source: 'Manual',
+        updatedBy: user?.id || '',
+        updatedAt: now,
+      };
+
+      await saveProjectLikeRecord(updatedProject);
+      await saveStatusUpdate(statusUpdate);
+      clearStorageCache(['projects', 'events', 'statusUpdates']);
+
+      setProjects(currentProjects =>
+        currentProjects.map(p =>
+          p.id === updatedProject.id ? updatedProject : p
+        )
+      );
+      setSelectedProject(updatedProject);
+      setShowStatusModal(false);
+      setShowForceCloseConfirmModal(false);
+      showTaskSaveNotice('Project force-closed and marked as Completed.', 2000);
+      await Promise.all([
+        loadStatusUpdates(currentProj.id),
+        loadProjects(),
+      ]);
+    } catch (error) {
+      Alert.alert(
+        getRequestErrorTitle(error),
+        getRequestErrorMessage(error, 'Failed to force-close project.')
+      );
+    } finally {
+      setActionLoadingKey(null);
+    }
+  };
+
+  const handleChangeProjectStatus = async (statusToSet?: Project['status'], skipIncompleteWarning = false) => {
+    const currentSelectedProject = getCurrentSelectedProject() || selectedProject;
+    if (!currentSelectedProject) return;
+    const targetStatus = statusToSet || newStatus;
+
+    const projectTasks = Array.isArray(currentSelectedProject.internalTasks) ? currentSelectedProject.internalTasks : [];
+    const incompleteTasks = projectTasks.filter(t => !t.isFieldOfficer && t.status !== 'Completed');
+
+    if (targetStatus === 'Completed' && incompleteTasks.length > 0 && !skipIncompleteWarning) {
+      Alert.alert(
+        'Incomplete Tasks Remaining',
+        `This ${currentSelectedProject.isEvent ? 'event' : 'project'} still has ${incompleteTasks.length} incomplete task(s). How would you like to proceed?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Extend Schedule (+7d)',
+            onPress: () => void handleExtendProjectSchedule(7),
+          },
+          {
+            text: 'Force Close Project',
+            style: 'destructive',
+            onPress: () => setShowForceCloseConfirmModal(true),
+          },
+        ]
+      );
       return;
     }
 
-    const doDelete = async () => {
-      const previousProjects = projects;
-      try {
-        setProjects(currentProjects => currentProjects.filter(item => item.id !== project.id));
-        await deleteProjectLikeRecord(project);
-        if (selectedProject?.id === project.id) {
-          handleReturnToProjectList();
-          setStatusUpdates([]);
-          setAllPartnerApplications([]);
-          setPartnerReports([]);
-          setVolunteerJoinRecords([]);
-        }
-        await loadProjects();
-        Alert.alert('Deleted', project.isEvent ? 'Event removed.' : 'Project removed.');
-      } catch (error) {
-        setProjects(previousProjects);
-        await loadProjects();
-        Alert.alert(
-          getRequestErrorTitle(error),
-          getRequestErrorMessage(error, 'Failed to delete project.')
-        );
-      }
-    };
+    try {
+      setActionLoadingKey('changeStatus');
+      const now = new Date().toISOString();
+      const updatedProject: Project = {
+        ...currentSelectedProject,
+        status: targetStatus,
+        manualStatus: targetStatus,
+        statusMode: 'Manual',
+        updatedAt: now,
+      };
 
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (window.confirm(`Delete "${project.title}"? This cannot be undone.`)) {
-        void doDelete();
-      }
-      return;
+      const statusUpdate: StatusUpdate = {
+        id: `status-${Date.now()}`,
+        projectId: currentSelectedProject.id,
+        status: targetStatus,
+        description: updateDescription.trim() || `Status updated to ${targetStatus}.`,
+        source: 'Manual',
+        updatedBy: user?.id || '',
+        updatedAt: now,
+      };
+
+      await saveProjectLikeRecord(updatedProject);
+      await saveStatusUpdate(statusUpdate);
+      clearStorageCache(['projects', 'events', 'statusUpdates']);
+
+      setProjects(currentProjects =>
+        currentProjects.map(p =>
+          p.id === updatedProject.id ? updatedProject : p
+        )
+      );
+      setSelectedProject(updatedProject);
+      setShowStatusModal(false);
+      setUpdateDescription('');
+      showTaskSaveNotice(`Status updated to "${targetStatus}".`, 1400);
+      await Promise.all([
+        loadStatusUpdates(currentSelectedProject.id),
+        loadProjects(),
+      ]);
+    } catch (error) {
+      Alert.alert(
+        getRequestErrorTitle(error),
+        getRequestErrorMessage(error, 'Failed to update project status.')
+      );
+    } finally {
+      setActionLoadingKey(null);
     }
+  };
 
-    Alert.alert(
-      'Delete Project',
-      `Delete "${project.title}"? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => void doDelete() },
-      ]
+  const renderExtendScheduleModal = () => {
+    const currentProj = getCurrentSelectedProject() || selectedProject;
+    if (!currentProj) return null;
+    const baseDate = currentProj.endDate ? new Date(currentProj.endDate) : new Date();
+    const validBaseDate = isNaN(baseDate.getTime()) ? new Date() : baseDate;
+    const calculatedEndDate = new Date(validBaseDate.getTime() + extendDaysSelection * 24 * 60 * 60 * 1000);
+
+    return (
+      <Modal
+        visible={showExtendScheduleModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowExtendScheduleModal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.55)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: '#ffffff', borderRadius: 18, padding: 24, maxWidth: 480, width: '100%', borderWidth: 1, borderColor: '#e2e8f0' }}>
+            <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#f0fdf4', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+              <MaterialIcons name="event" size={24} color="#166534" />
+            </View>
+
+            <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a', marginBottom: 4 }}>
+              Extend Project Schedule
+            </Text>
+            <Text style={{ fontSize: 13, color: '#64748b', lineHeight: 18, marginBottom: 16 }}>
+              Extend the schedule so "{currentProj.title}" remains <Text style={{ fontWeight: '700', color: '#16a34a' }}>Active (In Progress)</Text> while pending tasks are finished.
+            </Text>
+
+            {/* Quick Extension Options */}
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', textTransform: 'uppercase', marginBottom: 8 }}>
+              Extension Duration
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
+              {[
+                { days: 7, label: '+7 Days', sub: '1 Week' },
+                { days: 14, label: '+14 Days', sub: '2 Weeks' },
+                { days: 30, label: '+30 Days', sub: '1 Month' },
+              ].map(opt => {
+                const isSelected = extendDaysSelection === opt.days;
+                return (
+                  <TouchableOpacity
+                    key={opt.days}
+                    onPress={() => setExtendDaysSelection(opt.days)}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 12,
+                      paddingHorizontal: 8,
+                      borderRadius: 10,
+                      borderWidth: 1.5,
+                      borderColor: isSelected ? '#166534' : '#e2e8f0',
+                      backgroundColor: isSelected ? '#f0fdf4' : '#ffffff',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: isSelected ? '#166534' : '#1e293b' }}>
+                      {opt.label}
+                    </Text>
+                    <Text style={{ fontSize: 11, color: isSelected ? '#166534' : '#64748b', marginTop: 2 }}>
+                      {opt.sub}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Schedule Preview */}
+            <View style={{ backgroundColor: '#f8fafc', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', padding: 12, marginBottom: 20 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                <Text style={{ fontSize: 12, color: '#64748b' }}>Current End Date:</Text>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: '#334155' }}>{validBaseDate.toLocaleDateString()}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#166534' }}>New Extended End Date:</Text>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: '#166534' }}>{calculatedEndDate.toLocaleDateString()}</Text>
+              </View>
+            </View>
+
+            {/* Actions */}
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity
+                onPress={() => setShowExtendScheduleModal(false)}
+                disabled={actionLoadingKey === 'extendSchedule'}
+                style={{ flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1', alignItems: 'center' }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#475569' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => void handleExtendProjectSchedule(extendDaysSelection)}
+                disabled={actionLoadingKey === 'extendSchedule'}
+                style={{ flex: 2, paddingVertical: 12, borderRadius: 10, backgroundColor: '#166534', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 }}
+              >
+                {actionLoadingKey === 'extendSchedule' && <ActivityIndicator size="small" color="#ffffff" />}
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#ffffff' }}>
+                  {actionLoadingKey === 'extendSchedule' ? 'Extending...' : 'Extend & Keep Active'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     );
   };
+
+  const renderForceCloseConfirmModal = () => {
+    const currentProj = getCurrentSelectedProject() || selectedProject;
+    if (!currentProj) return null;
+    const projectTasks = Array.isArray(currentProj.internalTasks) ? currentProj.internalTasks : [];
+    const incompleteTasks = projectTasks.filter(t => !t.isFieldOfficer && t.status !== 'Completed');
+
+    return (
+      <Modal
+        visible={showForceCloseConfirmModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowForceCloseConfirmModal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: '#ffffff', borderRadius: 18, padding: 24, maxWidth: 440, width: '100%', borderWidth: 1, borderColor: '#fecaca' }}>
+            <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+              <MaterialIcons name="warning" size={28} color="#dc2626" />
+            </View>
+
+            <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a', marginBottom: 6 }}>
+              Force Close Project?
+            </Text>
+            <Text style={{ fontSize: 13, color: '#64748b', lineHeight: 19, marginBottom: 14 }}>
+              "{currentProj.title}" still has <Text style={{ fontWeight: '800', color: '#dc2626' }}>{incompleteTasks.length} incomplete task{incompleteTasks.length === 1 ? '' : 's'}</Text>.
+            </Text>
+            <View style={{ backgroundColor: '#fef2f2', borderRadius: 8, padding: 10, borderWidth: 1, borderColor: '#fecaca', marginBottom: 20 }}>
+              <Text style={{ fontSize: 12, color: '#991b1b', lineHeight: 16 }}>
+                Force-closing will mark the project as <Text style={{ fontWeight: '700' }}>Completed / Closed</Text> and finalize all operational activities immediately.
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity
+                onPress={() => setShowForceCloseConfirmModal(false)}
+                disabled={actionLoadingKey === 'forceClose'}
+                style={{ flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1', alignItems: 'center' }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#475569' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => void handleForceCloseProject()}
+                disabled={actionLoadingKey === 'forceClose'}
+                style={{ flex: 1.5, paddingVertical: 12, borderRadius: 10, backgroundColor: '#dc2626', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 6 }}
+              >
+                {actionLoadingKey === 'forceClose' && <ActivityIndicator size="small" color="#ffffff" />}
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#ffffff' }}>
+                  {actionLoadingKey === 'forceClose' ? 'Closing...' : 'Confirm Force Close'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  const renderChangeStatusModal = () => (
+    <Modal
+      visible={showStatusModal}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowStatusModal(false)}
+    >
+      <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.55)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+        <View style={{ backgroundColor: '#ffffff', borderRadius: 18, padding: 22, maxWidth: 520, width: '100%', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 16, elevation: 8 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', paddingBottom: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#f0fdf4', alignItems: 'center', justifyContent: 'center' }}>
+                <MaterialIcons name="flag" size={20} color="#166534" />
+              </View>
+              <View>
+                <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a' }}>Change Status</Text>
+                <Text style={{ fontSize: 12, color: '#64748b' }}>Select a lifecycle status for this {selectedProject?.isEvent ? 'event' : 'project'}</Text>
+              </View>
+            </View>
+            <TouchableOpacity onPress={() => setShowStatusModal(false)} style={{ padding: 4 }}>
+              <MaterialIcons name="close" size={22} color="#64748b" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Status Options */}
+          <View style={{ gap: 10, marginVertical: 8 }}>
+            {[
+              {
+                status: 'Planning' as const,
+                label: 'Planning',
+                tag: 'Draft / Upcoming',
+                desc: 'Draft phase before active launch',
+                color: '#6366f1',
+                bg: '#eef2ff',
+                border: '#c7d2fe',
+              },
+              {
+                status: 'In Progress' as const,
+                label: 'In Progress',
+                tag: 'Active',
+                desc: 'Actively running with operations underway',
+                color: '#16a34a',
+                bg: '#f0fdf4',
+                border: '#bbf7d0',
+              },
+              {
+                status: 'On Hold' as const,
+                label: 'On Hold',
+                tag: 'Not Active Yet / Paused',
+                desc: 'Temporarily paused or pending requirements',
+                color: '#d97706',
+                bg: '#fffbeb',
+                border: '#fde68a',
+              },
+              {
+                status: 'Completed' as const,
+                label: 'Completed',
+                tag: 'Closed Projects',
+                desc: 'Successfully executed, finalized, and closed',
+                color: '#2563eb',
+                bg: '#eff6ff',
+                border: '#bfdbfe',
+              },
+              {
+                status: 'Cancelled' as const,
+                label: 'Cancelled',
+                tag: 'Cancel Project',
+                desc: 'Discontinued or cancelled initiative',
+                color: '#dc2626',
+                bg: '#fef2f2',
+                border: '#fecaca',
+              },
+            ].map(item => {
+              const isSelected = (newStatus || selectedProject?.status || 'Planning') === item.status;
+              return (
+                <TouchableOpacity
+                  key={item.status}
+                  onPress={() => setNewStatus(item.status)}
+                  activeOpacity={0.8}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    padding: 12,
+                    borderRadius: 12,
+                    borderWidth: 1.5,
+                    borderColor: isSelected ? item.color : '#e2e8f0',
+                    backgroundColor: isSelected ? item.bg : '#ffffff',
+                    gap: 12,
+                  }}
+                >
+                  <View style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: 10,
+                    borderWidth: 2,
+                    borderColor: isSelected ? item.color : '#cbd5e1',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}>
+                    {isSelected && (
+                      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: item.color }} />
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: isSelected ? item.color : '#1e293b' }}>
+                        {item.label}
+                      </Text>
+                      <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, backgroundColor: item.bg, borderWidth: 1, borderColor: item.border }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: item.color }}>{item.tag}</Text>
+                      </View>
+                    </View>
+                    <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{item.desc}</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* Incomplete Tasks Warning in Status Modal */}
+          {(() => {
+            const currentProj = getCurrentSelectedProject() || selectedProject;
+            const projectTasks = Array.isArray(currentProj?.internalTasks) ? currentProj.internalTasks : [];
+            const incompleteTasks = projectTasks.filter(t => !t.isFieldOfficer && t.status !== 'Completed');
+            const targetStatus = newStatus || currentProj?.status || 'Planning';
+            if (targetStatus === 'Completed' && incompleteTasks.length > 0) {
+              return (
+                <View style={{
+                  backgroundColor: '#fffbeb',
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: '#fde68a',
+                  padding: 12,
+                  marginVertical: 6,
+                  gap: 10,
+                }}>
+                  <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start' }}>
+                    <MaterialIcons name="warning" size={20} color="#d97706" style={{ marginTop: 1 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#92400e' }}>
+                        Warning: Incomplete Tasks Remain ({incompleteTasks.length})
+                      </Text>
+                      <Text style={{ fontSize: 12, color: '#b45309', marginTop: 2, lineHeight: 16 }}>
+                        This {currentProj?.isEvent ? 'event' : 'project'} still has {incompleteTasks.length} task{incompleteTasks.length === 1 ? '' : 's'} not completed ({incompleteTasks.slice(0, 2).map(t => t.title).join(', ')}{incompleteTasks.length > 2 ? '...' : ''}).
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Options inside Warning */}
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setShowStatusModal(false);
+                        setShowExtendScheduleModal(true);
+                      }}
+                      style={{
+                        flex: 1,
+                        backgroundColor: '#f0fdf4',
+                        borderWidth: 1,
+                        borderColor: '#bbf7d0',
+                        borderRadius: 8,
+                        paddingVertical: 8,
+                        paddingHorizontal: 8,
+                        alignItems: 'center',
+                        flexDirection: 'row',
+                        justifyContent: 'center',
+                        gap: 4,
+                      }}
+                    >
+                      <MaterialIcons name="event" size={14} color="#166534" />
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#166534' }}>Extend Schedule</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => {
+                        setShowStatusModal(false);
+                        setShowForceCloseConfirmModal(true);
+                      }}
+                      style={{
+                        flex: 1,
+                        backgroundColor: '#fef2f2',
+                        borderWidth: 1,
+                        borderColor: '#fecaca',
+                        borderRadius: 8,
+                        paddingVertical: 8,
+                        paddingHorizontal: 8,
+                        alignItems: 'center',
+                        flexDirection: 'row',
+                        justifyContent: 'center',
+                        gap: 4,
+                      }}
+                    >
+                      <MaterialIcons name="check-circle" size={14} color="#dc2626" />
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#dc2626' }}>Force Close</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            }
+            return null;
+          })()}
+
+          {/* Action Buttons */}
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 18, borderTopWidth: 1, borderTopColor: '#f1f5f9', paddingTop: 14 }}>
+            <TouchableOpacity
+              onPress={() => setShowStatusModal(false)}
+              disabled={actionLoadingKey === 'changeStatus'}
+              style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1', backgroundColor: '#ffffff' }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#475569' }}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => void handleChangeProjectStatus()}
+              disabled={actionLoadingKey === 'changeStatus'}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 8, backgroundColor: '#166534' }}
+            >
+              {actionLoadingKey === 'changeStatus' && <ActivityIndicator size="small" color="#ffffff" />}
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#ffffff' }}>
+                {actionLoadingKey === 'changeStatus' ? 'Updating...' : 'Save Status'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 
   // Counts pending volunteer requests per project for list badges.
   const pendingVolunteerRequestCountByProjectId = useMemo(() => {
@@ -4496,9 +5216,20 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     const assignedVolunteers = normalizedAssignedVolunteerIds
       .map(volunteerId => assignableVolunteers.find(volunteer => volunteer.id === volunteerId) || null)
       .filter((volunteer): volunteer is (typeof assignableVolunteers)[number] => volunteer !== null);
+
+    if (normalizedAssignedVolunteerIds.length > assignableVolunteers.length) {
+      Alert.alert(
+        'Validation Error',
+        `Cannot assign more volunteers to this task (${normalizedAssignedVolunteerIds.length}) than the total number of volunteers joined to this event (${assignableVolunteers.length}).`
+      );
+      return;
+    }
+    // Only block if assigned IDs exist but NONE match active volunteers (full mismatch).
+    // Partial matches are allowed to avoid false rejections when volunteer data is stale.
     if (
       normalizedAssignedVolunteerIds.length > 0 &&
-      assignedVolunteers.length !== normalizedAssignedVolunteerIds.length
+      assignableVolunteers.length > 0 &&
+      assignedVolunteers.length === 0
     ) {
       Alert.alert(
         'Validation Error',
@@ -4511,14 +5242,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       normalizedAssignedVolunteerIds.length > 0 && taskDraft.status === 'Unassigned'
         ? 'Assigned'
         : taskDraft.status;
+    // Skills are optional — use empty array if none selected.
     const normalizedSkills = Array.from(
       new Set(taskDraft.skillsNeeded.map(skill => skill.trim()).filter(Boolean))
     );
-
-    if (normalizedSkills.length === 0) {
-      Alert.alert('Validation Error', 'Select at least one skill for this task.');
-      return;
-    }
 
     const previousTask = editingTaskId
       ? (Array.isArray(currentSelectedProject.internalTasks) ? currentSelectedProject.internalTasks : []).find(task => task.id === editingTaskId) || null
@@ -4583,6 +5310,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     };
 
     try {
+      setActionLoadingKey('saveTask');
       await saveProjectLikeRecord(updatedProject);
       clearStorageCache(['projects', 'events']);
       const notificationTasks: Promise<void>[] = [];
@@ -4622,80 +5350,62 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           : 'Event task added. Assignment changes were saved and volunteer notifications were sent when needed.'
       );
       closeTaskModal();
+      showTaskSaveNotice(
+        editingTaskId
+          ? 'Task updated and saved.'
+          : 'Task added and saved.'
+      );
     } catch (error) {
       Alert.alert(
         getRequestErrorTitle(error),
         getRequestErrorMessage(error, 'Failed to save the internal task.')
       );
+    } finally {
+      setActionLoadingKey(null);
+    }
+  };
+
+  const confirmDeleteInternalTask = async (taskId: string) => {
+    const currentSelectedProject = selectedProject || projects.find(p => Array.isArray(p.internalTasks) && p.internalTasks.some(t => t.id === taskId)) || null;
+    if (!currentSelectedProject) {
+      setTaskToDeleteId(null);
+      return;
+    }
+
+    const updatedTasks = (Array.isArray(currentSelectedProject.internalTasks) ? currentSelectedProject.internalTasks : []).filter(task => task.id !== taskId);
+    const updatedProject: Project = {
+      ...currentSelectedProject,
+      internalTasks: updatedTasks,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      setActionLoadingKey('deleteTask');
+      await saveProjectLikeRecord(updatedProject);
+      clearStorageCache(['projects', 'events']);
+      setProjects(currentProjects =>
+        currentProjects.map(project =>
+          project.id === updatedProject.id ? updatedProject : project
+        )
+      );
+      setSelectedProject(updatedProject);
+      if (editingTaskId === taskId) {
+        closeTaskModal();
+      }
+      setTaskToDeleteId(null);
+      showTaskSaveNotice('Task deleted successfully.');
+    } catch (error) {
+      Alert.alert(
+        getRequestErrorTitle(error),
+        getRequestErrorMessage(error, 'Failed to delete the internal task.')
+      );
+    } finally {
+      setActionLoadingKey(null);
     }
   };
 
   const handleDeleteInternalTask = (taskId: string) => {
-    const currentSelectedProject = getCurrentSelectedProject();
-    if (!isAdmin || !currentSelectedProject) {
-      return;
-    }
-
-    const confirmDelete = () => {
-      const executeDelete = async () => {
-        const updatedProject: Project = {
-          ...currentSelectedProject,
-          internalTasks: (Array.isArray(currentSelectedProject.internalTasks) ? currentSelectedProject.internalTasks : []).filter(task => task.id !== taskId),
-          updatedAt: new Date().toISOString(),
-        };
-
-        try {
-          await saveProjectLikeRecord(updatedProject);
-          clearStorageCache(['projects', 'events']);
-          setProjects(currentProjects =>
-            currentProjects.map(project =>
-              project.id === updatedProject.id ? updatedProject : project
-            )
-          );
-          setSelectedProject(updatedProject);
-          if (editingTaskId === taskId) {
-            closeTaskModal();
-          }
-
-          if (Platform.OS === 'web') {
-            window.alert('Task deleted successfully');
-          } else {
-            Alert.alert('Deleted', 'Internal task removed.');
-          }
-        } catch (error) {
-          if (Platform.OS === 'web') {
-            window.alert(getRequestErrorMessage(error, 'Failed to delete the internal task.'));
-          } else {
-            Alert.alert(
-              getRequestErrorTitle(error),
-              getRequestErrorMessage(error, 'Failed to delete the internal task.')
-            );
-          }
-        }
-      };
-
-      executeDelete();
-    };
-
-    // Platform-specific confirmation
-    if (Platform.OS === 'web') {
-      if (window.confirm('Remove this internal task from the project?')) {
-        confirmDelete();
-      }
-    } else {
-      Alert.alert(
-        'Delete Task',
-        'Remove this internal task from the project?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Delete',
-            style: 'destructive',
-            onPress: confirmDelete,
-          },
-        ]
-      );
-    }
+    setTaskToDeleteId(taskId);
   };
 
   // Renders one project card in the lifecycle list.
@@ -4865,11 +5575,22 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         format={format}
         handleSearchMapLocation={handleSearchMapLocation}
         handleMarkerPositionChange={handleMarkerPositionChange}
+        allProjects={projects}
       />
     );
   };
 
   const renderInlineEventForm = (project: Project, section: any) => {
+    const isDuplicateEventTitle = Boolean(
+      projectDraft.title &&
+      projectDraft.title.trim().length >= 2 &&
+      projects.some(p =>
+        p.id !== editingProjectId &&
+        p.title &&
+        p.title.trim().toLowerCase() === projectDraft.title.trim().toLowerCase()
+      )
+    );
+
     return (
       <View style={{
         backgroundColor: '#fff',
@@ -4894,12 +5615,34 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         <View style={{ gap: 2 }}>
           <Text style={{ fontSize: 11, fontWeight: '700', color: '#475569' }}>Event Title *</Text>
           <TextInput
-            style={{ borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 6, padding: 8, fontSize: 13, color: '#1e293b' }}
+            style={[
+              { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 6, padding: 8, fontSize: 13, color: '#1e293b' },
+              isDuplicateEventTitle && { borderColor: '#f59e0b', backgroundColor: '#fffbeb' }
+            ]}
             placeholder="Enter event title"
             placeholderTextColor="#94a3b8"
             value={projectDraft.title}
             onChangeText={value => handleProjectDraftChange('title', value)}
           />
+          {isDuplicateEventTitle ? (
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              backgroundColor: '#fffbeb',
+              borderWidth: 1,
+              borderColor: '#fde68a',
+              borderRadius: 6,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              marginTop: 4,
+            }}>
+              <MaterialIcons name="warning-amber" size={14} color="#d97706" />
+              <Text style={{ fontSize: 11, fontWeight: '700', color: '#b45309', flex: 1 }}>
+                Warning: A program, project, or event with this title already exists.
+              </Text>
+            </View>
+          ) : null}
         </View>
 
         {/* Description */}
@@ -5042,10 +5785,35 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={{ flex: 1, backgroundColor: '#0f766e', borderRadius: 6, paddingVertical: 8, alignItems: 'center', justifyContent: 'center' }}
-            onPress={handleSaveProjectRecord}
+            style={{
+              flex: 1,
+              borderWidth: 1.5,
+              borderColor: '#0f766e',
+              backgroundColor: '#ffffff',
+              borderRadius: 6,
+              paddingVertical: 8,
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexDirection: 'row',
+              gap: 4,
+            }}
+            onPress={() => {
+              handleProjectDraftChange('status', 'Planning');
+              handleSaveProjectRecord();
+            }}
+            disabled={isSavingEvent}
           >
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Create Event</Text>
+            <MaterialIcons name="save" size={14} color="#0f766e" />
+            <Text style={{ color: '#0f766e', fontWeight: '700', fontSize: 12 }}>Save Draft</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={{ flex: 1.2, backgroundColor: isSavingEvent ? '#134e4a' : postEventJustPosted ? '#16a34a' : '#0f766e', borderRadius: 6, paddingVertical: 8, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6, opacity: isSavingEvent ? 0.85 : 1 }}
+            onPress={handleSaveProjectRecord}
+            disabled={isSavingEvent}
+          >
+            {isSavingEvent ? <ActivityIndicator size="small" color="#fff" /> : postEventJustPosted ? <MaterialIcons name="check-circle" size={14} color="#fff" /> : null}
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>{isSavingEvent ? 'Posting...' : postEventJustPosted ? 'Posted' : 'Publish Event'}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -5107,7 +5875,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   </Text>
                 </View>
               </View>
-              {isAdmin && (
+              {(isAdmin || user?.role === 'partner') && (
                 <TouchableOpacity
                   style={{
                     flexDirection: 'row',
@@ -5145,7 +5913,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   <Text style={styles.programSuiteEmptyMeta}>
                     Tap "Create Project" to add the first project to this program.
                   </Text>
-                  {isAdmin && (
+                  {(isAdmin || user?.role === 'partner') && (
                     <TouchableOpacity
                       style={{
                         marginTop: 16,
@@ -5212,7 +5980,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                           {(project.volunteers || []).length}/{project.volunteersNeeded} volunteers
                         </Text>
 
-                        {isAdmin && getProjectDisplayStatus(project) !== 'Completed' && getProjectDisplayStatus(project) !== 'Cancelled' && (
+                        {(isAdmin || isProjectProposer(project)) && getProjectDisplayStatus(project) !== 'Completed' && getProjectDisplayStatus(project) !== 'Cancelled' && (
                           <View style={{ width: '100%' }}>
                             <View style={styles.eventBoxActions} pointerEvents="box-none">
                               <Pressable
@@ -5286,7 +6054,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 {activeInlineCreateProjectProgramId === section.module ? (
                   renderInlineProjectForm(section)
                 ) : (
-                  isAdmin && (
+                  (isAdmin || user?.role === 'partner') && (
                     <View style={{ marginTop: 12, marginBottom: 4 }}>
                       <TouchableOpacity
                         style={{
@@ -5347,7 +6115,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               </Text>
             </View>
           </View>
-          {isAdmin && (
+          {(isAdmin || user?.role === 'partner' || isProjectProposer(project)) && (
             <TouchableOpacity
               style={{
                 flexDirection: 'row',
@@ -5415,7 +6183,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                     {event.volunteers.length}/{event.volunteersNeeded} volunteers
                   </Text>
 
-                  {isAdmin && getProjectDisplayStatus(event) !== 'Completed' && getProjectDisplayStatus(event) !== 'Cancelled' && (
+                  {(isAdmin || isProjectProposer(event)) && getProjectDisplayStatus(event) !== 'Completed' && getProjectDisplayStatus(event) !== 'Cancelled' && (
                     <View style={styles.eventBoxActions} pointerEvents="box-none">
                       <Pressable
                         style={styles.eventBoxActionButton}
@@ -5460,7 +6228,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             <Text style={styles.programSuiteProjectsMeta}>
               Create an event here and it will be attached to this project.
             </Text>
-            {isAdmin && (
+            {(isAdmin || user?.role === 'partner' || isProjectProposer(project)) && (
               <TouchableOpacity
                 style={{
                   marginTop: 16,
@@ -5754,7 +6522,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     try {
       setReviewActionLoadingId(`${matchId}-${status}`);
       await reviewVolunteerProjectMatch(matchId, status, user.id);
-      Alert.alert('Success', `Application successfully ${status === 'Matched' ? 'approved' : 'rejected'}!`);
+      showTaskSaveNotice(`Application successfully ${status === 'Matched' ? 'approved' : 'rejected'}!`);
       if (activeSelectedProject) {
         const matches = getRelatedVolunteerApplicationMatches(activeSelectedProject);
         setSelectedEventMatches(matches || []);
@@ -5768,7 +6536,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         await handleRefreshProjectDetails();
       }
     } catch (error) {
-      Alert.alert('Error', getRequestErrorMessage(error, `Failed to review application.`));
+      showTaskSaveNotice(`Error: ${getRequestErrorMessage(error, 'Failed to review application.')}`);
     } finally {
       setReviewActionLoadingId(null);
     }
@@ -6565,11 +7333,12 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 <Text style={{ color: '#475569', fontWeight: '700', fontSize: 14 }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={{ flex: isMobile ? 1 : undefined, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#166534', paddingVertical: 10, paddingHorizontal: 22, borderRadius: 8, gap: 8 }}
+                style={{ flex: isMobile ? 1 : undefined, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: isSavingEvent ? '#15803d' : postEventJustPosted ? '#16a34a' : '#166534', paddingVertical: 10, paddingHorizontal: 22, borderRadius: 8, gap: 8, opacity: isSavingEvent ? 0.85 : 1 }}
                 onPress={handleSaveProjectRecord}
+                disabled={isSavingEvent}
               >
-                <MaterialIcons name="event-available" size={18} color="#fff" />
-                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>{editingProjectId ? 'Update Event' : 'Post Event'}</Text>
+                {isSavingEvent ? <ActivityIndicator size="small" color="#fff" /> : postEventJustPosted ? <MaterialIcons name="check-circle" size={18} color="#fff" /> : <MaterialIcons name="event-available" size={18} color="#fff" />}
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>{isSavingEvent ? 'Posting...' : postEventJustPosted ? 'Posted' : editingProjectId ? 'Update Event' : 'Post Event'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -6831,41 +7600,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                             <Picker.Item key={barangay.code} label={barangay.displayName} value={barangay.code} />
                           ))}
                         </Picker>
-                      </View>
-                    </View>
-
-                    {/* Google Meet Link / URL (Optional) */}
-                    <View style={{ gap: 6 }}>
-                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>Google Meet Link / URL (Optional)</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, backgroundColor: '#ffffff', height: 38, paddingLeft: 8, paddingRight: 4, gap: 4 }}>
-                        <TextInput
-                          style={{ flex: 1, fontSize: 13, color: '#0f172a', fontWeight: '500', height: '100%', padding: 0 }}
-                          placeholder="https://meet.google.com/..."
-                          placeholderTextColor="#94a3b8"
-                          value={eventZoomLink}
-                          onChangeText={setEventZoomLink}
-                        />
-                        <TouchableOpacity
-                          style={{
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            borderWidth: 1,
-                            borderColor: '#166534',
-                            borderRadius: 6,
-                            paddingVertical: 4,
-                            paddingHorizontal: 10,
-                            backgroundColor: '#ffffff',
-                            gap: 4,
-                          }}
-                          onPress={() => {
-                            if (eventZoomLink) {
-                              Linking.openURL(eventZoomLink).catch(err => console.log(err));
-                            }
-                          }}
-                        >
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#166534' }}>Join GC</Text>
-                          <MaterialIcons name="open-in-new" size={12} color="#166534" />
-                        </TouchableOpacity>
                       </View>
                     </View>
 
@@ -7845,12 +8579,34 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               <TouchableOpacity style={styles.modalFooterCancelButton} onPress={closeProjectModal}>
                 <Text style={styles.modalFooterCancelButtonText}>Cancel</Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingHorizontal: 16,
+                  paddingVertical: 10,
+                  borderRadius: 8,
+                  borderWidth: 1.5,
+                  borderColor: '#166534',
+                  backgroundColor: '#ffffff',
+                  marginRight: 8,
+                }}
+                onPress={() => {
+                  handleProjectDraftChange('status', 'Planning');
+                  handleSaveProjectRecord();
+                }}
+              >
+                <MaterialIcons name="save" size={16} color="#166534" style={{ marginRight: 6 }} />
+                <Text style={{ color: '#166534', fontWeight: '700', fontSize: 13 }}>
+                  Save as Draft
+                </Text>
+              </TouchableOpacity>
               <TouchableOpacity style={styles.modalFooterSubmitButton} onPress={handleSaveProjectRecord}>
                 <MaterialIcons name="add" size={18} color="#ffffff" style={{ marginRight: 6 }} />
                 <Text style={styles.modalFooterSubmitButtonText}>
                   {editingProjectId
                     ? projectDraft.isEvent ? 'Update Event' : 'Update Project'
-                    : projectDraft.isEvent ? 'Create Event' : 'Create Project'}
+                    : projectDraft.isEvent ? 'Publish Event' : 'Create Project'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -7864,7 +8620,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
             <View style={{ backgroundColor: '#ffffff', padding: 24, borderRadius: 16, alignItems: 'center', gap: 12, width: 220 }}>
               <ActivityIndicator size="large" color="#166534" />
-              <Text style={{ fontSize: 16, fontWeight: '700', color: '#1e293b' }}>Saving Event...</Text>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#1e293b' }}>
+                {projectDraft.isEvent ? 'Saving Event...' : 'Saving Project...'}
+              </Text>
             </View>
           </View>
         </Modal>
@@ -8537,7 +9295,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 <MaterialIcons name="arrow-forward" size={10} color="#ffffff" />
               </TouchableOpacity>
 
-              {isAdmin && (
+              {(isAdmin || user?.role === 'partner' || isProjectProposer(project)) && (
                 activeInlineCreateEventProjectId === project.id ? (
                   <Pressable style={{ marginTop: 12, width: '100%' }} onPress={(e) => e.stopPropagation()}>
                     {renderInlineEventForm(project, section || { module: track?.id || module, title: track?.title || module, accent: accent })}
@@ -8613,7 +9371,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              {isAdmin && (
+              {(isAdmin || isProjectProposer(project)) && (
                 <TouchableOpacity
                   style={{
                     flexDirection: 'row',
@@ -9107,8 +9865,13 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     const selectedDateCheckedCount = projectVolunteerAttendanceCards.filter(
       card => card.checkedAttendanceDays > 0
     ).length;
+    const projectPartnerApp = partnerApplicationByProjectId.get(activeSelectedProject.id);
     const selectedPartnerName =
-      partners.find(partner => partner.id === activeSelectedProject.partnerId)?.name ||
+      partners.find(partner => 
+        partner.id === activeSelectedProject.partnerId ||
+        (projectPartnerApp && (partner.id === projectPartnerApp.partnerId || partner.userId === projectPartnerApp.partnerUserId))
+      )?.name ||
+      projectPartnerApp?.partnerName ||
       activeSelectedProject.partnerId ||
       '';
     const hasPartneredOrg = Boolean(selectedPartnerName);
@@ -9221,9 +9984,24 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     const beneficiariesCount = projectReports.reduce((sum, r) => sum + (r.metrics?.beneficiariesServed || 0), 0);
     const reportsCount = projectReports.length;
     const volunteersCount = volunteerEntries.length;
+
+    const matchedPartnerApp =
+      partnerApplicationByProjectId.get(activeSelectedProject.id) ||
+      findApprovedProposalApplicationForProject(activeSelectedProject, allPartnerApplications) ||
+      allPartnerApplications.find(app => 
+        (app.partnerId && app.partnerId === activeSelectedProject.partnerId) ||
+        (app.partnerUserId && app.partnerUserId === activeSelectedProject.partnerId) ||
+        (app.proposalDetails?.proposedTitle && activeSelectedProject.title && app.proposalDetails.proposedTitle.trim().toLowerCase() === activeSelectedProject.title.trim().toLowerCase())
+      );
+    const matchedPartnerObj = partners.find(partner => 
+      (activeSelectedProject.partnerId && (partner.id === activeSelectedProject.partnerId || partner.userId === activeSelectedProject.partnerId)) || 
+      (matchedPartnerApp && (partner.id === matchedPartnerApp.partnerId || partner.userId === matchedPartnerApp.partnerUserId))
+    );
     const projectAuthorName =
-      partners.find(partner => partner.id === activeSelectedProject.partnerId)?.name ||
-      (isDetailsAdmin && user?.name ? user.name : 'NVC Admin');
+      matchedPartnerObj?.name ||
+      matchedPartnerApp?.partnerName ||
+      (activeSelectedProject.partnerId && !activeSelectedProject.partnerId.toLowerCase().includes('admin') ? activeSelectedProject.partnerId : null) ||
+      (!activeSelectedProject.parentProjectId && !String(activeSelectedProject.id || '').startsWith('project-proposal-') && isDetailsAdmin && user?.name ? user.name : (matchedPartnerObj?.name || matchedPartnerApp?.partnerName || 'NVC Admin'));
     const projectDocumentAttachment = (activeSelectedProject as any).attachments?.find(
       (attachment: any) => attachment?.type === 'document' && attachment?.url
     );
@@ -9559,7 +10337,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             <TouchableOpacity
               onPress={() => {
                 setEditingTaskId(null);
-                setTaskDraft(createEmptyProjectTaskDraft());
+                setTaskDraft(createEmptyProjectTaskDraft(project.volunteersNeeded || volunteersNeeded || '1'));
                 setShowTaskModal(true);
               }}
               style={{
@@ -9579,9 +10357,37 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               }}
             >
               <MaterialIcons name="add" size={16} color="#166534" style={{ marginRight: 6 }} />
-              <Text style={{ fontSize: 14, fontWeight: '700', color: '#166534' }}>Add Task</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Incomplete Tasks Warning Banner */}
+          {(() => {
+            const incompleteTasks = taskRows.filter(t => !t.isFieldOfficer && t.status !== 'Completed');
+            if (incompleteTasks.length === 0) return null;
+            return (
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: '#fffbeb',
+                borderWidth: 1,
+                borderColor: '#fde68a',
+                borderRadius: 12,
+                padding: 14,
+                marginBottom: 20,
+                gap: 12,
+              }}>
+                <MaterialIcons name="warning-amber" size={22} color="#d97706" />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '800', color: '#92400e' }}>
+                    Warning: Incomplete Tasks Remain ({incompleteTasks.length})
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#b45309', marginTop: 1 }}>
+                    {incompleteTasks.length} task{incompleteTasks.length === 1 ? '' : 's'} still pending completion before this {project.isEvent ? 'event' : 'project'} can be finalized.
+                  </Text>
+                </View>
+              </View>
+            );
+          })()}
 
           <View style={{ flexDirection: 'row', gap: 16, marginBottom: 24 }}>
             <View style={{
@@ -9648,53 +10454,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             </View>
           </View>
 
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, gap: 16 }}>
-            <View style={{
-              flex: 1,
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: '#ffffff',
-              borderWidth: 1,
-              borderColor: '#e2e8f0',
-              borderRadius: 8,
-              paddingHorizontal: 12,
-              height: 40,
-            }}>
-              <MaterialIcons name="search" size={18} color="#94a3b8" style={{ marginRight: 8 }} />
-              <TextInput
-                placeholder="Search tasks or volunteers..."
-                placeholderTextColor="#94a3b8"
-                value={attendanceSearchQuery}
-                onChangeText={setAttendanceSearchQuery}
-                style={{ flex: 1, fontSize: 14, color: '#0f172a', padding: 0, outline: 'none' } as any}
-              />
-            </View>
-
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: '#ffffff',
-              borderWidth: 1,
-              borderColor: '#e2e8f0',
-              borderRadius: 8,
-              paddingHorizontal: 12,
-              height: 40,
-              width: 150,
-            }}>
-              <MaterialIcons name="filter-list" size={18} color="#64748b" style={{ marginRight: 8 }} />
-              <Picker
-                selectedValue={attendanceFilter}
-                onValueChange={(val) => setAttendanceFilter(val as any)}
-                style={{ flex: 1, height: 40, borderWidth: 0, backgroundColor: 'transparent', outline: 'none' } as any}
-              >
-                <Picker.Item label="All" value="All" />
-                <Picker.Item label="Present" value="Present" />
-                <Picker.Item label="Absent" value="Absent" />
-                <Picker.Item label="Late" value="Late" />
-              </Picker>
-            </View>
-          </View>
-
           <View style={{
             flexDirection: 'row',
             backgroundColor: '#ffffff',
@@ -9728,8 +10487,57 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             ))}
           </View>
 
+          {eventWorkspaceTab === 'Attendance' && (
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, gap: 16 }}>
+              <View style={{
+                flex: 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: '#ffffff',
+                borderWidth: 1,
+                borderColor: '#e2e8f0',
+                borderRadius: 8,
+                paddingHorizontal: 12,
+                height: 40,
+              }}>
+                <MaterialIcons name="search" size={18} color="#94a3b8" style={{ marginRight: 8 }} />
+                <TextInput
+                  placeholder="Search volunteers..."
+                  placeholderTextColor="#94a3b8"
+                  value={attendanceSearchQuery}
+                  onChangeText={setAttendanceSearchQuery}
+                  style={{ flex: 1, fontSize: 14, color: '#0f172a', padding: 0, outline: 'none' } as any}
+                />
+              </View>
+
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: '#ffffff',
+                borderWidth: 1,
+                borderColor: '#e2e8f0',
+                borderRadius: 8,
+                paddingHorizontal: 12,
+                height: 40,
+                width: 150,
+              }}>
+                <MaterialIcons name="filter-list" size={18} color="#64748b" style={{ marginRight: 8 }} />
+                <Picker
+                  selectedValue={attendanceFilter}
+                  onValueChange={(val) => setAttendanceFilter(val as any)}
+                  style={{ flex: 1, height: 40, borderWidth: 0, backgroundColor: 'transparent', outline: 'none' } as any}
+                >
+                  <Picker.Item label="All" value="All" />
+                  <Picker.Item label="Present" value="Present" />
+                  <Picker.Item label="Absent" value="Absent" />
+                  <Picker.Item label="Late" value="Late" />
+                </Picker>
+              </View>
+            </View>
+          )}
+
           {eventWorkspaceTab === 'Tasks' && (
-          <>
+          <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={true} contentContainerStyle={{ paddingBottom: 40 }}>
           <View style={{
             backgroundColor: '#ffffff',
             borderRadius: 16,
@@ -9746,7 +10554,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               <TouchableOpacity
                 onPress={() => {
                   setEditingTaskId(null);
-                  setTaskDraft(createEmptyProjectTaskDraft());
+                  setTaskDraft(createEmptyProjectTaskDraft(project.volunteersNeeded || volunteersNeeded || '1'));
                   setShowTaskModal(true);
                 }}
                 style={{
@@ -9853,7 +10661,12 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                       <View style={{ flex: 2.2, flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                         <MaterialIcons name="drag-indicator" size={20} color="#cbd5e1" style={{ marginTop: 2 }} />
                         <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 15, fontWeight: '800', color: '#0f172a' }}>{task.title}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Text style={{ fontSize: 15, fontWeight: '800', color: '#0f172a' }}>{task.title}</Text>
+                            <View style={{ backgroundColor: task.priority === 'High' ? '#fef2f2' : task.priority === 'Medium' ? '#fef3c7' : '#f8fafc', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1, borderColor: task.priority === 'High' ? '#fca5a5' : task.priority === 'Medium' ? '#fcd34d' : '#e2e8f0' }}>
+                              <Text style={{ fontSize: 10, fontWeight: '800', color: task.priority === 'High' ? '#dc2626' : task.priority === 'Medium' ? '#d97706' : '#64748b' }}>{(task.priority || 'Medium').toUpperCase()}</Text>
+                            </View>
+                          </View>
                           <Text style={{ fontSize: 12, color: '#64748b', marginTop: 4, lineHeight: 18 }}>
                             {task.description}
                           </Text>
@@ -9989,8 +10802,11 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
           {/* Info banner & Unassigned section */}
           {(() => {
-            const allAssignedIds = new Set(taskCards.flatMap(t => getTaskAssignedVolunteerIds(t)));
-            const unassignedVolunteers = assignableVolunteers.filter(v => !allAssignedIds.has(v.id));
+            const quickAssignVolunteers = [...assignableVolunteers].sort((a, b) => {
+              const countA = taskCards.reduce((acc, t) => acc + (getTaskAssignedVolunteerIds(t).includes(a.id) ? 1 : 0), 0);
+              const countB = taskCards.reduce((acc, t) => acc + (getTaskAssignedVolunteerIds(t).includes(b.id) ? 1 : 0), 0);
+              return countA - countB;
+            });
             
             return (
               <View style={{ marginTop: 24, marginBottom: 40 }}>
@@ -10004,10 +10820,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
                 <View style={{ backgroundColor: '#f8fafc', padding: 16, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' }}>
                   <Text style={{ fontSize: 12, fontWeight: '800', color: '#0f172a', textTransform: 'uppercase', marginBottom: 16 }}>
-                    UNASSIGNED VOLUNTEERS ({unassignedVolunteers.length})
+                    QUICK ASSIGN VOLUNTEERS ({quickAssignVolunteers.length})
                   </Text>
                   
-                  {unassignedVolunteers.slice(0, 5).map(uv => {
+                  {quickAssignVolunteers.slice(0, 5).map(uv => {
                     const fullVolunteer = volunteers.find(v => v.id === uv.id);
                     const preferredSkills = fullVolunteer?.skills?.join(', ') || fullVolunteer?.skillsDescription || 'None specified';
                     const selectedAssignTask = unassignedTaskSelections[uv.id] || '';
@@ -10021,6 +10837,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                         <View style={{ flex: 1 }}>
                           <Text style={{ fontSize: 14, fontWeight: '800', color: '#0f172a' }}>{uv.name}</Text>
                           <Text style={{ fontSize: 12, color: '#166534' }}>Preferred skills: <Text style={{ fontWeight: '600' }}>{preferredSkills}</Text></Text>
+                          <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                            Currently assigned to {taskCards.filter(t => getTaskAssignedVolunteerIds(t).includes(uv.id)).length} task(s)
+                          </Text>
                         </View>
                         
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -10032,7 +10851,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                               style={{ height: 36, fontSize: 12, borderWidth: 0, outline: 'none', backgroundColor: 'transparent' } as any}
                             >
                               <Picker.Item label="Select task" value="" />
-                              {taskCards.map(t => (
+                              {taskCards.filter(t => !getTaskAssignedVolunteerIds(t).includes(uv.id)).map(t => (
                                 <Picker.Item key={t.id} label={t.title} value={t.id} />
                               ))}
                             </Picker>
@@ -10074,7 +10893,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                     );
                   })}
                   
-                  {unassignedVolunteers.length > 5 && (
+                  {quickAssignVolunteers.length > 5 && (
                     <TouchableOpacity style={{ alignSelf: 'center', marginTop: 12, backgroundColor: '#f1f5f9', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}>
                       <Text style={{ fontSize: 13, fontWeight: '700', color: '#475569' }}>View all volunteers</Text>
                     </TouchableOpacity>
@@ -10097,6 +10916,29 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
                 <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 }}>Task name</Text>
                 <TextInput value={taskDraft.title} onChangeText={text => setTaskDraft(current => ({ ...current, title: text }))} style={{ borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, padding: 12, marginBottom: 12 }} />
+
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 }}>Task priority</Text>
+                <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
+                  {(['Low', 'Medium', 'High'] as const).map(p => (
+                    <TouchableOpacity
+                      key={p}
+                      onPress={() => setTaskDraft(current => ({ ...current, priority: p }))}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        alignItems: 'center',
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: taskDraft.priority === p ? '#166534' : '#e2e8f0',
+                        backgroundColor: taskDraft.priority === p ? '#f0fdf4' : '#f8fafc'
+                      }}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: taskDraft.priority === p ? '#166534' : '#64748b' }}>
+                        {p}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
 
                 <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 }}>Task description</Text>
                 <TextInput value={taskDraft.description} onChangeText={text => setTaskDraft(current => ({ ...current, description: text }))} style={{ borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, padding: 12, marginBottom: 12 }} multiline />
@@ -10177,17 +11019,53 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 </View>
 
                 <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
-                  <TouchableOpacity onPress={closeTaskModal} style={{ paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1' }}>
+                  <TouchableOpacity onPress={closeTaskModal} disabled={actionLoadingKey === 'saveTask'} style={{ paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1', opacity: actionLoadingKey === 'saveTask' ? 0.5 : 1 }}>
                     <Text style={{ fontWeight: '800', color: '#475569' }}>Cancel</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={() => void handleSaveInternalTask()} style={{ paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10, backgroundColor: '#166534' }}>
-                    <Text style={{ fontWeight: '800', color: '#fff' }}>Save Task</Text>
+                  <TouchableOpacity
+                    onPress={() => void handleSaveInternalTask()}
+                    disabled={actionLoadingKey === 'saveTask'}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10, backgroundColor: actionLoadingKey === 'saveTask' ? '#4ade80' : '#166534', opacity: actionLoadingKey === 'saveTask' ? 0.8 : 1 }}
+                  >
+                    {actionLoadingKey === 'saveTask' && (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    )}
+                    <Text style={{ fontWeight: '800', color: '#fff' }}>
+                      {actionLoadingKey === 'saveTask' ? 'Saving...' : 'Save Task'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
             </View>
           </Modal>
-          </>
+
+          <Modal transparent visible={!!taskToDeleteId} animationType="fade" onRequestClose={() => setTaskToDeleteId(null)}>
+            <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.45)', justifyContent: 'center', padding: 20 }}>
+              <View style={{ backgroundColor: '#ffffff', borderRadius: 18, padding: 20, maxWidth: 400, width: '100%', alignSelf: 'center' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                  <MaterialIcons name="warning" size={24} color="#dc2626" style={{ marginRight: 8 }} />
+                  <Text style={{ fontSize: 18, fontWeight: '900', color: '#0f172a' }}>Delete Task</Text>
+                </View>
+                <Text style={{ fontSize: 14, color: '#475569', marginBottom: 20 }}>
+                  Remove this internal task from the project? This action cannot be undone.
+                </Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+                  <TouchableOpacity onPress={() => setTaskToDeleteId(null)} disabled={actionLoadingKey === 'deleteTask'} style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1', opacity: actionLoadingKey === 'deleteTask' ? 0.5 : 1 }}>
+                    <Text style={{ fontWeight: '700', color: '#475569' }}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => taskToDeleteId && void confirmDeleteInternalTask(taskToDeleteId)}
+                    disabled={actionLoadingKey === 'deleteTask'}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, backgroundColor: actionLoadingKey === 'deleteTask' ? '#fca5a5' : '#dc2626', opacity: actionLoadingKey === 'deleteTask' ? 0.8 : 1 }}
+                  >
+                    {actionLoadingKey === 'deleteTask' && <ActivityIndicator size="small" color="#ffffff" />}
+                    <Text style={{ fontWeight: '700', color: '#ffffff' }}>{actionLoadingKey === 'deleteTask' ? 'Deleting...' : 'Delete'}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
+          </ScrollView>
           )}
 
           {eventWorkspaceTab === 'Attendance' && (
@@ -10409,7 +11287,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         <ScrollView style={styles.container} contentContainerStyle={styles.detailsScreenContent}>
 
           {/* Breadcrumb Row */}
-          <View style={premiumDetailsStyles.breadcrumbBar}>
+          <View style={[premiumDetailsStyles.breadcrumbBar, !isDesktop && { flexWrap: 'wrap', gap: 4 }]}>
             <TouchableOpacity onPress={handleReturnToProjectList}>
               <Text style={premiumDetailsStyles.breadcrumbText}>Projects</Text>
             </TouchableOpacity>
@@ -10422,10 +11300,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           </View>
 
           {/* Hero Banner */}
-          <View style={premiumDetailsStyles.heroBanner}>
+          <View style={[premiumDetailsStyles.heroBanner, !isDesktop && { minHeight: 200 }]}>
             <ImageBackground
               source={activeProjectImageSource || { uri: 'https://images.unsplash.com/photo-1488521787991-ed7bbaae773c?q=80&w=1200&auto=format&fit=crop' }}
-              style={premiumDetailsStyles.heroBackground}
+              style={[premiumDetailsStyles.heroBackground, !isDesktop && { padding: 16 }]}
               resizeMode="cover"
             >
               <View style={premiumDetailsStyles.heroOverlay} />
@@ -10436,9 +11314,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                     {getProjectDisplayStatus(activeSelectedProject).toUpperCase()}
                   </Text>
                 </View>
-                <Text style={premiumDetailsStyles.heroTitle}>{activeSelectedProject.title}</Text>
+                <Text style={[premiumDetailsStyles.heroTitle, !isDesktop && { fontSize: 20, lineHeight: 26, maxWidth: '100%' }]}>{activeSelectedProject.title}</Text>
 
-                <View style={premiumDetailsStyles.heroMetaRow}>
+                <View style={[premiumDetailsStyles.heroMetaRow, !isDesktop && { gap: 10 }]}>
                   <View style={premiumDetailsStyles.heroMetaItem}>
                     <MaterialIcons name="folder" size={16} color="#ffffff" />
                     <Text style={premiumDetailsStyles.heroMetaText}>
@@ -10458,11 +11336,11 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 </View>
               </View>
 
-              <View style={premiumDetailsStyles.heroActionsRow}>
+              <View style={[premiumDetailsStyles.heroActionsRow, !isDesktop && { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
                 {/* Non-event: Create Event button */}
                 {!activeSelectedProject.isEvent && isDetailsAdmin && (
                   <TouchableOpacity
-                    style={premiumDetailsStyles.heroBtnGreen}
+                    style={[premiumDetailsStyles.heroBtnGreen, !isDesktop && { justifyContent: 'center', width: '100%' }]}
                     onPress={() => openCreateEventModal(activeSelectedProject)}
                   >
                     <MaterialIcons name="event" size={16} color="#ffffff" />
@@ -10473,7 +11351,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 {/* Edit button */}
                 {isDetailsAdmin && (
                   <TouchableOpacity
-                    style={premiumDetailsStyles.heroBtnOutline}
+                    style={[premiumDetailsStyles.heroBtnOutline, !isDesktop && { justifyContent: 'center', width: '100%' }]}
                     onPress={() => openEditProjectModal(activeSelectedProject)}
                   >
                     <MaterialIcons name="edit" size={16} color="#ffffff" />
@@ -10514,6 +11392,20 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                       }}
                       {...({} as any)}
                     >
+                      {/* Change Status option */}
+                      <TouchableOpacity
+                        onPress={() => {
+                          setShowMoreDropdown(false);
+                          setNewStatus(activeSelectedProject.status || 'Planning');
+                          setUpdateDescription('');
+                          setShowStatusModal(true);
+                        }}
+                        style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}
+                      >
+                        <MaterialIcons name="flag" size={18} color="#166534" style={{ marginRight: 12 }} />
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: '#0f172a' }}>Change Status</Text>
+                      </TouchableOpacity>
+
                       {/* Event-only options */}
                       {activeSelectedProject.isEvent && isDetailsAdmin && (
                         <>
@@ -10533,7 +11425,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                               setShowMoreDropdown(false);
                               setShowAttendanceTasks(true);
                             }}
-                            style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: isDetailsAdmin ? 1 : 0, borderBottomColor: '#f1f5f9' }}
+                            style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}
                           >
                             <MaterialIcons name="assignment-turned-in" size={18} color="#166534" style={{ marginRight: 12 }} />
                             <Text style={{ fontSize: 14, fontWeight: '600', color: '#0f172a' }}>Attendance & Tasks</Text>
@@ -10913,6 +11805,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         {renderProjectEditorModal()}
         {renderDatePickerModal()}
         {renderVolunteerApplicationsModal()}
+        {renderDeleteConfirmModal()}
+        {renderChangeStatusModal()}
+        {renderExtendScheduleModal()}
+        {renderForceCloseConfirmModal()}
       </View>
     );
   }
@@ -11483,6 +12379,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       {renderProjectEditorModal()}
       {renderDatePickerModal()}
       {renderVolunteerApplicationsModal()}
+      {renderDeleteConfirmModal()}
+      {renderChangeStatusModal()}
+      {renderExtendScheduleModal()}
+      {renderForceCloseConfirmModal()}
     </View>
   );
 }
