@@ -839,52 +839,6 @@ export default function ProfileScreen() {
                 <Text style={styles.statLabelLower}>Completed Events</Text>
               </View>
             </View>
-
-            <View style={styles.statDivider} />
-
-            <View style={styles.statBlock}>
-              <View style={styles.statIconWrap}>
-                <MaterialIcons name="star" size={24} color="#f59e0b" />
-              </View>
-              <View style={styles.statTextWrap}>
-                <Text style={styles.statLabelUpper}>RATING</Text>
-                <Text style={styles.statCountText}>{volunteerProfile?.rating || 5.0} ★</Text>
-                {volunteerProfile?.disputeStatus && volunteerProfile?.disputeStatus !== 'None' && volunteerProfile?.disputeStatus !== 'Resolved' ? (
-                  <Text style={{ fontSize: 10, color: '#b45309', fontWeight: '800' }}>Flagged for Mediation</Text>
-                ) : (
-                  <TouchableOpacity
-                    onPress={async () => {
-                      if (!volunteerProfile) return;
-                      Alert.alert(
-                        'Dispute Rating',
-                        'Do you want to flag your rating for Admin mediation?',
-                        [
-                          { text: 'Cancel', style: 'cancel' },
-                          {
-                            text: 'Flag for Mediation',
-                            onPress: async () => {
-                              const updated: Volunteer = {
-                                ...volunteerProfile,
-                                disputeStatus: 'Pending Mediation',
-                                disputeReason: 'Volunteer requested Admin mediation for performance rating.',
-                                disputedRating: volunteerProfile.rating,
-                                disputedAt: new Date().toISOString(),
-                              };
-                              await saveVolunteer(updated);
-                              setVolunteerProfile(updated);
-                              Alert.alert('Dispute Submitted', 'Your rating dispute has been submitted and flagged for Admin mediation.');
-                            },
-                          },
-                        ]
-                      );
-                    }}
-                    style={{ marginTop: 2 }}
-                  >
-                    <Text style={{ fontSize: 10, color: '#dc2626', fontWeight: '700', textDecorationLine: 'underline' }}>Dispute Rating</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
           </View>
         </View>
       )}
