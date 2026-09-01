@@ -5028,6 +5028,23 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     </Modal>
   );
 
+  const renderSavingProjectModal = () => {
+    if (!isSavingEvent) return null;
+    return (
+      <Modal transparent visible={isSavingEvent} animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', zIndex: 99999 }}>
+          <View style={{ backgroundColor: '#ffffff', padding: 28, borderRadius: 18, alignItems: 'center', gap: 14, minWidth: 220, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 16, elevation: 10 }}>
+            <ActivityIndicator size="large" color="#166534" />
+            <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>
+              {projectDraft.isEvent ? 'Saving Event...' : 'Saving Project...'}
+            </Text>
+            <Text style={{ fontSize: 12, color: '#64748b' }}>Please wait a moment</Text>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   // Counts pending volunteer requests per project for list badges.
   const pendingVolunteerRequestCountByProjectId = useMemo(() => {
     const counts = new Map<string, number>();
@@ -8601,31 +8618,27 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   Save as Draft
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.modalFooterSubmitButton} onPress={handleSaveProjectRecord}>
-                <MaterialIcons name="add" size={18} color="#ffffff" style={{ marginRight: 6 }} />
+              <TouchableOpacity
+                style={[styles.modalFooterSubmitButton, isSavingEvent && { opacity: 0.7 }]}
+                disabled={isSavingEvent}
+                onPress={handleSaveProjectRecord}
+              >
+                {isSavingEvent ? (
+                  <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />
+                ) : (
+                  <MaterialIcons name={editingProjectId ? "save" : "add"} size={18} color="#ffffff" style={{ marginRight: 6 }} />
+                )}
                 <Text style={styles.modalFooterSubmitButtonText}>
-                  {editingProjectId
-                    ? projectDraft.isEvent ? 'Update Event' : 'Update Project'
-                    : projectDraft.isEvent ? 'Publish Event' : 'Create Project'}
+                  {isSavingEvent
+                    ? (projectDraft.isEvent ? 'Saving Event...' : 'Saving Project...')
+                    : (editingProjectId
+                      ? projectDraft.isEvent ? 'Update Event' : 'Update Project'
+                      : projectDraft.isEvent ? 'Publish Event' : 'Create Project')}
                 </Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
         )}
-
-
-
-        {/* Saving Event Loading Modal */}
-        <Modal transparent visible={isSavingEvent} animationType="fade">
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-            <View style={{ backgroundColor: '#ffffff', padding: 24, borderRadius: 16, alignItems: 'center', gap: 12, width: 220 }}>
-              <ActivityIndicator size="large" color="#166534" />
-              <Text style={{ fontSize: 16, fontWeight: '700', color: '#1e293b' }}>
-                {projectDraft.isEvent ? 'Saving Event...' : 'Saving Project...'}
-              </Text>
-            </View>
-          </View>
-        </Modal>
       </View>
     );
 
@@ -11809,6 +11822,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         {renderChangeStatusModal()}
         {renderExtendScheduleModal()}
         {renderForceCloseConfirmModal()}
+        {renderSavingProjectModal()}
       </View>
     );
   }
@@ -12056,6 +12070,18 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                     <Text style={styles.projectsHeaderTitle}>Projects</Text>
                     <Text style={styles.projectsHeaderSubtitle}>Manage projects grouped by program.</Text>
                   </View>
+                  {isAdmin && (
+                    <TouchableOpacity
+                      style={styles.projectsAddButton}
+                      onPress={() => {
+                        const defaultTrack = sortedProgramSections[0] || { module: 'Education' as const, title: 'Education' };
+                        openCreateProjectInProgramModal(defaultTrack.module, defaultTrack.title);
+                      }}
+                    >
+                      <MaterialIcons name="add" size={18} color="#ffffff" />
+                      <Text style={styles.projectsAddButtonText}>New Project</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
 
                 {/* Filter controls row */}
@@ -12320,11 +12346,18 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                                 </View>
                               )}
 
-                              {/* Add Event button */}
+                              {/* Add Project and Add Event buttons */}
                               {isAdmin && (
                                 <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
                                   <TouchableOpacity
-                                    style={[styles.projectsAccordionAddButton, { borderColor: '#0284c7', backgroundColor: '#f0f9ff' }]}
+                                    style={[styles.projectsAccordionAddButton, { flex: 1, borderColor: '#166534', backgroundColor: '#f0fdf4' }]}
+                                    onPress={() => openCreateProjectInProgramModal(section.module, section.title)}
+                                  >
+                                    <MaterialIcons name="add" size={16} color="#166534" style={{ marginRight: 6 }} />
+                                    <Text style={[styles.projectsAccordionAddButtonText, { color: '#166534' }]}>Add Project</Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    style={[styles.projectsAccordionAddButton, { flex: 1, borderColor: '#0284c7', backgroundColor: '#f0f9ff' }]}
                                     onPress={() => openCreateEventInProgramModal(section.module, section.title)}
                                   >
                                     <MaterialIcons name="event" size={16} color="#0284c7" style={{ marginRight: 6 }} />
@@ -12383,6 +12416,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       {renderChangeStatusModal()}
       {renderExtendScheduleModal()}
       {renderForceCloseConfirmModal()}
+      {renderSavingProjectModal()}
     </View>
   );
 }
