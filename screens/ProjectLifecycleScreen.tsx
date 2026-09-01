@@ -220,6 +220,13 @@ function isProgramSuiteProjectRecord(project: Project): boolean {
   );
 }
 
+const DEFAULT_PROGRAM_MODULE_IMAGES: Record<string, string> = {
+  Education: 'https://images.unsplash.com/photo-1503676260728-1c00da094a0b?q=80&w=1200&auto=format&fit=crop',
+  Livelihood: 'https://images.unsplash.com/photo-1556911220-e15b29be8c8f?q=80&w=1200&auto=format&fit=crop',
+  Nutrition: 'https://images.unsplash.com/photo-1498837167922-ddd27525d352?q=80&w=1200&auto=format&fit=crop',
+  Disaster: 'https://images.unsplash.com/photo-1547683905-f686c993aae5?q=80&w=1200&auto=format&fit=crop',
+};
+
 function isTopLevelProgramRecord(project: Project, activeProgramTracks: ProgramTrack[]): boolean {
   const projectId = String(project.id || '').trim().toLowerCase();
   const projectTitle = String(project.title || '').trim().toLowerCase();
@@ -9134,7 +9141,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           accent: normalizeProgramTrackColor(track.color),
           surface: '#f5f3ff',
           border: '#ddd6fe',
-          imageUrl: track.imageUrl,
+          imageUrl: track.imageUrl || DEFAULT_PROGRAM_MODULE_IMAGES[module] || DEFAULT_PROGRAM_MODULE_IMAGES[track.title] || 'https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=1200&auto=format&fit=crop',
           projects: sectionProjects,
           events: allSectionEvents,
           totalPrograms: sectionProjects.length,
@@ -11976,9 +11983,17 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                           activeOpacity={0.9}
                         >
                           <View style={styles.programCardImageContainer}>
-                            <View style={styles.programCardImagePlaceholder}>
-                              <MaterialIcons name={section.icon} size={32} color={section.accent} />
-                            </View>
+                            {Boolean(section.imageUrl) ? (
+                              <Image
+                                source={{ uri: section.imageUrl }}
+                                style={styles.programCardImage}
+                                resizeMode="cover"
+                              />
+                            ) : (
+                              <View style={styles.programCardImagePlaceholder}>
+                                <MaterialIcons name={section.icon} size={32} color={section.accent} />
+                              </View>
+                            )}
                             <View style={styles.programCardBadge}>
                               <Text style={styles.programCardBadgeText}>{section.totalPrograms} Projects</Text>
                             </View>
