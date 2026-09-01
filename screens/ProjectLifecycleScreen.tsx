@@ -12262,16 +12262,32 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                                   {sectionProjects.map(project => {
                                     const matches = allVolunteerMatches.filter(m => m.projectId === project.id && m.status === 'Matched');
                                     const needed = project.volunteersNeeded || 0;
+                                    const projectImageSource = getPrimaryProjectImageSource(project);
+                                    const fallbackImageUri = project.imageUrl || section.imageUrl;
+
                                     return (
                                       <View key={project.id} style={styles.projectsTableRow}>
-                                        {/* Project Name & Desc */}
+                                        {/* Project Picture, Name & Desc */}
                                         <View style={[styles.projectsTableCell, { flex: 4 }]}>
-                                          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                                            <View style={[styles.projectsStatusDotSmall, { backgroundColor: getProjectStatusColor(project), marginTop: 4 }]} />
-                                            <View style={{ marginLeft: 8, flex: 1 }}>
-                                              <Text style={styles.projectsTableRowName}>{project.title}</Text>
+                                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                            {projectImageSource || fallbackImageUri ? (
+                                              <Image
+                                                source={projectImageSource || { uri: fallbackImageUri }}
+                                                style={{ width: 44, height: 44, borderRadius: 8, marginRight: 12, backgroundColor: '#f1f5f9' }}
+                                                resizeMode="cover"
+                                              />
+                                            ) : (
+                                              <View style={{ width: 44, height: 44, borderRadius: 8, marginRight: 12, backgroundColor: section.surface, alignItems: 'center', justifyContent: 'center' }}>
+                                                <MaterialIcons name={section.icon} size={22} color={section.accent} />
+                                              </View>
+                                            )}
+                                            <View style={{ flex: 1 }}>
+                                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                                                <View style={[styles.projectsStatusDotSmall, { backgroundColor: getProjectStatusColor(project) }]} />
+                                                <Text style={styles.projectsTableRowName} numberOfLines={1}>{project.title}</Text>
+                                              </View>
                                               {project.description ? (
-                                                <Text style={styles.projectsTableRowDesc} numberOfLines={2}>
+                                                <Text style={styles.projectsTableRowDesc} numberOfLines={1}>
                                                   {project.description}
                                                 </Text>
                                               ) : null}
