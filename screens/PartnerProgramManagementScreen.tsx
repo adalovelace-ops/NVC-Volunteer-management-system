@@ -45,119 +45,6 @@ type ProgramCardConfig = {
   accent: string;
 };
 
-// Canonical NVC Projects fallback ensuring all key initiatives are represented
-const CANONICAL_PROJECTS_SEEDS: Array<{
-  id: string;
-  title: string;
-  description: string;
-  category: AdvocacyFocus;
-  status: 'Active' | 'Planning' | 'In Progress';
-  volunteersNeeded: number;
-  location: string;
-  skillsNeeded: string[];
-}> = [
-  {
-    id: 'proj-farm-to-fork',
-    title: 'Farm to Fork Program',
-    description: 'Local farmers supply harvests used for nutritious food products, ensuring stable fair-market income and fresh ingredients for nutrition initiatives.',
-    category: 'Nutrition',
-    status: 'Active',
-    volunteersNeeded: 15,
-    location: 'Bacolod City & Victorias, Negros Occidental',
-    skillsNeeded: ['Logistics', 'Agriculture', 'Packaging', 'Community Outreach'],
-  },
-  {
-    id: 'proj-mingo-nutrition',
-    title: 'Mingo for Nutritional Support',
-    description: 'Six-month daily feeding protocols utilizing nutrient-dense Mingo Meals (rice, mung bean, and moringa) for undernourished Filipino infants and toddlers.',
-    category: 'Nutrition',
-    status: 'Active',
-    volunteersNeeded: 25,
-    location: 'Negros Occidental, Iloilo, Samar',
-    skillsNeeded: ['Health & Nutrition', 'Field Monitoring', 'Food Distribution'],
-  },
-  {
-    id: 'proj-mingo-relief',
-    title: 'Mingo for Emergency Relief',
-    description: 'Rapid response nutrition support providing shelf-stable, easily prepared Mingo packs to disaster evacuation centers and calamity-hit communities.',
-    category: 'Nutrition',
-    status: 'Active',
-    volunteersNeeded: 20,
-    location: 'Nationwide Disaster Response Hubs',
-    skillsNeeded: ['Emergency Response', 'Packing & Warehousing', 'Relief Coordination'],
-  },
-  {
-    id: 'proj-lovebags',
-    title: 'LoveBags',
-    description: 'Equipping impoverished grade-school students in remote mountain and island communities with durable backpacks and complete school supplies.',
-    category: 'Education',
-    status: 'Active',
-    volunteersNeeded: 18,
-    location: 'Remote Public Elementary Schools, Western Visayas',
-    skillsNeeded: ['Sorting & Packing', 'Distribution', 'Youth Engagement'],
-  },
-  {
-    id: 'proj-school-support',
-    title: 'School Support & Classrooms',
-    description: 'Building and rehabilitating disaster-resilient classrooms, learning centers, and providing essential educational tools to public schools.',
-    category: 'Education',
-    status: 'In Progress',
-    volunteersNeeded: 12,
-    location: 'Negros Island Rural Districts',
-    skillsNeeded: ['Carpentry & Painting', 'Teaching Assistance', 'Infrastructure'],
-  },
-  {
-    id: 'proj-artisans-of-hope',
-    title: 'Artisans of Hope',
-    description: 'Empowering marginalized women and homemakers through creative artisan skills training and ethical handmade craft livelihood opportunities.',
-    category: 'Livelihood',
-    status: 'Active',
-    volunteersNeeded: 10,
-    location: 'NVC Production Workshop, Bacolod City',
-    skillsNeeded: ['Handcrafting', 'Quality Control', 'Product Design'],
-  },
-  {
-    id: 'proj-project-joseph',
-    title: 'Project Joseph',
-    description: 'Providing skilled daily laborers, carpenters, and tradesmen with vocational starter toolkits and business mentorship to boost sustainable income.',
-    category: 'Livelihood',
-    status: 'Active',
-    volunteersNeeded: 8,
-    location: 'Western Visayas Urban Poor Communities',
-    skillsNeeded: ['Vocational Mentorship', 'Equipment Sourcing', 'Business Coaching'],
-  },
-  {
-    id: 'proj-growing-hope',
-    title: 'Growing Hope',
-    description: 'Establishing communal organic vegetable gardens in vulnerable neighborhoods to improve household food security and generate surplus harvest income.',
-    category: 'Livelihood',
-    status: 'In Progress',
-    volunteersNeeded: 14,
-    location: 'Barangay Communal Lands, Bacolod',
-    skillsNeeded: ['Urban Gardening', 'Permaculture', 'Community Organizing'],
-  },
-  {
-    id: 'proj-peter-project',
-    title: 'Peter Project (Fiberglass Boats)',
-    description: 'Providing sturdy fiberglass fishing boats with engines to marginalized municipal fisherfolk whose livelihoods were lost to storms or sea accidents.',
-    category: 'Livelihood',
-    status: 'Active',
-    volunteersNeeded: 12,
-    location: 'Coastal Barangays, Visayas & Palawan',
-    skillsNeeded: ['Fiberglass Fabrication', 'Liaison', 'Fisherfolk Profiling'],
-  },
-  {
-    id: 'proj-emergency-disaster-aid',
-    title: 'Emergency Relief & Calamity Assistance',
-    description: 'Comprehensive post-typhoon, flood, and earthquake relief packages containing food packs, potable water, hygiene kits, and emergency shelters.',
-    category: 'Disaster',
-    status: 'Active',
-    volunteersNeeded: 30,
-    location: 'Active Disaster Alert Zones, Philippines',
-    skillsNeeded: ['First Aid', 'Search & Relief Coordination', 'Heavy Lifting'],
-  },
-];
-
 function getAdvocacyFocusFromText(value?: string): AdvocacyFocus | null {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) {
@@ -287,64 +174,20 @@ export default function PartnerProgramManagementScreen() {
     });
   }, [allProjects, partner]);
 
-  // Merge backend projects with canonical project records ensuring Farm to Fork, Mingo, etc. are always present
+  // Actual projects from database/storage
   const availableProjects = useMemo(() => {
-    const projectMap = new Map<string, Project>();
-
-    // 1. Seed canonical records
-    CANONICAL_PROJECTS_SEEDS.forEach(seed => {
-      const now = new Date().toISOString();
-      const seedProject: Project = {
-        id: seed.id,
-        title: seed.title,
-        description: seed.description,
-        category: seed.category,
-        programModule: seed.category,
-        status: seed.status,
-        partnerId: '',
-        imageUrl: undefined,
-        startDate: '2026-01-01T00:00:00Z',
-        endDate: '2026-12-31T23:59:59Z',
-        location: {
-          latitude: 10.6765,
-          longitude: 122.951,
-          address: seed.location,
-        },
-        volunteersNeeded: seed.volunteersNeeded,
-        volunteers: [],
-        joinedUserIds: [],
-        skillsNeeded: seed.skillsNeeded,
-        createdAt: now,
-        updatedAt: now,
-        isEvent: false,
-        statusUpdates: [],
-        internalTasks: [],
-      };
-      projectMap.set(seed.title.toLowerCase().trim(), seedProject);
-    });
-
-    // 2. Overlay actual projects from database/storage
-    allProjects.forEach(project => {
-      if (project.isEvent) return;
-      const normId = String(project.id || '').trim().toLowerCase();
-      if (TOP_LEVEL_WRAPPER_IDS.has(normId)) return;
-
-      const titleKey = String(project.title || '').toLowerCase().trim();
-      if (titleKey) {
-        const existing = projectMap.get(titleKey);
-        if (existing) {
-          projectMap.set(titleKey, { ...existing, ...project });
-        } else {
-          projectMap.set(titleKey, project);
-        }
-      }
-    });
-
-    return Array.from(projectMap.values()).sort((left, right) => {
-      const timeA = new Date(right.updatedAt || right.createdAt || 0).getTime();
-      const timeB = new Date(left.updatedAt || left.createdAt || 0).getTime();
-      return timeA - timeB;
-    });
+    return allProjects
+      .filter(project => {
+        if (project.isEvent) return false;
+        const normId = String(project.id || '').trim().toLowerCase();
+        if (TOP_LEVEL_WRAPPER_IDS.has(normId)) return false;
+        return true;
+      })
+      .sort((left, right) => {
+        const timeA = new Date(right.updatedAt || right.startDate || right.createdAt || 0).getTime();
+        const timeB = new Date(left.updatedAt || left.startDate || left.createdAt || 0).getTime();
+        return timeA - timeB;
+      });
   }, [allProjects]);
 
   // Filter available projects based on category tab & search query
