@@ -933,8 +933,46 @@ export default function ReportsScreen({ navigation, route }: any) {
   );
 
   const volunteerEventProjects = useMemo(() => {
-    return projects;
-  }, [projects]);
+    if (user?.role !== 'volunteer') return projects;
+
+    return projects.filter(project => {
+      if (!project.isEvent) return false;
+
+      const isJoinedByUser = (project.joinedUserIds || []).includes(user?.id || '');
+      const isJoinedByVolunteer = volunteerProfileId
+        ? (project.volunteers || []).includes(volunteerProfileId)
+        : false;
+      const isAssignedToTask = (project.internalTasks || []).some(
+        task =>
+          (volunteerProfileId && task.assignedVolunteerId === volunteerProfileId) ||
+          (volunteerProfileId &&
+            Array.isArray(task.assignedVolunteerIds) &&
+            task.assignedVolunteerIds.includes(volunteerProfileId))
+      );
+      const hasTimeLog =
+        volunteerTimedInProjectIds.includes(project.id) ||
+        volunteerTimeLogs.some(
+          log =>
+            log.projectId === project.id &&
+            (log.volunteerId === volunteerProfileId || log.volunteerId === user?.id)
+        );
+      const hasJoinRecord = volunteerJoinRecords.some(
+        record =>
+          record.projectId === project.id &&
+          (record.volunteerId === volunteerProfileId || record.volunteerUserId === user?.id)
+      );
+
+      return isJoinedByUser || isJoinedByVolunteer || isAssignedToTask || hasTimeLog || hasJoinRecord;
+    });
+  }, [
+    projects,
+    user?.id,
+    user?.role,
+    volunteerJoinRecords,
+    volunteerProfileId,
+    volunteerTimeLogs,
+    volunteerTimedInProjectIds,
+  ]);
 
   const handleOpenUploadModal = useCallback(() => {
     if (user?.role === 'volunteer' && volunteerEventProjects.length === 0) {

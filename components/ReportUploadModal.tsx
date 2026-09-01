@@ -704,29 +704,17 @@ export default function ReportUploadModal({
     <>
       <View style={styles.volunteerIntroCard}>
         <View style={styles.volunteerIntroIcon}>
-          <MaterialIcons name="volunteer-activism" size={20} color="#166534" />
+          <MaterialIcons name="photo-camera" size={20} color="#166534" />
         </View>
         <View style={styles.volunteerIntroContent}>
-          <Text style={styles.volunteerIntroTitle}>Share your event experience</Text>
+          <Text style={styles.volunteerIntroTitle}>Event Photo Report</Text>
           <Text style={styles.volunteerIntroText}>
-            {isFieldOfficerForSelectedProject
-              ? 'Submit the field officer report for this event. Capture what happened on site, team coordination, and operational outcomes.'
-              : 'Submit your volunteer report for this event. Share what happened, what you worked on, and add a photo or file if you have one.'}
+            Submit your activity photo report for the event you joined. Upload or confirm your event photo and include a brief summary.
           </Text>
         </View>
       </View>
 
-      <View style={styles.reportModeCard}>
-        <Text style={styles.reportModeLabel}>Report Type</Text>
-        <Text style={styles.reportModeValue}>{volunteerReportLabel}</Text>
-        <Text style={styles.reportModeHint}>
-          {isFieldOfficerForSelectedProject
-            ? 'Field reports are reserved for the assigned field officer of this event.'
-            : 'Volunteer reports are for volunteers who are not the field officer for this event.'}
-        </Text>
-      </View>
-
-      <Text style={styles.label}>{entityLabel} *</Text>
+      <Text style={styles.label}>Joined Event *</Text>
       <TouchableOpacity
         style={[styles.projectSelector, errors.project && styles.inputError]}
         onPress={() => setShowProjectPicker(!showProjectPicker)}
@@ -734,8 +722,8 @@ export default function ReportUploadModal({
         <Text style={styles.projectSelectorText}>
           {selectedProject
             ? projects.find(project => project.id === selectedProject)?.title ||
-              `Select ${entityLabelLower}`
-            : `Select ${entityLabelLower}`}
+              'Select joined event'
+            : 'Select joined event'}
         </Text>
         <MaterialIcons
           name={showProjectPicker ? 'expand-less' : 'expand-more'}
