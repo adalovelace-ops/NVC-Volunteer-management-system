@@ -2042,6 +2042,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const [selectedMatch, setSelectedMatch] = useState<VolunteerProjectMatch | null>(null);
   const [reviewerNotes, setReviewerNotes] = useState('');
   const [showMoreDropdown, setShowMoreDropdown] = useState(false);
+  const [programToDelete, setProgramToDelete] = useState<{ id: string; title: string } | null>(null);
+  const [showDeleteProgramConfirmModal, setShowDeleteProgramConfirmModal] = useState(false);
   const [projectDraft, setProjectDraft] = useState<ProjectDraft>(() => {
     const initialModule = (route.params?.programModule as AdvocacyFocus) || 'Education';
     return createEmptyProjectDraft('', initialModule);
@@ -2624,58 +2626,41 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   };
 
   const handleDeleteProgram = (trackId: string, trackTitle: string) => {
-    const doDelete = async () => {
-      setActionLoadingKey(`deleteProgram-${trackId}`);
-      try {
-        // Optimistically remove from UI
-        setProgramTracks(current => current.filter(track => track.id !== trackId));
+    setProgramToDelete({ id: trackId, title: trackTitle });
+    setShowDeleteProgramConfirmModal(true);
+  };
 
-        // Delete from backend
-        await deleteProgram(trackId);
+  const handleConfirmDeleteProgram = async () => {
+    if (!programToDelete) return;
+    const { id: trackId, title: trackTitle } = programToDelete;
+    setActionLoadingKey(`deleteProgram-${trackId}`);
+    try {
+      // Optimistically remove from UI
+      setProgramTracks(current => current.filter(track => track.id !== trackId));
 
-        // Force clear cache to ensure fresh data
-        clearStorageCache(['programs', 'programTracks', 'projects', 'events']);
+      // Delete from backend
+      await deleteProgram(trackId);
 
-        // Wait a bit to ensure backend deletion propagates
-        await new Promise(resolve => setTimeout(resolve, 300));
+      // Force clear cache to ensure fresh data
+      clearStorageCache(['programs', 'programTracks', 'projects', 'events']);
 
-        // Reload fresh data
-        await loadProgramTracks();
+      // Wait a bit to ensure backend deletion propagates
+      await new Promise(resolve => setTimeout(resolve, 300));
 
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.alert(`✅ Program Deleted\n\n"${trackTitle}" has been removed from the dashboard.`);
-        } else {
-          Alert.alert('✅ Program Deleted', `"${trackTitle}" has been removed from the dashboard.`);
-        }
-      } catch (error) {
-        // On error, reload to restore correct state
-        await loadProgramTracks();
-        const errorMsg = getRequestErrorMessage(error, 'Failed to delete program.');
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.alert(`Error\n\n${errorMsg}`);
-        } else {
-          Alert.alert('Error', errorMsg);
-        }
-      } finally {
-        setActionLoadingKey(null);
-      }
-    };
+      // Reload fresh data
+      await loadProgramTracks();
 
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (window.confirm(`Delete "${trackTitle}"? This cannot be undone. Projects and events under this program will also be deleted.`)) {
-        void doDelete();
-      }
-      return;
+      setShowDeleteProgramConfirmModal(false);
+      setProgramToDelete(null);
+      showTaskSaveNotice(`Program "${trackTitle}" deleted.`);
+    } catch (error) {
+      // On error, reload to restore correct state
+      await loadProgramTracks();
+      const errorMsg = getRequestErrorMessage(error, 'Failed to delete program.');
+      Alert.alert('Error', errorMsg);
+    } finally {
+      setActionLoadingKey(null);
     }
-
-    Alert.alert(
-      'Delete Program',
-      `Delete "${trackTitle}"? This cannot be undone. Projects and events under this program will also be deleted.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => void doDelete() },
-      ]
-    );
   };
 
   // Loads all volunteer time-in and time-out records for project monitoring.
@@ -4799,6 +4784,71 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 {actionLoadingKey === 'forceClose' && <ActivityIndicator size="small" color="#ffffff" />}
                 <Text style={{ fontSize: 13, fontWeight: '700', color: '#ffffff' }}>
                   {actionLoadingKey === 'forceClose' ? 'Closing...' : 'Confirm Force Close'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  const renderDeleteProgramConfirmModal = () => {
+    if (!programToDelete) return null;
+
+    const isDeleting = actionLoadingKey === `deleteProgram-${programToDelete.id}`;
+
+    return (
+      <Modal
+        visible={showDeleteProgramConfirmModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!isDeleting) {
+            setShowDeleteProgramConfirmModal(false);
+            setProgramToDelete(null);
+          }
+        }}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.6)', justifyContent: 'center', alignItems: 'center', padding: 20, zIndex: 99999 }}>
+          <View style={{ backgroundColor: '#ffffff', borderRadius: 20, padding: 26, maxWidth: 440, width: '100%', borderWidth: 1, borderColor: '#fecaca', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.25, shadowRadius: 20, elevation: 12 }}>
+            <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: '#fee2e2', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <MaterialIcons name="delete-forever" size={30} color="#dc2626" />
+            </View>
+
+            <Text style={{ fontSize: 20, fontWeight: '900', color: '#0f172a', marginBottom: 8 }}>
+              Delete "{programToDelete.title}"?
+            </Text>
+            
+            <Text style={{ fontSize: 13, color: '#64748b', lineHeight: 20, marginBottom: 14 }}>
+              This cannot be undone. <Text style={{ fontWeight: '700', color: '#dc2626' }}>Projects and events under this program will also be deleted.</Text>
+            </Text>
+
+            <View style={{ backgroundColor: '#fef2f2', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#fecaca', marginBottom: 22 }}>
+              <Text style={{ fontSize: 12, color: '#991b1b', lineHeight: 17 }}>
+                Are you sure you want to proceed with permanent deletion of this program and its associated content?
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowDeleteProgramConfirmModal(false);
+                  setProgramToDelete(null);
+                }}
+                disabled={isDeleting}
+                style={{ flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1', backgroundColor: '#ffffff', alignItems: 'center' }}
+              >
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#475569' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => void handleConfirmDeleteProgram()}
+                disabled={isDeleting}
+                style={{ flex: 1.4, paddingVertical: 12, borderRadius: 10, backgroundColor: '#dc2626', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
+              >
+                {isDeleting && <ActivityIndicator size="small" color="#ffffff" />}
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#ffffff' }}>
+                  {isDeleting ? 'Deleting...' : 'Delete Program'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -11829,6 +11879,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         {renderChangeStatusModal()}
         {renderExtendScheduleModal()}
         {renderForceCloseConfirmModal()}
+        {renderDeleteProgramConfirmModal()}
         {renderSavingProjectModal()}
       </View>
     );
@@ -12447,6 +12498,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       {renderChangeStatusModal()}
       {renderExtendScheduleModal()}
       {renderForceCloseConfirmModal()}
+      {renderDeleteProgramConfirmModal()}
       {renderSavingProjectModal()}
     </View>
   );
