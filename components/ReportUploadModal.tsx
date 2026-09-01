@@ -325,14 +325,21 @@ export default function ReportUploadModal({
         nextErrors.description = 'Description is required';
       }
 
-      const relevantMetrics = getMetricFieldsForType();
-      const hasAnyMetric = relevantMetrics.some(
-        field => metrics[field as keyof typeof metrics]
-      );
-
       if (!hasAnyMetric) {
         nextErrors.metrics = 'At least one metric is required';
       }
+    }
+
+    const isValidFileType = (uri?: string): boolean => {
+      if (!uri || !uri.trim()) return true;
+      const cleanUri = uri.trim().toLowerCase();
+      if (cleanUri.startsWith('data:image/') || cleanUri.startsWith('data:application/pdf')) return true;
+      const validExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.heic', '.pdf', '.doc', '.docx'];
+      return validExtensions.some(ext => cleanUri.includes(ext));
+    };
+
+    if (selectedReportPhoto && !isValidFileType(selectedReportPhoto)) {
+      nextErrors.photo = 'Invalid file type. Supported formats: PNG, JPG, JPEG, WEBP, PDF, DOC.';
     }
 
     setErrors(nextErrors);
@@ -500,9 +507,8 @@ export default function ReportUploadModal({
       mediaFile: isVolunteer
         ? selectedReportPhoto || volunteerMetrics.latestAttendancePhoto || undefined
         : undefined,
-      status: 'Approved',
-      approvedAt: new Date().toISOString(),
-      approvedBy: user?.name || 'System',
+      status: 'Submitted',
+      submittedAt: new Date().toISOString(),
     };
 
     Keyboard.dismiss();

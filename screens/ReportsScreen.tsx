@@ -15,7 +15,9 @@ import {
   reviewPartnerReport,
   subscribeToStorageChanges,
   savePartnerReport,
+  saveProject,
 } from '../models/storage';
+import { pushNotificationService } from '../services/PushNotificationService';
 import type {
   ImpactHubReportType,
   PartnerProjectApplication,
@@ -767,6 +769,55 @@ export default function ReportsScreen({ navigation, route }: any) {
             volunteerPraise: reportData.volunteerPraise,
             gratitudeNote: reportData.gratitudeNote,
           });
+        }
+
+        // If volunteer submitting report for an event/project:
+        if (user.role === 'volunteer') {
+          const targetProject = projects.find(p => p.id === targetProjectId);
+          if (targetProject && Array.isArray(targetProject.internalTasks)) {
+            let taskUpdated = false;
+            const now = new Date().toISOString();
+            const updatedTasks = targetProject.internalTasks.map(task => {
+              const assignedIds = Array.isArray(task.assignedVolunteerIds)
+                ? task.assignedVolunteerIds
+                : (task.assignedVolunteerId ? [task.assignedVolunteerId] : []);
+              const isAssigned =
+                (volunteerProfileId && assignedIds.includes(volunteerProfileId)) ||
+                (user.id && assignedIds.includes(user.id)) ||
+                (!task.isFieldOfficer && task.status !== 'Completed');
+
+              if (isAssigned && task.status !== 'Completed') {
+                taskUpdated = true;
+                return {
+                  ...task,
+                  status: 'Completed' as const,
+                  completedAt: now,
+                };
+              }
+              return task;
+            });
+
+            if (taskUpdated) {
+              await saveProject({
+                ...targetProject,
+                internalTasks: updatedTasks,
+                updatedAt: now,
+              });
+            }
+          }
+
+          // Notify Field Officer & update analytics
+          try {
+            const targetProjectName = projects.find(p => p.id === targetProjectId)?.title || 'Event';
+            await pushNotificationService.showLocalNotification({
+              title: 'Attendance Report Submitted',
+              body: `${user.name} submitted an attendance report for "${targetProjectName}". Task marked completed.`,
+              data: { projectId: targetProjectId, reportType, type: 'attendance_report' },
+              tag: `report-${targetProjectId}`,
+            });
+          } catch (notifErr) {
+            console.warn('Field officer notification dispatch error:', notifErr);
+          }
         }
 
         setShowUploadModal(false);

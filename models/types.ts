@@ -249,6 +249,13 @@ export interface Volunteer {
   pastProjects: string[]; // Project IDs
   totalHoursContributed: number;
   rating: number; // 1-5
+  disputeStatus?: 'None' | 'Disputed' | 'Pending Mediation' | 'Resolved';
+  disputeReason?: string;
+  disputedRating?: number;
+  disputedAt?: string;
+  mediationNotes?: string;
+  mediatedBy?: string;
+  mediatedAt?: string;
   engagementStatus: 'Open to Volunteer' | 'Busy';
   background: string;
   gender?: string;

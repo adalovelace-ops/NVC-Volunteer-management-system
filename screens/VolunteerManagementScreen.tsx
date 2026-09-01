@@ -310,6 +310,81 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
     }
   };
 
+  const handleMediateRating = async (volunteer: Volunteer, action: 'Maintain' | 'Adjust' | 'Dismiss') => {
+    if (!isAdmin) {
+      Alert.alert('Access Restricted', 'Only admin accounts can mediate rating disputes.');
+      return;
+    }
+
+    if (action === 'Adjust') {
+      Alert.alert('Mediate Rating', 'Select adjusted star rating:', [
+        { text: '5.0 Stars', onPress: () => void executeMediation(volunteer, 'Adjust', 5.0) },
+        { text: '4.5 Stars', onPress: () => void executeMediation(volunteer, 'Adjust', 4.5) },
+        { text: '4.0 Stars', onPress: () => void executeMediation(volunteer, 'Adjust', 4.0) },
+        { text: '3.5 Stars', onPress: () => void executeMediation(volunteer, 'Adjust', 3.5) },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+      return;
+    }
+
+    await executeMediation(volunteer, action);
+  };
+
+  const executeMediation = async (volunteer: Volunteer, action: 'Maintain' | 'Adjust' | 'Dismiss', adjustedRating?: number) => {
+    const adminId = user?.id || '';
+    const now = new Date().toISOString();
+    let finalRating = volunteer.rating;
+    let note = '';
+
+    if (action === 'Adjust') {
+      finalRating = adjustedRating !== undefined ? adjustedRating : 5.0;
+      note = `Admin mediated dispute: adjusted rating to ${finalRating} stars.`;
+    } else if (action === 'Maintain') {
+      note = `Admin mediated dispute: maintained rating of ${volunteer.rating} stars.`;
+    } else {
+      note = `Admin dismissed rating dispute.`;
+    }
+
+    const updated: Volunteer = {
+      ...volunteer,
+      rating: finalRating,
+      disputeStatus: 'Resolved',
+      mediationNotes: note,
+      mediatedBy: adminId,
+      mediatedAt: now,
+    };
+
+    try {
+      await saveVolunteer(updated);
+      setVolunteers(current => current.map(v => (v.id === updated.id ? updated : v)));
+      setSelectedVolunteer(updated);
+      setActionNotice(note);
+      Alert.alert('Mediation Complete', note);
+    } catch (error) {
+      Alert.alert('Mediation Error', 'Failed to save mediated rating.');
+    }
+  };
+
+  const handleFlagRatingDispute = async (volunteer: Volunteer) => {
+    const updated: Volunteer = {
+      ...volunteer,
+      disputeStatus: 'Pending Mediation',
+      disputeReason: 'Volunteer disputed performance rating and requested admin review.',
+      disputedRating: volunteer.rating,
+      disputedAt: new Date().toISOString(),
+    };
+
+    try {
+      await saveVolunteer(updated);
+      setVolunteers(current => current.map(v => (v.id === updated.id ? updated : v)));
+      setSelectedVolunteer(updated);
+      setActionNotice('Rating flagged for Admin mediation.');
+      Alert.alert('Dispute Flagged', 'Rating dispute recorded and flagged for Admin mediation.');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to flag rating dispute.');
+    }
+  };
+
   // Assigns the selected volunteer to an in-progress event.
   const handleMatchVolunteer = async (projectId: string) => {
     if (!isAdmin) {
@@ -1067,6 +1142,69 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                   ))}
                 </View>
 
+                {/* Rating & Dispute Mediation Panel */}
+                <View style={styles.applicationPanel}>
+                  <View style={styles.applicationPanelHeader}>
+                    <MaterialIcons name="star" size={16} color="#d97706" />
+                    <Text style={styles.applicationPanelTitle}>Rating & Performance</Text>
+                  </View>
+                  <View style={{ padding: 12 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                      <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '600' }}>Current Rating:</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <MaterialIcons name="star" size={18} color="#f59e0b" />
+                        <Text style={{ fontSize: 15, fontWeight: '800', color: '#0f172a' }}>{selectedVolunteer.rating || 5.0} / 5.0</Text>
+                      </View>
+                    </View>
+
+                    {selectedVolunteer.disputeStatus && selectedVolunteer.disputeStatus !== 'None' && selectedVolunteer.disputeStatus !== 'Resolved' ? (
+                      <View style={{ backgroundColor: '#fffbeb', borderRadius: 10, borderWidth: 1, borderColor: '#fde68a', padding: 12, marginTop: 4, gap: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <MaterialIcons name="gavel" size={16} color="#d97706" />
+                          <Text style={{ fontSize: 13, fontWeight: '800', color: '#92400e' }}>Disputed Rating — Flagged for Mediation</Text>
+                        </View>
+                        {selectedVolunteer.disputeReason ? (
+                          <Text style={{ fontSize: 12, color: '#b45309', lineHeight: 16 }}>
+                            Reason: "{selectedVolunteer.disputeReason}"
+                          </Text>
+                        ) : null}
+
+                        {/* Admin Mediation Actions */}
+                        <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
+                          <TouchableOpacity
+                            onPress={() => void handleMediateRating(selectedVolunteer, 'Maintain')}
+                            style={{ flex: 1, backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 6, paddingVertical: 8, alignItems: 'center' }}
+                          >
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#475569' }}>Maintain</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => void handleMediateRating(selectedVolunteer, 'Adjust')}
+                            style={{ flex: 1.2, backgroundColor: '#166534', borderRadius: 6, paddingVertical: 8, alignItems: 'center' }}
+                          >
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#ffffff' }}>Adjust Rating</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => void handleMediateRating(selectedVolunteer, 'Dismiss')}
+                            style={{ flex: 1, backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', borderRadius: 6, paddingVertical: 8, alignItems: 'center' }}
+                          >
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#dc2626' }}>Dismiss</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ) : (
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                        <Text style={{ fontSize: 11, color: '#94a3b8' }}>{selectedVolunteer.disputeStatus === 'Resolved' ? 'Mediation: Resolved' : 'No active dispute'}</Text>
+                        <TouchableOpacity
+                          onPress={() => void handleFlagRatingDispute(selectedVolunteer)}
+                          style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0' }}
+                        >
+                          <Text style={{ fontSize: 11, color: '#64748b', fontWeight: '700' }}>Flag for Mediation</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                </View>
+
                 {/* Events Joined */}
                 <View style={styles.applicationPanel}>
                   <View style={styles.applicationPanelHeader}>
@@ -1328,6 +1466,12 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                   {volunteer.rating}
                 </Text>
               </View>
+              {Boolean(volunteer.disputeStatus && volunteer.disputeStatus !== 'None' && volunteer.disputeStatus !== 'Resolved') && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#fef3c7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, alignSelf: 'flex-start', marginTop: 4, marginBottom: 2, borderWidth: 1, borderColor: '#fde68a' }}>
+                  <MaterialIcons name="gavel" size={11} color="#b45309" />
+                  <Text style={{ fontSize: 10, fontWeight: '800', color: '#92400e' }}>Dispute Rating — Flagged for Admin Mediation</Text>
+                </View>
+              )}
               {(volunteer.registrationStatus && volunteer.registrationStatus !== 'Approved') ? (
                 <View
                   style={[
