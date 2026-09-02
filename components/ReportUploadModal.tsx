@@ -711,6 +711,14 @@ export default function ReportUploadModal({
           <Text style={styles.volunteerIntroText}>
             Submit your activity photo report for the event you joined. Upload or confirm your event photo and include a brief summary.
           </Text>
+          <Text style={[styles.volunteerIntroText, { marginTop: 8, fontWeight: '600' }]}>
+            Reporting Tips
+          </Text>
+          <Text style={styles.volunteerIntroText}>
+            • Upload photos from the event.{"\n"}
+            • Describe your activities clearly.{"\n"}
+            • Submit within 48 hours after the event.
+          </Text>
         </View>
       </View>
 
