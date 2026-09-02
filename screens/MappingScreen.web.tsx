@@ -13,7 +13,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { useAuth } from '../contexts/AuthContext';
 import { Project } from '../models/types';
-import { getAllProjects } from '../models/storage';
+import { getAllProjects, getProjectsScreenSnapshot } from '../models/storage';
 import {
   PHILIPPINES_BOUNDS,
   PHILIPPINES_WEB_CENTER,
@@ -261,6 +261,34 @@ export default function MappingScreen({ navigation }: any) {
   // Loads all projects so they can be rendered as web map markers.
   const loadProjects = async () => {
     try {
+      if (user?.role === 'volunteer') {
+        const snapshot = await getProjectsScreenSnapshot(user, [
+          'projects',
+          'volunteerJoinRecords',
+          'volunteerProfile',
+          'timeLogs',
+        ]);
+        const joinedVolunteerProjectIds = new Set(
+          (snapshot.volunteerJoinRecords || []).map(record => record.projectId)
+        );
+        const visibleProjects = (snapshot.projects || []).filter(
+          project =>
+            project.isEvent &&
+            (joinedVolunteerProjectIds.has(project.id) ||
+              (snapshot.volunteerProfile && (project.volunteers || []).includes(snapshot.volunteerProfile.id)) ||
+              (project.joinedUserIds || []).includes(user?.id || '') ||
+              (snapshot.volunteerProfile &&
+                (project.internalTasks || []).some(
+                  task =>
+                    task.assignedVolunteerId === snapshot.volunteerProfile?.id ||
+                    (task.assignedVolunteerIds || []).includes(snapshot.volunteerProfile?.id || '')
+                )) ||
+              (snapshot.timeLogs || []).some(log => log.projectId === project.id))
+        );
+        setProjects(visibleProjects);
+        setLoading(false);
+        return;
+      }
       const allProjects = await getAllProjects();
       setProjects(allProjects);
       setLoading(false);

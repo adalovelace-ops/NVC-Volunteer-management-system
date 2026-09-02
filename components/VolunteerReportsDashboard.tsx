@@ -180,7 +180,7 @@ export function VolunteerReportsDashboard({
     ]);
 
     return projects
-      .filter(project => project.isEvent)
+      .filter(project => project.isEvent && (isAdminView || eventIds.has(project.id)))
       .map(event => {
         const eventReports = visibleReports.filter(report => report.projectId === event.id);
         const eventLogs = volunteerTimeLogs.filter(log => log.projectId === event.id && isImageMediaUri(log.attendancePhoto || ''));
