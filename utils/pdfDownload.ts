@@ -167,10 +167,37 @@ export async function downloadPdfFile(
 }
 
 export async function downloadHtmlPdf(filename: string, htmlContent: string) {
+  const safeFilename = sanitizeFilename(filename.endsWith('.pdf') ? filename : `${filename}.pdf`);
+
+  // Web environment: open styled print window which lets user save/print PDF directly
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    try {
+      const printWindow = window.open('', '_blank');
+      if (printWindow) {
+        printWindow.document.open();
+        printWindow.document.write(htmlContent);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => {
+          try {
+            printWindow.print();
+          } catch (e) {
+            console.warn('printWindow.print failed', e);
+          }
+        }, 500);
+        return;
+      }
+    } catch (err) {
+      console.warn('Window open failed, falling back to printToFileAsync/blob', err);
+    }
+  }
+
   try {
     const { uri } = await Print.printToFileAsync({ html: htmlContent });
     if (Platform.OS === 'web') {
-      window.open(uri);
+      if (typeof window !== 'undefined') {
+        window.open(uri, '_blank');
+      }
     } else {
       const canShare = await Sharing.isAvailableAsync();
       if (canShare) {
@@ -181,6 +208,22 @@ export async function downloadHtmlPdf(filename: string, htmlContent: string) {
     }
   } catch (error) {
     console.error('Error generating PDF', error);
-    Alert.alert('Error', 'Could not generate PDF from template.');
+    if (typeof window !== 'undefined') {
+      try {
+        const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = safeFilename.replace('.pdf', '.html');
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+      } catch (blobErr) {
+        Alert.alert('Error', 'Could not generate or download report.');
+      }
+    } else {
+      Alert.alert('Error', 'Could not generate PDF from template.');
+    }
   }
 }
