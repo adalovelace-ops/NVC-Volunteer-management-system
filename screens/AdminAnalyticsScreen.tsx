@@ -1484,8 +1484,10 @@ export default function AdminAnalyticsScreen() {
         volunteers={volunteers}
         projects={projects}
         partners={partners}
+        partnerApplications={partnerApplications}
         volunteerJoinRecords={volunteerJoinRecords}
         timeLogs={timeLogs}
+        reports={reports}
         skillAnalytics={skillAnalytics}
         currentTotal={currentTotal}
         monthlyDelta={monthlyDelta}

@@ -7,15 +7,16 @@ export interface VolunteerPhotoItem {
 
 export interface SectorPartnerItem {
   sector: string;
+  count: number;
   percent: number;
   color: string;
 }
 
-export interface LocationImpactItem {
-  location: string;
-  hitTargetPercent: number;
-  improvedPercent: number;
-  noImprovementPercent: number;
+export interface StatusDistributionItem {
+  status: string;
+  count: number;
+  percent: number;
+  color: string;
 }
 
 export interface ReportDocumentItem {
@@ -34,148 +35,87 @@ export interface ReportTemplateData {
   submittedRole?: string;
   heroPhoto?: string;
   totalProjects: number;
+  totalProjectsLabel?: string;
   totalProjectsDelta?: string;
   skillsContributed: number;
+  skillsContributedLabel?: string;
   skillsContributedDelta?: string;
   eventsConducted: number;
+  eventsConductedLabel?: string;
   eventsConductedDelta?: string;
   volunteersInvolved: number;
+  volunteersInvolvedLabel?: string;
   volunteersInvolvedDelta?: string;
   sectorPartners?: SectorPartnerItem[];
-  locationImpacts?: LocationImpactItem[];
+  statusSectionTitle?: string;
+  statusSectionSubtitle?: string;
+  statusDistributions?: StatusDistributionItem[];
   overallResult?: {
-    hitTarget: number;
-    improved: number;
-    noImprovement: number;
+    primaryLabel: string;
+    primaryPercent: number;
+    secondaryLabel: string;
+    secondaryPercent: number;
+    tertiaryLabel: string;
+    tertiaryPercent: number;
   };
   highlights: string[];
   documents?: ReportDocumentItem[];
-  photos: (string | VolunteerPhotoItem)[];
+  photos: VolunteerPhotoItem[];
 }
 
 export function generateReportHtml(data: ReportTemplateData): string {
-  const quarter = data.reportQuarter || 'Q2 2026';
-  const subtitle = data.subtitle || 'Nutrition Program';
-  const title = data.title || 'Mingo Meals Distribution';
-  const period = data.period || 'Apr 1 - Jun 30, 2026';
-  const submittedOn = data.submittedOn || 'Jul 5, 2026';
-  const submittedBy = data.submittedBy || 'Anna Cruz';
-  const submittedRole = data.submittedRole || 'Program Coordinator';
+  const quarter = data.reportQuarter || '';
+  const subtitle = data.subtitle || 'NVC Foundation System Report';
+  const title = data.title || 'Executive Analytics Report';
+  const period = data.period || 'Current Period';
+  const submittedOn = data.submittedOn || new Date().toLocaleDateString();
+  const submittedBy = data.submittedBy || 'NVC Administration';
+  const submittedRole = data.submittedRole || 'Administrator';
 
-  const totalProjectsDelta = data.totalProjectsDelta || '+33% vs Q1 2026 ↗';
-  const skillsDelta = data.skillsContributedDelta || '+14% vs Q1 2026 ↗';
-  const eventsDelta = data.eventsConductedDelta || '+20% vs Q1 2026 ↗';
-  const volunteersDelta = data.volunteersInvolvedDelta || '+15% vs Q1 2026 ↗';
+  const totalProjectsLabel = data.totalProjectsLabel || 'Total Projects';
+  const totalProjectsDelta = data.totalProjectsDelta || '';
+  const skillsLabel = data.skillsContributedLabel || 'Skills Contributed';
+  const skillsDelta = data.skillsContributedDelta || '';
+  const eventsLabel = data.eventsConductedLabel || 'Events Conducted';
+  const eventsDelta = data.eventsConductedDelta || '';
+  const volunteersLabel = data.volunteersInvolvedLabel || 'Volunteers Involved';
+  const volunteersDelta = data.volunteersInvolvedDelta || '';
 
-  const defaultHeroPhoto =
-    data.heroPhoto ||
-    'https://images.unsplash.com/photo-1488521787991-ed7bbaae773c?w=600&auto=format&fit=crop&q=80';
+  const sectors: SectorPartnerItem[] = Array.isArray(data.sectorPartners) ? data.sectorPartners : [];
+  const statusItems: StatusDistributionItem[] = Array.isArray(data.statusDistributions) ? data.statusDistributions : [];
 
-  const sectors: SectorPartnerItem[] = data.sectorPartners && data.sectorPartners.length > 0
-    ? data.sectorPartners
-    : [
-        { sector: 'Nutrition', percent: 40, color: '#166534' },
-        { sector: 'Education', percent: 25, color: '#3b82f6' },
-        { sector: 'Livelihood', percent: 20, color: '#f59e0b' },
-        { sector: 'Health', percent: 10, color: '#ef4444' },
-        { sector: 'Others', percent: 5, color: '#6b7280' },
-      ];
+  const overall = data.overallResult;
 
-  const locations: LocationImpactItem[] = data.locationImpacts && data.locationImpacts.length > 0
-    ? data.locationImpacts
-    : [
-        { location: 'Bago', hitTargetPercent: 22, improvedPercent: 77, noImprovementPercent: 1 },
-        { location: 'DSB', hitTargetPercent: 15, improvedPercent: 85, noImprovementPercent: 0 },
-        { location: 'Victorias', hitTargetPercent: 19.17, improvedPercent: 79.7, noImprovementPercent: 1.13 },
-        { location: 'Sagay', hitTargetPercent: 19.74, improvedPercent: 77.63, noImprovementPercent: 2.63 },
-      ];
-
-  const overall = data.overallResult || {
-    hitTarget: 19,
-    improved: 79,
-    noImprovement: 2,
-  };
-
-  const defaultHighlights = [
-    'Implemented daily Mingo meals distribution across community centers.',
-    'Conducted nutrition education and volunteer orientation sessions.',
-    'Monitored growth progress, attendance verification, and field check-ins.',
-    'Provided health and medical wellness coordination with local partners.',
-    'Facilitated livelihood empowerment seminars for beneficiary families.',
-  ];
-
-  const highlights = data.highlights && data.highlights.length > 0
+  const highlights = Array.isArray(data.highlights) && data.highlights.length > 0
     ? data.highlights
-    : defaultHighlights;
+    : ['No activity logs recorded for this selection.'];
 
-  const defaultDocuments: ReportDocumentItem[] = [
-    { name: `${quarter} Quarterly Report.pdf`, type: 'pdf', size: '2.4 MB' },
-    { name: `Financial Summary ${quarter}.xlsx`, type: 'xlsx', size: '1.1 MB' },
-    { name: `M&E Summary ${quarter}.pdf`, type: 'pdf', size: '1.6 MB' },
-  ];
-
-  const documents = data.documents && data.documents.length > 0
+  const documents = Array.isArray(data.documents) && data.documents.length > 0
     ? data.documents
-    : defaultDocuments;
+    : [{ name: `${title.replace(/\s+/g, '_')}_${quarter || 'Report'}.pdf`, type: 'pdf' as const, size: 'Generated PDF' }];
 
-  const rawPhotos = data.photos && data.photos.length > 0 ? data.photos : [];
-  const normalizedPhotos: VolunteerPhotoItem[] = rawPhotos.slice(0, 5).map((p, i) => {
-    if (typeof p === 'string') {
-      const defaultNames = ['Maria Santos', 'John Dela Cruz', 'Ana Reyes', 'Ricky Villanueva', 'Jessa Bautista'];
-      return {
-        uri: p,
-        volunteerName: defaultNames[i % defaultNames.length],
-        date: 'Aug 14, 2026',
-        photoCount: (i % 3) + 3,
-      };
-    }
-    return p;
-  });
+  const photos = Array.isArray(data.photos) ? data.photos : [];
 
-  // If fewer than 5 photos, pad with realistic volunteer community photos
-  const fallbackPhotos: VolunteerPhotoItem[] = [
-    {
-      uri: 'https://images.unsplash.com/photo-1593113598332-cd288d649433?w=500&auto=format&fit=crop&q=80',
-      volunteerName: 'Maria Santos',
-      date: 'Aug 14, 2026',
-      photoCount: 4,
-    },
-    {
-      uri: 'https://images.unsplash.com/photo-1577896851231-70ef18881754?w=500&auto=format&fit=crop&q=80',
-      volunteerName: 'John Dela Cruz',
-      date: 'Aug 14, 2026',
-      photoCount: 6,
-    },
-    {
-      uri: 'https://images.unsplash.com/photo-1509099836639-18ba1795216d?w=500&auto=format&fit=crop&q=80',
-      volunteerName: 'Ana Reyes',
-      date: 'Aug 14, 2026',
-      photoCount: 3,
-    },
-    {
-      uri: 'https://images.unsplash.com/photo-1488521787991-ed7bbaae773c?w=500&auto=format&fit=crop&q=80',
-      volunteerName: 'Ricky Villanueva',
-      date: 'Aug 15, 2026',
-      photoCount: 5,
-    },
-    {
-      uri: 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=500&auto=format&fit=crop&q=80',
-      volunteerName: 'Jessa Bautista',
-      date: 'Aug 15, 2026',
-      photoCount: 4,
-    },
-  ];
-
-  const displayPhotos = normalizedPhotos.length >= 3
-    ? normalizedPhotos
-    : [...normalizedPhotos, ...fallbackPhotos.slice(normalizedPhotos.length, 5)];
+  // Build conic gradient for real sectors if available
+  let sectorConicGradient = '#166534';
+  if (sectors.length > 0) {
+    let currentDeg = 0;
+    const segments = sectors.map(s => {
+      const deg = Math.max(2, (s.percent / 100) * 360);
+      const start = currentDeg;
+      const end = currentDeg + deg;
+      currentDeg = end;
+      return `${s.color} ${start}deg ${end}deg`;
+    });
+    sectorConicGradient = `conic-gradient(${segments.join(', ')})`;
+  }
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(title)} - NVC Foundation Quarterly Report</title>
+  <title>${escapeHtml(title)} - NVC Foundation</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
@@ -282,18 +222,18 @@ export function generateReportHtml(data: ReportTemplateData): string {
     }
 
     .program-subtitle {
-      font-size: 18px;
+      font-size: 16px;
       font-weight: 600;
       color: #16a34a;
       margin-bottom: 2px;
     }
 
     .program-title {
-      font-size: 28px;
+      font-size: 26px;
       font-weight: 800;
       color: #14532d;
-      line-height: 1.15;
-      margin-bottom: 18px;
+      line-height: 1.18;
+      margin-bottom: 16px;
     }
 
     .meta-row {
@@ -339,18 +279,49 @@ export function generateReportHtml(data: ReportTemplateData): string {
     }
 
     .hero-photo-wrap {
-      width: 270px;
-      height: 140px;
-      border-radius: 60px 16px 16px 16px;
+      width: 240px;
+      height: 130px;
+      border-radius: 20px;
       overflow: hidden;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
       flex-shrink: 0;
+      background: #f8fafc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .hero-photo-wrap img {
       width: 100%;
       height: 100%;
       object-fit: cover;
+    }
+
+    .hero-brand-box {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, #14532d 0%, #166534 100%);
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      text-align: center;
+    }
+
+    .hero-brand-tag {
+      font-size: 14px;
+      font-weight: 800;
+      color: #86efac;
+      letter-spacing: 0.5px;
+    }
+
+    .hero-brand-text {
+      font-size: 11px;
+      font-weight: 600;
+      color: #dcfce7;
+      margin-top: 4px;
     }
 
     /* TOP 5 METRIC CARDS */
@@ -391,7 +362,7 @@ export function generateReportHtml(data: ReportTemplateData): string {
     }
 
     .kpi-value {
-      font-size: 32px;
+      font-size: 30px;
       font-weight: 800;
       color: #0f172a;
       line-height: 1;
@@ -413,16 +384,10 @@ export function generateReportHtml(data: ReportTemplateData): string {
     }
 
     .pie-mini {
-      width: 44px;
-      height: 44px;
+      width: 42px;
+      height: 42px;
       border-radius: 50%;
-      background: conic-gradient(
-        #166534 0% 40%,
-        #3b82f6 40% 65%,
-        #f59e0b 65% 85%,
-        #ef4444 85% 95%,
-        #6b7280 95% 100%
-      );
+      background: ${sectorConicGradient};
       flex-shrink: 0;
     }
 
@@ -447,7 +412,7 @@ export function generateReportHtml(data: ReportTemplateData): string {
       border-radius: 2px;
     }
 
-    /* IMPACT & BENEFICIARY STATUS SECTION */
+    /* IMPACT & STATUS SECTION */
     .impact-section {
       padding: 0 36px 20px 36px;
     }
@@ -486,23 +451,24 @@ export function generateReportHtml(data: ReportTemplateData): string {
       background: #ffffff;
     }
 
-    .impact-chart-title {
-      font-size: 13px;
-      font-weight: 700;
-      color: #1e293b;
-      margin-bottom: 12px;
-    }
-
     .impact-chart-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 14px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .impact-chart-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #1e293b;
     }
 
     .impact-legend {
       display: flex;
-      gap: 14px;
+      gap: 12px;
       font-size: 11px;
       font-weight: 600;
       color: #64748b;
@@ -522,61 +488,44 @@ export function generateReportHtml(data: ReportTemplateData): string {
 
     .chart-and-result-grid {
       display: grid;
-      grid-template-columns: 1fr 180px;
+      grid-template-columns: 1fr 200px;
       gap: 20px;
       align-items: center;
     }
 
-    /* BAR CHART */
-    .bar-chart-row {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 16px;
-      height: 170px;
-      align-items: flex-end;
-      border-bottom: 1px solid #cbd5e1;
-      padding-bottom: 8px;
-    }
-
-    .bar-group {
+    /* REAL STATUS BARS */
+    .status-bars-container {
       display: flex;
       flex-direction: column;
-      align-items: center;
-      height: 100%;
-      justify-content: flex-end;
+      gap: 10px;
+      padding-right: 12px;
     }
 
-    .bar-columns {
+    .status-bar-row {
       display: flex;
-      align-items: flex-end;
-      gap: 5px;
-      width: 100%;
-      justify-content: center;
-      height: 135px;
+      flex-direction: column;
+      gap: 3px;
     }
 
-    .bar-col {
-      width: 22px;
-      border-radius: 4px 4px 0 0;
-      position: relative;
+    .status-bar-labels {
       display: flex;
-      justify-content: center;
-    }
-
-    .bar-col-label {
-      position: absolute;
-      top: -16px;
-      font-size: 9px;
-      font-weight: 700;
-      color: #334155;
-      white-space: nowrap;
-    }
-
-    .location-name {
-      margin-top: 8px;
+      justify-content: space-between;
       font-size: 11px;
-      font-weight: 700;
+      font-weight: 600;
       color: #334155;
+    }
+
+    .status-bar-track {
+      height: 12px;
+      background: #f1f5f9;
+      border-radius: 6px;
+      overflow: hidden;
+      display: flex;
+    }
+
+    .status-bar-fill {
+      height: 100%;
+      border-radius: 6px;
     }
 
     /* OVERALL RESULT CARD */
@@ -623,7 +572,6 @@ export function generateReportHtml(data: ReportTemplateData): string {
       font-size: 9px;
       color: #94a3b8;
       margin-top: 8px;
-      font-style: italic;
     }
 
     /* HIGHLIGHTS & DOCUMENTS */
@@ -723,6 +671,7 @@ export function generateReportHtml(data: ReportTemplateData): string {
 
     .badge-pdf { background: #ef4444; }
     .badge-xlsx { background: #16a34a; }
+    .badge-doc { background: #2563eb; }
 
     .doc-name {
       font-size: 11px;
@@ -838,6 +787,17 @@ export function generateReportHtml(data: ReportTemplateData): string {
       white-space: nowrap;
     }
 
+    .empty-photos-box {
+      padding: 24px;
+      text-align: center;
+      color: #64748b;
+      background: #f8fafc;
+      border-radius: 8px;
+      border: 1px dashed #cbd5e1;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
     /* FOOTER */
     .report-footer {
       background: #14532d;
@@ -896,16 +856,11 @@ export function generateReportHtml(data: ReportTemplateData): string {
     <!-- HEADER -->
     <div class="header">
       <div class="brand-block">
-        <!-- SVG Clover Logo -->
         <svg class="clover-logo" viewBox="0 0 100 100">
           <g fill="#22c55e">
-            <!-- Top Heart -->
             <path d="M50 48 C42 35 30 35 30 45 C30 55 45 65 50 68 C55 65 70 55 70 45 C70 35 58 35 50 48 Z" transform="rotate(0 50 50) translate(0 -16)" />
-            <!-- Left Heart -->
             <path d="M50 48 C42 35 30 35 30 45 C30 55 45 65 50 68 C55 65 70 55 70 45 C70 35 58 35 50 48 Z" transform="rotate(-90 50 50) translate(0 -16)" />
-            <!-- Right Heart -->
             <path d="M50 48 C42 35 30 35 30 45 C30 55 45 65 50 68 C55 65 70 55 70 45 C70 35 58 35 50 48 Z" transform="rotate(90 50 50) translate(0 -16)" />
-            <!-- Stem -->
             <path d="M48 54 Q44 74 38 82 Q42 82 50 60 Z" fill="#15803d" />
           </g>
         </svg>
@@ -916,8 +871,8 @@ export function generateReportHtml(data: ReportTemplateData): string {
       </div>
 
       <div class="report-quarter-badge-wrap">
-        <div class="report-badge-title">QUARTERLY REPORT</div>
-        <div class="quarter-pill">${escapeHtml(quarter)}</div>
+        <div class="report-badge-title">SYSTEM REPORT</div>
+        ${quarter ? `<div class="quarter-pill">${escapeHtml(quarter)}</div>` : ''}
       </div>
     </div>
 
@@ -948,50 +903,53 @@ export function generateReportHtml(data: ReportTemplateData): string {
             <div class="meta-icon-box">👤</div>
             <div class="meta-content">
               <span class="meta-label">Submitted By</span>
-              <span class="meta-value">${escapeHtml(submittedBy)}</span>
+              <span class="meta-value">${escapeHtml(submittedBy)} (${escapeHtml(submittedRole)})</span>
             </div>
           </div>
         </div>
       </div>
 
       <div class="hero-photo-wrap">
-        <img src="${escapeHtml(defaultHeroPhoto)}" alt="Program Volunteers in Action" />
+        ${data.heroPhoto ? `
+          <img src="${escapeHtml(data.heroPhoto)}" alt="Project Evidence" />
+        ` : `
+          <div class="hero-brand-box">
+            <div class="hero-brand-tag">NVC FOUNDATION</div>
+            <div class="hero-brand-text">Negros Occidental Operations</div>
+          </div>
+        `}
       </div>
     </div>
 
     <!-- 5 KPI METRIC CARDS -->
     <div class="metric-cards-row">
-      <!-- Total Projects -->
       <div class="kpi-card">
         <div class="kpi-header">
           <span class="kpi-icon">📁</span>
-          <span class="kpi-title">Total Projects</span>
+          <span class="kpi-title">${escapeHtml(totalProjectsLabel)}</span>
         </div>
         <div class="kpi-value">${data.totalProjects}</div>
-        <div class="kpi-delta">${escapeHtml(totalProjectsDelta)}</div>
+        ${totalProjectsDelta ? `<div class="kpi-delta">${escapeHtml(totalProjectsDelta)}</div>` : ''}
       </div>
 
-      <!-- Skills Contributed -->
       <div class="kpi-card">
         <div class="kpi-header">
           <span class="kpi-icon">👤</span>
-          <span class="kpi-title">Skills Contributed</span>
+          <span class="kpi-title">${escapeHtml(skillsLabel)}</span>
         </div>
         <div class="kpi-value">${data.skillsContributed}</div>
-        <div class="kpi-delta">${escapeHtml(skillsDelta)}</div>
+        ${skillsDelta ? `<div class="kpi-delta">${escapeHtml(skillsDelta)}</div>` : ''}
       </div>
 
-      <!-- Events Conducted -->
       <div class="kpi-card">
         <div class="kpi-header">
           <span class="kpi-icon">📅</span>
-          <span class="kpi-title">Events Conducted</span>
+          <span class="kpi-title">${escapeHtml(eventsLabel)}</span>
         </div>
         <div class="kpi-value">${data.eventsConducted}</div>
-        <div class="kpi-delta">${escapeHtml(eventsDelta)}</div>
+        ${eventsDelta ? `<div class="kpi-delta">${escapeHtml(eventsDelta)}</div>` : ''}
       </div>
 
-      <!-- Sectors Partner -->
       <div class="kpi-card">
         <div class="kpi-header">
           <span class="kpi-icon">📊</span>
@@ -1000,28 +958,27 @@ export function generateReportHtml(data: ReportTemplateData): string {
         <div class="sectors-card-content">
           <div class="pie-mini"></div>
           <div class="sectors-legend">
-            ${sectors.map(s => `
+            ${sectors.length > 0 ? sectors.slice(0, 4).map(s => `
               <div class="sector-item">
                 <div class="sector-dot" style="background: ${s.color};"></div>
-                <span>${escapeHtml(s.sector)} ${s.percent}%</span>
+                <span>${escapeHtml(s.sector)} (${s.count})</span>
               </div>
-            `).join('')}
+            `).join('') : '<span style="font-size: 9px; color: #94a3b8;">No sector data</span>'}
           </div>
         </div>
       </div>
 
-      <!-- Volunteers Involved -->
       <div class="kpi-card">
         <div class="kpi-header">
           <span class="kpi-icon">👥</span>
-          <span class="kpi-title">Volunteers Involved</span>
+          <span class="kpi-title">${escapeHtml(volunteersLabel)}</span>
         </div>
         <div class="kpi-value">${data.volunteersInvolved}</div>
-        <div class="kpi-delta">${escapeHtml(volunteersDelta)}</div>
+        ${volunteersDelta ? `<div class="kpi-delta">${escapeHtml(volunteersDelta)}</div>` : ''}
       </div>
     </div>
 
-    <!-- IMPACT & BENEFICIARY STATUS SECTION -->
+    <!-- IMPACT & STATUS SECTION -->
     <div class="impact-section">
       <div class="impact-banner">
         <span class="banner-badge">LOVE DELIVERS</span>
@@ -1031,65 +988,56 @@ export function generateReportHtml(data: ReportTemplateData): string {
 
       <div class="impact-chart-box">
         <div class="impact-chart-header">
-          <div class="impact-chart-title">% of Beneficiaries and their status after 1 year in the Nutrition Program - height</div>
+          <div class="impact-chart-title">${escapeHtml(data.statusSectionTitle || 'Project & Execution Status Distribution')}</div>
           <div class="impact-legend">
-            <div class="legend-chip">
-              <div class="legend-box" style="background: #14532d;"></div>
-              <span>Hit Target</span>
-            </div>
-            <div class="legend-chip">
-              <div class="legend-box" style="background: #86efac;"></div>
-              <span>Improved but below target</span>
-            </div>
-            <div class="legend-chip">
-              <div class="legend-box" style="background: #94a3b8;"></div>
-              <span>No Improvement</span>
-            </div>
+            ${statusItems.map(item => `
+              <div class="legend-chip">
+                <div class="legend-box" style="background: ${item.color};"></div>
+                <span>${escapeHtml(item.status)} (${item.count})</span>
+              </div>
+            `).join('')}
           </div>
         </div>
 
         <div class="chart-and-result-grid">
-          <!-- 4-location Bar Chart -->
-          <div>
-            <div class="bar-chart-row">
-              ${locations.map(loc => `
-                <div class="bar-group">
-                  <div class="bar-columns">
-                    <!-- Improved bar (light green) -->
-                    <div class="bar-col" style="height: ${Math.max(10, Math.min(100, loc.improvedPercent * 1.1))}px; background: #86efac;">
-                      <span class="bar-col-label">${loc.improvedPercent}%</span>
-                    </div>
-                    <!-- Hit Target bar (dark green) -->
-                    <div class="bar-col" style="height: ${Math.max(10, Math.min(130, loc.hitTargetPercent * 1.35))}px; background: #14532d;">
-                      <span class="bar-col-label">${loc.hitTargetPercent}%</span>
-                    </div>
-                    <!-- No Improvement bar (gray) -->
-                    <div class="bar-col" style="height: ${Math.max(4, Math.min(40, loc.noImprovementPercent * 6))}px; background: #94a3b8;">
-                      <span class="bar-col-label">${loc.noImprovementPercent}%</span>
-                    </div>
-                  </div>
-                  <div class="location-name">${escapeHtml(loc.location)}</div>
+          <!-- Real status horizontal bars -->
+          <div class="status-bars-container">
+            ${statusItems.length > 0 ? statusItems.map(item => `
+              <div class="status-bar-row">
+                <div class="status-bar-labels">
+                  <span>${escapeHtml(item.status)}</span>
+                  <span>${item.count} items (${item.percent}%)</span>
                 </div>
-              `).join('')}
-            </div>
-            <div class="footnote">*Based on height-for-age improvement of beneficiaries after 1 year in the program.</div>
+                <div class="status-bar-track">
+                  <div class="status-bar-fill" style="width: ${Math.max(4, item.percent)}%; background: ${item.color};"></div>
+                </div>
+              </div>
+            `).join('') : '<div style="font-size: 11px; color: #94a3b8; padding: 20px 0;">No status distribution data available.</div>'}
+            <div class="footnote">${escapeHtml(data.statusSectionSubtitle || '*Data derived strictly from live system records.')}</div>
           </div>
 
           <!-- Overall Result Card -->
           <div class="overall-result-card">
-            <div class="overall-result-title">Overall Result</div>
-            <div class="overall-stat-item">
-              <div class="overall-stat-num">${overall.hitTarget}%</div>
-              <div class="overall-stat-label">Hit Target</div>
-            </div>
-            <div class="overall-stat-item">
-              <div class="overall-stat-num">${overall.improved}%</div>
-              <div class="overall-stat-label">Improved but below target</div>
-            </div>
-            <div class="overall-stat-item">
-              <div class="overall-stat-num">${overall.noImprovement}%</div>
-              <div class="overall-stat-label">No improvement</div>
-            </div>
+            <div class="overall-result-title">Overall Status</div>
+            ${overall ? `
+              <div class="overall-stat-item">
+                <div class="overall-stat-num">${overall.primaryPercent}%</div>
+                <div class="overall-stat-label">${escapeHtml(overall.primaryLabel)}</div>
+              </div>
+              <div class="overall-stat-item">
+                <div class="overall-stat-num">${overall.secondaryPercent}%</div>
+                <div class="overall-stat-label">${escapeHtml(overall.secondaryLabel)}</div>
+              </div>
+              <div class="overall-stat-item">
+                <div class="overall-stat-num">${overall.tertiaryPercent}%</div>
+                <div class="overall-stat-label">${escapeHtml(overall.tertiaryLabel)}</div>
+              </div>
+            ` : `
+              <div class="overall-stat-item">
+                <div class="overall-stat-num">${data.totalProjects}</div>
+                <div class="overall-stat-label">Total Records Tracked</div>
+              </div>
+            `}
           </div>
         </div>
       </div>
@@ -1097,11 +1045,11 @@ export function generateReportHtml(data: ReportTemplateData): string {
 
     <!-- TWO-COLUMN SECTION: HIGHLIGHTS & DOCUMENTS -->
     <div class="two-col-grid">
-      <!-- Left: Project Highlights -->
+      <!-- Left: Real Highlights -->
       <div class="section-card">
         <div class="section-header">
           <span class="section-icon">⭐</span>
-          <span class="section-title">Project Highlights</span>
+          <span class="section-title">Execution Highlights</span>
         </div>
         <ul class="highlights-list">
           ${highlights.map(h => `
@@ -1113,17 +1061,17 @@ export function generateReportHtml(data: ReportTemplateData): string {
         </ul>
       </div>
 
-      <!-- Right: Report Documents -->
+      <!-- Right: Documents -->
       <div class="section-card">
         <div class="section-header">
           <span class="section-icon">📑</span>
-          <span class="section-title">Report Documents</span>
+          <span class="section-title">Attached & Generated Documents</span>
         </div>
         <div class="doc-list">
           ${documents.map(d => `
             <div class="doc-item">
               <div class="doc-left">
-                <span class="doc-badge ${d.type === 'pdf' ? 'badge-pdf' : 'badge-xlsx'}">${d.type.toUpperCase()}</span>
+                <span class="doc-badge ${d.type === 'pdf' ? 'badge-pdf' : d.type === 'xlsx' ? 'badge-xlsx' : 'badge-doc'}">${d.type.toUpperCase()}</span>
                 <div>
                   <div class="doc-name">${escapeHtml(d.name)}</div>
                   <div class="doc-size">${escapeHtml(d.size)}</div>
@@ -1136,30 +1084,36 @@ export function generateReportHtml(data: ReportTemplateData): string {
       </div>
     </div>
 
-    <!-- PHOTOS GALLERY -->
+    <!-- REAL PHOTOS GALLERY -->
     <div class="photos-section">
       <div class="photos-header">
         <div class="photos-title-wrap">
           <span style="font-size: 16px;">📷</span>
-          <span class="photos-title">Photos from Volunteers Report</span>
+          <span class="photos-title">Photos from Verified Submissions</span>
         </div>
-        <span class="view-all-pill">View All Photos (${rawPhotos.length || 24})</span>
+        <span class="view-all-pill">Photos (${photos.length})</span>
       </div>
 
-      <div class="photo-grid-5">
-        ${displayPhotos.map(p => `
-          <div class="photo-card">
-            <img src="${escapeHtml(p.uri)}" alt="Volunteer Activity" />
-            <div class="photo-overlay">
-              <div class="photo-meta">
-                <span class="photo-date">${escapeHtml(p.date)}</span>
-                <span class="photo-volunteer">${escapeHtml(p.volunteerName)}</span>
+      ${photos.length > 0 ? `
+        <div class="photo-grid-5">
+          ${photos.slice(0, 5).map(p => `
+            <div class="photo-card">
+              <img src="${escapeHtml(p.uri)}" alt="Volunteer Evidence" />
+              <div class="photo-overlay">
+                <div class="photo-meta">
+                  <span class="photo-date">${escapeHtml(p.date)}</span>
+                  <span class="photo-volunteer">${escapeHtml(p.volunteerName)}</span>
+                </div>
+                ${p.photoCount ? `<span class="photo-count-badge">${p.photoCount} photos</span>` : ''}
               </div>
-              <span class="photo-count-badge">${p.photoCount || 4} photos</span>
             </div>
-          </div>
-        `).join('')}
-      </div>
+          `).join('')}
+        </div>
+      ` : `
+        <div class="empty-photos-box">
+          No field photos uploaded in system records for this report.
+        </div>
+      `}
     </div>
 
     <!-- FOOTER -->

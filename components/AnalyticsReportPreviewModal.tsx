@@ -9,16 +9,16 @@ import {
   Image,
   ActivityIndicator,
   Platform,
-  Dimensions,
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
-import type { Partner, Project, Volunteer, VolunteerProjectJoinRecord, VolunteerTimeLog } from '../models/types';
+import type { Partner, PartnerProjectApplication, PartnerReport, Project, Volunteer, VolunteerProjectJoinRecord, VolunteerTimeLog } from '../models/types';
 import {
   generateReportHtml,
   ReportTemplateData,
   VolunteerPhotoItem,
   SectorPartnerItem,
-  LocationImpactItem,
+  StatusDistributionItem,
+  ReportDocumentItem,
 } from '../utils/pdfReportTemplate';
 import { downloadHtmlPdf } from '../utils/pdfDownload';
 
@@ -28,8 +28,10 @@ interface AnalyticsReportPreviewModalProps {
   volunteers: Volunteer[];
   projects: Project[];
   partners: Partner[];
+  partnerApplications?: PartnerProjectApplication[];
   volunteerJoinRecords: VolunteerProjectJoinRecord[];
   timeLogs: VolunteerTimeLog[];
+  reports?: PartnerReport[];
   skillAnalytics: {
     slices: { name: string; count: number; percent: number; color: string }[];
     volunteerCount: number;
@@ -45,172 +47,407 @@ export default function AnalyticsReportPreviewModal({
   volunteers,
   projects,
   partners,
+  partnerApplications = [],
   volunteerJoinRecords,
   timeLogs,
+  reports = [],
   skillAnalytics,
   currentTotal,
   monthlyDelta,
 }: AnalyticsReportPreviewModalProps) {
-  const [selectedScope, setSelectedScope] = useState<'all' | string>('all');
+  // Scope type: 'executive' | projectId | reportId
+  const [selectedScope, setSelectedScope] = useState<string>('executive');
   const [isGenerating, setIsGenerating] = useState(false);
   const [viewMode, setViewMode] = useState<'card' | 'html'>('card');
 
   const now = new Date();
   const currentQuarter = `Q${Math.floor(now.getMonth() / 3) + 1} ${now.getFullYear()}`;
 
-  // Build real data from system
+  // Build strictly from system data
   const reportData: ReportTemplateData = useMemo(() => {
-    const isPerProject = selectedScope !== 'all';
-    const activeProject = isPerProject ? projects.find(p => p.id === selectedScope) : null;
-
-    const events = projects.filter(p => p.isEvent);
-    const regularProjects = projects.filter(p => !p.isEvent);
-
-    // Dynamic quarter dates
-    const currentQuarterMonth = Math.floor(now.getMonth() / 3) * 3;
-    const qStart = new Date(now.getFullYear(), currentQuarterMonth, 1);
-    const qEnd = new Date(now.getFullYear(), currentQuarterMonth + 3, 0);
-
-    const periodStr = `${qStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${qEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-    const submittedOnStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-    // Sector percentages from partners
-    const sectorCounts: Record<string, number> = {
-      Nutrition: 0,
-      Education: 0,
-      Livelihood: 0,
-      Health: 0,
-      Others: 0,
-    };
-    partners.forEach(p => {
-      if (p.sectorType === 'Hospital') sectorCounts.Health += 1;
-      else if (p.sectorType === 'NGO') sectorCounts.Nutrition += 1;
-      else if (p.sectorType === 'Institution') sectorCounts.Education += 1;
-      else if (p.sectorType === 'Private') sectorCounts.Livelihood += 1;
-      else sectorCounts.Others += 1;
-    });
-    const totalSectors = Math.max(1, partners.length);
-    const sectorColors: Record<string, string> = {
-      Nutrition: '#166534',
-      Education: '#3b82f6',
-      Livelihood: '#f59e0b',
-      Health: '#ef4444',
-      Others: '#6b7280',
-    };
-    const sectorPartners: SectorPartnerItem[] = Object.keys(sectorCounts).map(sector => ({
-      sector,
-      percent: Math.round((sectorCounts[sector] / totalSectors) * 100) || (sector === 'Nutrition' ? 40 : sector === 'Education' ? 25 : sector === 'Livelihood' ? 20 : sector === 'Health' ? 10 : 5),
-      color: sectorColors[sector],
-    }));
-
-    // Extract photos from timeLogs or partner reports
-    const realPhotos: VolunteerPhotoItem[] = [];
     const volunteersById = new Map(volunteers.map(v => [v.id, v]));
     const volunteersByUserId = new Map(volunteers.map(v => [v.userId, v]));
 
+    // CASE 1: Individual Partner Report Selected
+    if (selectedScope.startsWith('report:')) {
+      const reportId = selectedScope.replace('report:', '');
+      const report = reports.find(r => r.id === reportId);
+      if (report) {
+        const linkedProject = projects.find(p => p.id === report.projectId);
+
+        // Real photos from this report and project
+        const realPhotos: VolunteerPhotoItem[] = [];
+        if (report.mediaFile && report.mediaFile.trim()) {
+          realPhotos.push({
+            uri: report.mediaFile.trim(),
+            volunteerName: report.submitterName || 'Report Submitter',
+            date: report.createdAt ? new Date(report.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Logged',
+            photoCount: 1,
+          });
+        }
+        timeLogs
+          .filter(l => l.projectId === report.projectId && Boolean((l.attendancePhoto || l.completionPhoto || '').trim()))
+          .forEach((l, idx) => {
+            const uri = (l.attendancePhoto || l.completionPhoto || '').trim();
+            if (!realPhotos.some(p => p.uri === uri)) {
+              const vol = volunteersById.get(l.volunteerId) || volunteersByUserId.get(l.volunteerId);
+              realPhotos.push({
+                uri,
+                volunteerName: vol?.name || `Volunteer ${idx + 1}`,
+                date: l.timeIn ? new Date(l.timeIn).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Verified',
+                photoCount: 1,
+              });
+            }
+          });
+
+        const highlights: string[] = [];
+        if (report.description && report.description.trim()) {
+          highlights.push(`Report Summary: ${report.description.trim()}`);
+        }
+        if (report.collaborationFeedback && report.collaborationFeedback.trim()) {
+          highlights.push(`Collaboration Feedback: ${report.collaborationFeedback.trim()}`);
+        }
+        if (report.volunteerPraise && report.volunteerPraise.trim()) {
+          highlights.push(`Volunteer Commendation: ${report.volunteerPraise.trim()}`);
+        }
+        if (report.gratitudeNote && report.gratitudeNote.trim()) {
+          highlights.push(`Gratitude Message: ${report.gratitudeNote.trim()}`);
+        }
+        if (linkedProject) {
+          highlights.push(`Linked Program: "${linkedProject.title}" (${linkedProject.status}) at ${linkedProject.location?.address || 'Negros Occidental'}.`);
+        }
+
+        const documents: ReportDocumentItem[] = [
+          { name: `Report_${report.id.slice(0, 8)}.pdf`, type: 'pdf', size: 'Verified Report' },
+        ];
+        if (report.attachments && Array.isArray(report.attachments)) {
+          report.attachments.forEach(att => {
+            documents.push({
+              name: att.description || 'Report Attachment',
+              type: att.type === 'document' ? 'doc' : 'pdf',
+              size: 'Attached File',
+            });
+          });
+        }
+
+        return {
+          reportQuarter: currentQuarter,
+          title: report.title || linkedProject?.title || 'Partner Field Report',
+          subtitle: `Category: ${report.reportType} • Project: ${linkedProject?.title || 'General'}`,
+          period: `Submitted: ${report.createdAt ? new Date(report.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}`,
+          submittedOn: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          submittedBy: report.submitterName || 'Partner Representative',
+          submittedRole: report.submitterRole || 'Partner',
+          heroPhoto: report.mediaFile?.trim() || undefined,
+          totalProjects: report.impactCount || 0,
+          totalProjectsLabel: 'Impact Count',
+          totalProjectsDelta: 'Beneficiaries impacted',
+          skillsContributed: linkedProject?.skillsNeeded?.length || 1,
+          skillsContributedLabel: 'Skills Applied',
+          skillsContributedDelta: linkedProject?.skillsNeeded?.join(', ') || 'Field Support',
+          eventsConducted: linkedProject?.isEvent ? 1 : 0,
+          eventsConductedLabel: 'Event Verified',
+          eventsConductedDelta: linkedProject?.isEvent ? 'Live Event' : 'Continuous Program',
+          volunteersInvolved: linkedProject?.volunteers?.length || 0,
+          volunteersInvolvedLabel: 'Volunteers Engaged',
+          volunteersInvolvedDelta: `Status: ${report.status}`,
+          sectorPartners: [],
+          statusSectionTitle: 'Verification Status',
+          statusSectionSubtitle: 'Report submission and review state',
+          statusDistributions: [
+            {
+              status: report.status || 'Submitted',
+              count: 1,
+              percent: 100,
+              color: report.status === 'Reviewed' ? '#166534' : '#2563eb',
+            },
+          ],
+          overallResult: {
+            primaryLabel: report.status || 'Submitted',
+            primaryPercent: 100,
+            secondaryLabel: 'Impact Logged',
+            secondaryPercent: report.impactCount || 0,
+            tertiaryLabel: 'Review Status',
+            tertiaryPercent: report.reviewedAt ? 100 : 0,
+          },
+          highlights,
+          documents,
+          photos: realPhotos,
+        };
+      }
+    }
+
+    // CASE 2: Individual Project / Event Selected
+    if (selectedScope.startsWith('project:')) {
+      const projectId = selectedScope.replace('project:', '');
+      const project = projects.find(p => p.id === projectId);
+      if (project) {
+        const app = partnerApplications.find(a => a.projectId === project.id && a.status === 'Approved');
+        const partner = partners.find(pt => pt.id === project.partnerId || pt.ownerUserId === app?.partnerUserId);
+        const joinedRecords = volunteerJoinRecords.filter(r => r.projectId === project.id);
+        const joinedCount = (project.volunteers?.length || 0) + joinedRecords.length;
+
+        // Real photos uploaded for this project only
+        const realPhotos: VolunteerPhotoItem[] = [];
+        timeLogs
+          .filter(l => l.projectId === project.id && Boolean((l.attendancePhoto || l.completionPhoto || '').trim()))
+          .forEach((l, idx) => {
+            const uri = (l.attendancePhoto || l.completionPhoto || '').trim();
+            if (!realPhotos.some(p => p.uri === uri)) {
+              const vol = volunteersById.get(l.volunteerId) || volunteersByUserId.get(l.volunteerId);
+              realPhotos.push({
+                uri,
+                volunteerName: vol?.name || `Volunteer ${idx + 1}`,
+                date: l.timeIn ? new Date(l.timeIn).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Verified',
+                photoCount: 1,
+              });
+            }
+          });
+
+        // Real internal tasks breakdown
+        const tasks = project.internalTasks || [];
+        const completedTasks = tasks.filter(t => t.status === 'Completed').length;
+        const inProgressTasks = tasks.filter(t => t.status === 'In Progress').length;
+        const assignedTasks = tasks.filter(t => t.status === 'Assigned').length;
+        const unassignedTasks = tasks.filter(t => t.status === 'Unassigned').length;
+        const totalTasks = Math.max(1, tasks.length);
+
+        const statusDistributions: StatusDistributionItem[] = tasks.length > 0 ? [
+          { status: 'Completed', count: completedTasks, percent: Math.round((completedTasks / totalTasks) * 100), color: '#166534' },
+          { status: 'In Progress', count: inProgressTasks, percent: Math.round((inProgressTasks / totalTasks) * 100), color: '#2563eb' },
+          { status: 'Assigned', count: assignedTasks, percent: Math.round((assignedTasks / totalTasks) * 100), color: '#d97706' },
+          { status: 'Unassigned', count: unassignedTasks, percent: Math.round((unassignedTasks / totalTasks) * 100), color: '#64748b' },
+        ] : [
+          { status: project.status, count: 1, percent: 100, color: '#166534' },
+        ];
+
+        const highlights: string[] = [];
+        if (project.description && project.description.trim()) {
+          highlights.push(`Program Description: ${project.description.trim()}`);
+        }
+        highlights.push(`Current Status: ${project.status} (${project.isEvent ? 'Event' : 'Program'}).`);
+        highlights.push(`Location Placement: ${project.location?.address || 'Negros Occidental'}.`);
+        highlights.push(`Volunteer Mobilization: ${joinedCount} joined of ${project.volunteersNeeded || 'N/A'} target.`);
+        if (tasks.length > 0) {
+          highlights.push(`Internal Tasks: ${completedTasks} completed out of ${tasks.length} delegated.`);
+        }
+        if (partner) {
+          highlights.push(`Partner Collaboration: Partner organization "${partner.name}" (${partner.sectorType}).`);
+        }
+
+        const pStart = project.startDate ? new Date(project.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A';
+        const pEnd = project.endDate ? new Date(project.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A';
+
+        const documents: ReportDocumentItem[] = [
+          { name: `Project_Report_${project.id.slice(0, 8)}.pdf`, type: 'pdf', size: 'Project Summary' },
+        ];
+
+        return {
+          reportQuarter: currentQuarter,
+          title: project.title,
+          subtitle: `${project.isEvent ? 'Event' : 'Project'} • ${project.programModule || project.category || 'General'}`,
+          period: `${pStart} - ${pEnd}`,
+          submittedOn: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          submittedBy: partner?.name || 'Project Coordinator',
+          submittedRole: partner?.sectorType || 'Coordinator',
+          heroPhoto: undefined,
+          totalProjects: 1,
+          totalProjectsLabel: 'Project Status',
+          totalProjectsDelta: project.status,
+          skillsContributed: project.skillsNeeded?.length || 0,
+          skillsContributedLabel: 'Skills Required',
+          skillsContributedDelta: project.skillsNeeded?.slice(0, 2).join(', ') || 'General',
+          eventsConducted: tasks.length,
+          eventsConductedLabel: 'Internal Tasks',
+          eventsConductedDelta: `${completedTasks} completed`,
+          volunteersInvolved: joinedCount,
+          volunteersInvolvedLabel: 'Volunteers Joined',
+          volunteersInvolvedDelta: `Target: ${project.volunteersNeeded || 'N/A'}`,
+          sectorPartners: partner ? [{ sector: partner.sectorType, count: 1, percent: 100, color: '#166534' }] : [],
+          statusSectionTitle: tasks.length > 0 ? 'Internal Tasks Execution' : 'Project Status',
+          statusSectionSubtitle: `Progress tracking for ${project.title}`,
+          statusDistributions,
+          overallResult: {
+            primaryLabel: tasks.length > 0 ? 'Completed Tasks' : 'Status',
+            primaryPercent: tasks.length > 0 ? Math.round((completedTasks / totalTasks) * 100) : 100,
+            secondaryLabel: tasks.length > 0 ? 'In Progress' : 'Volunteers',
+            secondaryPercent: tasks.length > 0 ? Math.round((inProgressTasks / totalTasks) * 100) : joinedCount,
+            tertiaryLabel: tasks.length > 0 ? 'Pending' : 'Target',
+            tertiaryPercent: tasks.length > 0 ? Math.round((unassignedTasks / totalTasks) * 100) : (project.volunteersNeeded || 0),
+          },
+          highlights,
+          documents,
+          photos: realPhotos,
+        };
+      }
+    }
+
+    // CASE 3: Full System Executive Analytics Report
+    const regularProjects = projects.filter(p => !p.isEvent);
+    const events = projects.filter(p => p.isEvent);
+
+    // Partner sector counts
+    const sectorCounts: Record<string, number> = {};
+    partners.forEach(p => {
+      const s = p.sectorType || 'Other';
+      sectorCounts[s] = (sectorCounts[s] || 0) + 1;
+    });
+    const totalPartners = Math.max(1, partners.length);
+    const sectorColors: Record<string, string> = {
+      NGO: '#166534',
+      Hospital: '#ef4444',
+      Institution: '#3b82f6',
+      Private: '#f59e0b',
+    };
+    const sectorPartners: SectorPartnerItem[] = Object.keys(sectorCounts).map(s => ({
+      sector: s,
+      count: sectorCounts[s],
+      percent: Math.round((sectorCounts[s] / totalPartners) * 100),
+      color: sectorColors[s] || '#6b7280',
+    }));
+
+    // Real project status counts
+    const statusCounts: Record<string, number> = {
+      Planning: 0,
+      'In Progress': 0,
+      'On Hold': 0,
+      Completed: 0,
+      Cancelled: 0,
+    };
+    projects.forEach(p => {
+      if (statusCounts[p.status] !== undefined) {
+        statusCounts[p.status] += 1;
+      } else {
+        statusCounts['Planning'] += 1;
+      }
+    });
+    const totalProj = Math.max(1, projects.length);
+    const statusColors: Record<string, string> = {
+      'In Progress': '#166534',
+      Planning: '#2563eb',
+      Completed: '#7c3aed',
+      'On Hold': '#d97706',
+      Cancelled: '#dc2626',
+    };
+    const statusDistributions: StatusDistributionItem[] = Object.keys(statusCounts)
+      .filter(st => statusCounts[st] > 0)
+      .map(st => ({
+        status: st,
+        count: statusCounts[st],
+        percent: Math.round((statusCounts[st] / totalProj) * 100),
+        color: statusColors[st] || '#64748b',
+      }));
+
+    // Calculate total completed volunteer hours
+    const completedHours = Math.round(
+      timeLogs.reduce((sum, log) => {
+        if (!log.timeIn || !log.timeOut) return sum;
+        const s = new Date(log.timeIn).getTime();
+        const e = new Date(log.timeOut).getTime();
+        return sum + (e > s ? (e - s) / 3_600_000 : 0);
+      }, 0)
+    );
+
+    // Collect ONLY real photos
+    const realPhotos: VolunteerPhotoItem[] = [];
     timeLogs
       .filter(l => Boolean((l.attendancePhoto || l.completionPhoto || '').trim()))
-      .slice(0, 10)
-      .forEach((log, index) => {
-        const photoUri = (log.attendancePhoto || log.completionPhoto || '').trim();
-        const vol = volunteersById.get(log.volunteerId) || volunteersByUserId.get(log.volunteerId);
-        const name = vol?.name || `Volunteer ${index + 1}`;
-        const dateStr = log.timeIn ? new Date(log.timeIn).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Aug 14, 2026';
-        if (!realPhotos.some(p => p.uri === photoUri)) {
+      .slice(0, 5)
+      .forEach((l, idx) => {
+        const uri = (l.attendancePhoto || l.completionPhoto || '').trim();
+        if (!realPhotos.some(p => p.uri === uri)) {
+          const vol = volunteersById.get(l.volunteerId) || volunteersByUserId.get(l.volunteerId);
           realPhotos.push({
-            uri: photoUri,
-            volunteerName: name,
-            date: dateStr,
-            photoCount: 4,
+            uri,
+            volunteerName: vol?.name || `Volunteer ${idx + 1}`,
+            date: l.timeIn ? new Date(l.timeIn).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Verified',
+            photoCount: 1,
           });
         }
       });
 
-    // Real system highlights
-    const highlights: string[] = [];
-    if (activeProject) {
-      highlights.push(`Conducted field operations for "${activeProject.title}".`);
-      highlights.push(`Mobilized ${activeProject.volunteers?.length || 0} registered volunteers for task execution.`);
-      highlights.push(`Recorded geo-location placement at ${activeProject.location?.address || 'Negros Occidental'}.`);
-      highlights.push(`Verified attendance, photo submissions, and milestone achievements.`);
-      highlights.push(`Coordinated with community stakeholders and local beneficiary groups.`);
-    } else {
-      highlights.push(`Conducted ${events.length} community volunteer events across Negros Occidental.`);
-      highlights.push(`Mobilized ${volunteers.length} registered volunteers with ${skillAnalytics.contributionCount} skill contributions.`);
-      highlights.push(`Maintained active collaboration with ${partners.length} partner organizations.`);
-      highlights.push(`Logged verified attendance, real-time geofence check-ins, and evidence reports.`);
-      highlights.push(`Managed ${regularProjects.length} active and planned sustainable development programs.`);
-    }
+    reports
+      .filter(r => Boolean(r.mediaFile && r.mediaFile.trim()))
+      .slice(0, 5)
+      .forEach(r => {
+        const uri = r.mediaFile!.trim();
+        if (!realPhotos.some(p => p.uri === uri)) {
+          realPhotos.push({
+            uri,
+            volunteerName: r.submitterName || 'Partner Reporter',
+            date: r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Verified',
+            photoCount: 1,
+          });
+        }
+      });
 
-    // Municipalities impact locations from projects
-    const locations: LocationImpactItem[] = [
-      { location: 'Bago', hitTargetPercent: 22, improvedPercent: 77, noImprovementPercent: 1 },
-      { location: 'DSB', hitTargetPercent: 15, improvedPercent: 85, noImprovementPercent: 0 },
-      { location: 'Victorias', hitTargetPercent: 19.17, improvedPercent: 79.7, noImprovementPercent: 1.13 },
-      { location: 'Sagay', hitTargetPercent: 19.74, improvedPercent: 77.63, noImprovementPercent: 2.63 },
+    // Real highlights from system
+    const highlights: string[] = [
+      `Registered ${volunteers.length} volunteers contributing ${skillAnalytics.contributionCount} verified skills across ${skillAnalytics.slices.length} categories.`,
+      `Mobilized ${projects.length} total initiatives (${regularProjects.length} programs and ${events.length} community events).`,
+      `Engaged ${partners.length} validated partner organizations across ${Object.keys(sectorCounts).length} sectors.`,
+      `Recorded ${completedHours} verified volunteer service hours through digital timekeeping.`,
+      `Generated ${reports.length} partner operational and field impact submissions.`,
     ];
 
-    if (activeProject) {
-      return {
-        reportQuarter: currentQuarter,
-        title: activeProject.title,
-        subtitle: activeProject.programModule || activeProject.category || 'Volunteer Project Report',
-        period: periodStr,
-        submittedOn: submittedOnStr,
-        submittedBy: 'System Administrator',
-        submittedRole: 'Program Manager',
-        totalProjects: 1,
-        totalProjectsDelta: `${activeProject.status} Status`,
-        skillsContributed: activeProject.volunteers?.length ? activeProject.volunteers.length * 2 : 8,
-        skillsContributedDelta: 'Active skills',
-        eventsConducted: activeProject.isEvent ? 1 : 0,
-        eventsConductedDelta: activeProject.isEvent ? 'Event Verified' : 'Program Tracked',
-        volunteersInvolved: activeProject.volunteers?.length || (activeProject.joinedUserIds?.length || 0),
-        volunteersInvolvedDelta: 'Assigned volunteers',
-        sectorPartners,
-        locationImpacts: locations,
-        overallResult: {
-          hitTarget: 82,
-          improved: 16,
-          noImprovement: 2,
-        },
-        highlights,
-        photos: realPhotos,
-      };
-    }
+    const currentQuarterMonth = Math.floor(now.getMonth() / 3) * 3;
+    const qStart = new Date(now.getFullYear(), currentQuarterMonth, 1);
+    const qEnd = new Date(now.getFullYear(), currentQuarterMonth + 3, 0);
+    const periodStr = `${qStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${qEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+
+    const completedPercent = Math.round((statusCounts['Completed'] / totalProj) * 100);
+    const activePercent = Math.round((statusCounts['In Progress'] / totalProj) * 100);
+    const planningPercent = Math.round((statusCounts['Planning'] / totalProj) * 100);
 
     return {
       reportQuarter: currentQuarter,
-      title: 'Nutrition & Community Volunteer Program',
-      subtitle: 'Negros Occidental Impact & Field Operations',
+      title: 'Executive System Analytics & Impact Report',
+      subtitle: 'Negros Occidental Volunteer Operations & Project Tracking',
       period: periodStr,
-      submittedOn: submittedOnStr,
+      submittedOn: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       submittedBy: 'NVC Administration',
-      submittedRole: 'Program Coordinator',
-      totalProjects: regularProjects.length || 8,
-      totalProjectsDelta: '+33% vs prior ↗',
-      skillsContributed: skillAnalytics.contributionCount || 16,
-      skillsContributedDelta: '+14% vs prior ↗',
-      eventsConducted: events.length || 12,
-      eventsConductedDelta: '+20% vs prior ↗',
-      volunteersInvolved: currentTotal || volunteers.length || 136,
-      volunteersInvolvedDelta: `${monthlyDelta >= 0 ? '+' : ''}${monthlyDelta} this month ↗`,
+      submittedRole: 'Administrator',
+      heroPhoto: undefined,
+      totalProjects: regularProjects.length,
+      totalProjectsLabel: 'Total Projects',
+      totalProjectsDelta: `${statusCounts['Completed']} Completed`,
+      skillsContributed: skillAnalytics.contributionCount,
+      skillsContributedLabel: 'Skills Contributed',
+      skillsContributedDelta: `${skillAnalytics.slices.length} Unique Skills`,
+      eventsConducted: events.length,
+      eventsConductedLabel: 'Events Conducted',
+      eventsConductedDelta: `${events.filter(e => e.status === 'Completed').length} Completed`,
+      volunteersInvolved: currentTotal || volunteers.length,
+      volunteersInvolvedLabel: 'Volunteers Involved',
+      volunteersInvolvedDelta: `${monthlyDelta >= 0 ? '+' : ''}${monthlyDelta} this month`,
       sectorPartners,
-      locationImpacts: locations,
+      statusSectionTitle: 'Project Execution Status',
+      statusSectionSubtitle: 'Distribution of project lifecycles across active operations',
+      statusDistributions,
       overallResult: {
-        hitTarget: 19,
-        improved: 79,
-        noImprovement: 2,
+        primaryLabel: 'In Progress (Active)',
+        primaryPercent: activePercent,
+        secondaryLabel: 'Planning (Draft)',
+        secondaryPercent: planningPercent,
+        tertiaryLabel: 'Completed (Closed)',
+        tertiaryPercent: completedPercent,
       },
       highlights,
+      documents: [
+        { name: `NVC_Executive_Analytics_${currentQuarter.replace(/\s+/g, '_')}.pdf`, type: 'pdf', size: 'Executive Summary' },
+        { name: `Volunteers_Directory_${currentQuarter.replace(/\s+/g, '_')}.pdf`, type: 'pdf', size: `${volunteers.length} Volunteers` },
+      ],
       photos: realPhotos,
     };
   }, [
     selectedScope,
     projects,
     partners,
+    partnerApplications,
     volunteers,
+    volunteerJoinRecords,
     timeLogs,
+    reports,
     currentQuarter,
     skillAnalytics,
     currentTotal,
@@ -222,9 +459,9 @@ export default function AnalyticsReportPreviewModal({
   const handleDownload = async () => {
     setIsGenerating(true);
     try {
-      const filename = selectedScope === 'all'
-        ? `NVC_Executive_Report_${currentQuarter.replace(' ', '_')}.pdf`
-        : `NVC_Report_${reportData.title.slice(0, 20).replace(/\s+/g, '_')}.pdf`;
+      const filename = selectedScope === 'executive'
+        ? `NVC_Executive_Report_${currentQuarter.replace(/\s+/g, '_')}.pdf`
+        : `NVC_Report_${reportData.title.slice(0, 24).replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
 
       await downloadHtmlPdf(filename, htmlContent);
     } catch (err: any) {
@@ -245,7 +482,7 @@ export default function AnalyticsReportPreviewModal({
     >
       <View style={styles.backdrop}>
         <View style={styles.modalCard}>
-          {/* MODAL TOP BAR */}
+          {/* TOP BAR */}
           <View style={styles.topBar}>
             <View style={styles.topBarLeft}>
               <View style={styles.cloverIconBox}>
@@ -253,39 +490,12 @@ export default function AnalyticsReportPreviewModal({
               </View>
               <View>
                 <Text style={styles.topBarTitle}>NVC Report Preview</Text>
-                <Text style={styles.topBarSubtitle}>Official Green Executive Template • Live System Data</Text>
+                <Text style={styles.topBarSubtitle}>Green Executive Template • Live System Data</Text>
               </View>
             </View>
 
             <View style={styles.topBarRight}>
-              {/* Scope Selector */}
-              <View style={styles.scopeSelector}>
-                <TouchableOpacity
-                  style={[styles.scopeBtn, selectedScope === 'all' && styles.scopeBtnActive]}
-                  onPress={() => setSelectedScope('all')}
-                >
-                  <Text style={[styles.scopeBtnText, selectedScope === 'all' && styles.scopeBtnTextActive]}>
-                    Full Executive
-                  </Text>
-                </TouchableOpacity>
-
-                {projects.slice(0, 3).map(proj => (
-                  <TouchableOpacity
-                    key={proj.id}
-                    style={[styles.scopeBtn, selectedScope === proj.id && styles.scopeBtnActive]}
-                    onPress={() => setSelectedScope(proj.id)}
-                  >
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.scopeBtnText, selectedScope === proj.id && styles.scopeBtnTextActive]}
-                    >
-                      {proj.title}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* View mode toggle on web */}
+              {/* View Mode Toggle on Web */}
               {Platform.OS === 'web' && (
                 <View style={styles.viewToggleGroup}>
                   <TouchableOpacity
@@ -307,7 +517,7 @@ export default function AnalyticsReportPreviewModal({
                 </View>
               )}
 
-              {/* Download Button */}
+              {/* Download PDF Button */}
               <TouchableOpacity
                 style={styles.downloadPrimaryBtn}
                 onPress={handleDownload}
@@ -320,7 +530,7 @@ export default function AnalyticsReportPreviewModal({
                   <MaterialIcons name="file-download" size={18} color="#ffffff" style={{ marginRight: 6 }} />
                 )}
                 <Text style={styles.downloadPrimaryBtnText}>
-                  {isGenerating ? 'Generating...' : 'Download PDF'}
+                  {isGenerating ? 'Compiling...' : 'Download PDF'}
                 </Text>
               </TouchableOpacity>
 
@@ -329,6 +539,68 @@ export default function AnalyticsReportPreviewModal({
                 <MaterialIcons name="close" size={24} color="#64748b" />
               </TouchableOpacity>
             </View>
+          </View>
+
+          {/* REPORT SELECTOR STRIP (Per Report PDF Support) */}
+          <View style={styles.scopeStrip}>
+            <Text style={styles.scopeStripLabel}>Select Report:</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scopeScroll}>
+              <TouchableOpacity
+                style={[styles.scopeChip, selectedScope === 'executive' && styles.scopeChipActive]}
+                onPress={() => setSelectedScope('executive')}
+              >
+                <MaterialIcons
+                  name="analytics"
+                  size={14}
+                  color={selectedScope === 'executive' ? '#ffffff' : '#166534'}
+                />
+                <Text style={[styles.scopeChipText, selectedScope === 'executive' && styles.scopeChipTextActive]}>
+                  Full System Executive
+                </Text>
+              </TouchableOpacity>
+
+              {/* Real projects in system */}
+              {projects.map(p => (
+                <TouchableOpacity
+                  key={`proj-${p.id}`}
+                  style={[styles.scopeChip, selectedScope === `project:${p.id}` && styles.scopeChipActive]}
+                  onPress={() => setSelectedScope(`project:${p.id}`)}
+                >
+                  <MaterialIcons
+                    name={p.isEvent ? 'event' : 'folder'}
+                    size={14}
+                    color={selectedScope === `project:${p.id}` ? '#ffffff' : '#475569'}
+                  />
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.scopeChipText, selectedScope === `project:${p.id}` && styles.scopeChipTextActive]}
+                  >
+                    {p.title}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+
+              {/* Real partner reports in system */}
+              {reports.map(r => (
+                <TouchableOpacity
+                  key={`rep-${r.id}`}
+                  style={[styles.scopeChip, selectedScope === `report:${r.id}` && styles.scopeChipActive]}
+                  onPress={() => setSelectedScope(`report:${r.id}`)}
+                >
+                  <MaterialIcons
+                    name="assignment"
+                    size={14}
+                    color={selectedScope === `report:${r.id}` ? '#ffffff' : '#2563eb'}
+                  />
+                  <Text
+                    numberOfLines={1}
+                    style={[styles.scopeChipText, selectedScope === `report:${r.id}` && styles.scopeChipTextActive]}
+                  >
+                    {r.title || `${r.submitterName} Report`}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
 
           {/* PREVIEW CONTENT */}
@@ -365,10 +637,12 @@ export default function AnalyticsReportPreviewModal({
                   </View>
 
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.reportCategoryTitle}>QUARTERLY REPORT</Text>
-                    <View style={styles.quarterBadge}>
-                      <Text style={styles.quarterBadgeText}>{reportData.reportQuarter}</Text>
-                    </View>
+                    <Text style={styles.reportCategoryTitle}>SYSTEM REPORT</Text>
+                    {reportData.reportQuarter ? (
+                      <View style={styles.quarterBadge}>
+                        <Text style={styles.quarterBadgeText}>{reportData.reportQuarter}</Text>
+                      </View>
+                    ) : null}
                   </View>
                 </View>
 
@@ -407,79 +681,81 @@ export default function AnalyticsReportPreviewModal({
                     </View>
                   </View>
 
-                  <Image
-                    source={{
-                      uri:
-                        reportData.heroPhoto ||
-                        'https://images.unsplash.com/photo-1488521787991-ed7bbaae773c?w=600&auto=format&fit=crop&q=80',
-                    }}
-                    style={styles.heroImage}
-                    resizeMode="cover"
-                  />
+                  {reportData.heroPhoto ? (
+                    <Image
+                      source={{ uri: reportData.heroPhoto }}
+                      style={styles.heroImage}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View style={styles.heroBrandPlaceholder}>
+                      <Text style={styles.heroBrandText}>NVC FOUNDATION</Text>
+                      <Text style={styles.heroBrandSub}>Negros Occidental Operations</Text>
+                    </View>
+                  )}
                 </View>
 
                 {/* 3. Top 5 KPI Cards */}
                 <View style={styles.kpiRow}>
-                  {/* Total Projects */}
                   <View style={styles.kpiCard}>
                     <View style={styles.kpiHeader}>
                       <MaterialIcons name="folder" size={14} color="#64748b" />
-                      <Text style={styles.kpiTitle}>Total Projects</Text>
+                      <Text style={styles.kpiTitle}>{reportData.totalProjectsLabel || 'Projects'}</Text>
                     </View>
                     <Text style={styles.kpiNum}>{reportData.totalProjects}</Text>
                     <Text style={styles.kpiDelta}>{reportData.totalProjectsDelta}</Text>
                   </View>
 
-                  {/* Skills Contributed */}
                   <View style={styles.kpiCard}>
                     <View style={styles.kpiHeader}>
                       <MaterialIcons name="psychology" size={14} color="#64748b" />
-                      <Text style={styles.kpiTitle}>Skills</Text>
+                      <Text style={styles.kpiTitle}>{reportData.skillsContributedLabel || 'Skills'}</Text>
                     </View>
                     <Text style={styles.kpiNum}>{reportData.skillsContributed}</Text>
                     <Text style={styles.kpiDelta}>{reportData.skillsContributedDelta}</Text>
                   </View>
 
-                  {/* Events Conducted */}
                   <View style={styles.kpiCard}>
                     <View style={styles.kpiHeader}>
                       <MaterialIcons name="event-available" size={14} color="#64748b" />
-                      <Text style={styles.kpiTitle}>Events</Text>
+                      <Text style={styles.kpiTitle}>{reportData.eventsConductedLabel || 'Events'}</Text>
                     </View>
                     <Text style={styles.kpiNum}>{reportData.eventsConducted}</Text>
                     <Text style={styles.kpiDelta}>{reportData.eventsConductedDelta}</Text>
                   </View>
 
-                  {/* Sectors Partner */}
                   <View style={styles.kpiCard}>
                     <View style={styles.kpiHeader}>
                       <MaterialIcons name="pie-chart" size={14} color="#64748b" />
                       <Text style={styles.kpiTitle}>Sectors</Text>
                     </View>
                     <View style={styles.sectorsPreview}>
-                      {(reportData.sectorPartners || []).slice(0, 3).map(s => (
-                        <View key={s.sector} style={styles.sectorRow}>
-                          <View style={[styles.sectorDot, { backgroundColor: s.color }]} />
-                          <Text style={styles.sectorText} numberOfLines={1}>
-                            {s.sector} {s.percent}%
-                          </Text>
-                        </View>
-                      ))}
+                      {(reportData.sectorPartners || []).length > 0 ? (
+                        (reportData.sectorPartners || []).slice(0, 3).map(s => (
+                          <View key={s.sector} style={styles.sectorRow}>
+                            <View style={[styles.sectorDot, { backgroundColor: s.color }]} />
+                            <Text style={styles.sectorText} numberOfLines={1}>
+                              {s.sector} ({s.count})
+                            </Text>
+                          </View>
+                        ))
+                      ) : (
+                        <Text style={styles.sectorEmptyText}>No sectors</Text>
+                      )}
                     </View>
                   </View>
 
-                  {/* Volunteers Involved */}
                   <View style={styles.kpiCard}>
                     <View style={styles.kpiHeader}>
                       <MaterialIcons name="groups" size={14} color="#64748b" />
-                      <Text style={styles.kpiTitle}>Volunteers</Text>
+                      <Text style={styles.kpiTitle}>{reportData.volunteersInvolvedLabel || 'Volunteers'}</Text>
                     </View>
                     <Text style={styles.kpiNum}>{reportData.volunteersInvolved}</Text>
                     <Text style={styles.kpiDelta}>{reportData.volunteersInvolvedDelta}</Text>
                   </View>
                 </View>
 
-                {/* 4. Middle Section - LOVE DELIVERS & Bar Chart */}
+                {/* 4. Middle Section - Real Status Distribution */}
                 <View style={styles.impactBox}>
                   <View style={styles.impactBanner}>
                     <Text style={styles.bannerBadge}>LOVE DELIVERS</Text>
@@ -490,94 +766,86 @@ export default function AnalyticsReportPreviewModal({
                   <View style={styles.impactContent}>
                     <View style={styles.chartHeader}>
                       <Text style={styles.chartTitle}>
-                        % of Beneficiaries and their status after 1 year in the Nutrition Program - height
+                        {reportData.statusSectionTitle || 'Project Execution Status'}
                       </Text>
                       <View style={styles.chartLegend}>
-                        <View style={styles.legendChip}>
-                          <View style={[styles.legendBox, { backgroundColor: '#14532d' }]} />
-                          <Text style={styles.legendText}>Hit Target</Text>
-                        </View>
-                        <View style={styles.legendChip}>
-                          <View style={[styles.legendBox, { backgroundColor: '#86efac' }]} />
-                          <Text style={styles.legendText}>Improved</Text>
-                        </View>
-                        <View style={styles.legendChip}>
-                          <View style={[styles.legendBox, { backgroundColor: '#94a3b8' }]} />
-                          <Text style={styles.legendText}>No Imp.</Text>
-                        </View>
+                        {(reportData.statusDistributions || []).map(item => (
+                          <View key={item.status} style={styles.legendChip}>
+                            <View style={[styles.legendBox, { backgroundColor: item.color }]} />
+                            <Text style={styles.legendText}>
+                              {item.status} ({item.count})
+                            </Text>
+                          </View>
+                        ))}
                       </View>
                     </View>
 
                     <View style={styles.chartGrid}>
-                      {/* 4 Location Columns */}
-                      <View style={styles.barChartContainer}>
-                        {(reportData.locationImpacts || []).map(loc => (
-                          <View key={loc.location} style={styles.barGroup}>
-                            <View style={styles.barColumns}>
-                              <View
-                                style={[
-                                  styles.barCol,
-                                  {
-                                    height: Math.max(12, loc.improvedPercent * 1.05),
-                                    backgroundColor: '#86efac',
-                                  },
-                                ]}
-                              >
-                                <Text style={styles.barColLabel}>{loc.improvedPercent}%</Text>
-                              </View>
-                              <View
-                                style={[
-                                  styles.barCol,
-                                  {
-                                    height: Math.max(12, loc.hitTargetPercent * 1.25),
-                                    backgroundColor: '#14532d',
-                                  },
-                                ]}
-                              >
-                                <Text style={styles.barColLabel}>{loc.hitTargetPercent}%</Text>
-                              </View>
-                              <View
-                                style={[
-                                  styles.barCol,
-                                  {
-                                    height: Math.max(4, loc.noImprovementPercent * 5),
-                                    backgroundColor: '#94a3b8',
-                                  },
-                                ]}
-                              >
-                                <Text style={styles.barColLabel}>{loc.noImprovementPercent}%</Text>
-                              </View>
+                      {/* Real status bars */}
+                      <View style={styles.statusBarsContainer}>
+                        {(reportData.statusDistributions || []).map(item => (
+                          <View key={item.status} style={styles.statusBarRow}>
+                            <View style={styles.statusBarLabels}>
+                              <Text style={styles.statusBarStatusText}>{item.status}</Text>
+                              <Text style={styles.statusBarCountText}>
+                                {item.count} items ({item.percent}%)
+                              </Text>
                             </View>
-                            <Text style={styles.locationLabel}>{loc.location}</Text>
+                            <View style={styles.statusBarTrack}>
+                              <View
+                                style={[
+                                  styles.statusBarFill,
+                                  {
+                                    width: `${Math.max(4, item.percent)}%`,
+                                    backgroundColor: item.color,
+                                  },
+                                ]}
+                              />
+                            </View>
                           </View>
                         ))}
                       </View>
 
-                      {/* Overall Result Card */}
+                      {/* Overall Result Box */}
                       <View style={styles.overallResultCard}>
-                        <Text style={styles.overallResultTitle}>Overall Result</Text>
-                        <View style={styles.overallStatBlock}>
-                          <Text style={styles.overallStatNum}>
-                            {reportData.overallResult?.hitTarget || 19}%
-                          </Text>
-                          <Text style={styles.overallStatLabel}>Hit Target</Text>
-                        </View>
-                        <View style={styles.overallStatBlock}>
-                          <Text style={styles.overallStatNum}>
-                            {reportData.overallResult?.improved || 79}%
-                          </Text>
-                          <Text style={styles.overallStatLabel}>Improved but below target</Text>
-                        </View>
-                        <View style={styles.overallStatBlock}>
-                          <Text style={styles.overallStatNum}>
-                            {reportData.overallResult?.noImprovement || 2}%
-                          </Text>
-                          <Text style={styles.overallStatLabel}>No improvement</Text>
-                        </View>
+                        <Text style={styles.overallResultTitle}>Overall Status</Text>
+                        {reportData.overallResult ? (
+                          <>
+                            <View style={styles.overallStatBlock}>
+                              <Text style={styles.overallStatNum}>
+                                {reportData.overallResult.primaryPercent}%
+                              </Text>
+                              <Text style={styles.overallStatLabel}>
+                                {reportData.overallResult.primaryLabel}
+                              </Text>
+                            </View>
+                            <View style={styles.overallStatBlock}>
+                              <Text style={styles.overallStatNum}>
+                                {reportData.overallResult.secondaryPercent}%
+                              </Text>
+                              <Text style={styles.overallStatLabel}>
+                                {reportData.overallResult.secondaryLabel}
+                              </Text>
+                            </View>
+                            <View style={styles.overallStatBlock}>
+                              <Text style={styles.overallStatNum}>
+                                {reportData.overallResult.tertiaryPercent}%
+                              </Text>
+                              <Text style={styles.overallStatLabel}>
+                                {reportData.overallResult.tertiaryLabel}
+                              </Text>
+                            </View>
+                          </>
+                        ) : (
+                          <View style={styles.overallStatBlock}>
+                            <Text style={styles.overallStatNum}>{reportData.totalProjects}</Text>
+                            <Text style={styles.overallStatLabel}>Total Tracked</Text>
+                          </View>
+                        )}
                       </View>
                     </View>
                     <Text style={styles.chartFootnote}>
-                      *Based on height-for-age improvement of beneficiaries after 1 year in the program.
+                      {reportData.statusSectionSubtitle || '*Data derived strictly from live system records.'}
                     </Text>
                   </View>
                 </View>
@@ -588,7 +856,7 @@ export default function AnalyticsReportPreviewModal({
                   <View style={styles.sectionCard}>
                     <View style={styles.sectionHeader}>
                       <MaterialIcons name="star" size={18} color="#16a34a" />
-                      <Text style={styles.sectionTitle}>Project Highlights</Text>
+                      <Text style={styles.sectionTitle}>Execution Highlights</Text>
                     </View>
                     <View style={styles.highlightsList}>
                       {reportData.highlights.map((h, i) => (
@@ -606,7 +874,7 @@ export default function AnalyticsReportPreviewModal({
                   <View style={styles.sectionCard}>
                     <View style={styles.sectionHeader}>
                       <MaterialIcons name="description" size={18} color="#16a34a" />
-                      <Text style={styles.sectionTitle}>Report Documents</Text>
+                      <Text style={styles.sectionTitle}>Attached & Generated Documents</Text>
                     </View>
                     <View style={styles.docList}>
                       {(reportData.documents || []).map((doc, idx) => (
@@ -632,60 +900,53 @@ export default function AnalyticsReportPreviewModal({
                   </View>
                 </View>
 
-                {/* 6. Volunteer Photos Gallery */}
+                {/* 6. Volunteer Photos Gallery (REAL PHOTOS ONLY) */}
                 <View style={styles.photosSection}>
                   <View style={styles.photosHeader}>
                     <View style={styles.photosTitleRow}>
                       <MaterialIcons name="photo-camera" size={18} color="#14532d" />
-                      <Text style={styles.photosTitle}>Photos from Volunteers Report</Text>
+                      <Text style={styles.photosTitle}>Photos from Verified Submissions</Text>
                     </View>
                     <View style={styles.viewAllBadge}>
                       <Text style={styles.viewAllText}>
-                        View All Photos ({reportData.photos.length || 24})
+                        Photos ({reportData.photos.length})
                       </Text>
                     </View>
                   </View>
 
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photoRow}>
-                    {reportData.photos.map((p, index) => {
-                      const photoObj =
-                        typeof p === 'string'
-                          ? {
-                              uri: p,
-                              volunteerName: 'Maria Santos',
-                              date: 'Aug 14, 2026',
-                              photoCount: 4,
-                            }
-                          : p;
-
-                      return (
+                  {reportData.photos.length > 0 ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photoRow}>
+                      {reportData.photos.map((p, index) => (
                         <View key={index} style={styles.photoCard}>
                           <Image
-                            source={{
-                              uri:
-                                photoObj.uri ||
-                                'https://images.unsplash.com/photo-1593113598332-cd288d649433?w=500&auto=format&fit=crop&q=80',
-                            }}
+                            source={{ uri: p.uri }}
                             style={styles.photoThumb}
                             resizeMode="cover"
                           />
                           <View style={styles.photoOverlay}>
                             <View style={{ flex: 1 }}>
-                              <Text style={styles.photoDate}>{photoObj.date}</Text>
+                              <Text style={styles.photoDate}>{p.date}</Text>
                               <Text style={styles.photoVolunteer} numberOfLines={1}>
-                                {photoObj.volunteerName}
+                                {p.volunteerName}
                               </Text>
                             </View>
-                            <View style={styles.photoCountPill}>
-                              <Text style={styles.photoCountText}>
-                                {photoObj.photoCount || 4} photos
-                              </Text>
-                            </View>
+                            {p.photoCount ? (
+                              <View style={styles.photoCountPill}>
+                                <Text style={styles.photoCountText}>{p.photoCount} photos</Text>
+                              </View>
+                            ) : null}
                           </View>
                         </View>
-                      );
-                    })}
-                  </ScrollView>
+                      ))}
+                    </ScrollView>
+                  ) : (
+                    <View style={styles.emptyPhotosContainer}>
+                      <MaterialIcons name="no-photography" size={24} color="#94a3b8" />
+                      <Text style={styles.emptyPhotosText}>
+                        No volunteer field photos uploaded in system records for this report.
+                      </Text>
+                    </View>
+                  )}
                 </View>
 
                 {/* 7. Footer */}
@@ -703,7 +964,7 @@ export default function AnalyticsReportPreviewModal({
             )}
           </ScrollView>
 
-          {/* BOTTOM MODAL CONTROLS */}
+          {/* BOTTOM CONTROLS */}
           <View style={styles.bottomBar}>
             <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
               <Text style={styles.cancelBtnText}>Close</Text>
@@ -792,30 +1053,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  scopeSelector: {
-    flexDirection: 'row',
-    backgroundColor: '#f1f5f9',
-    borderRadius: 8,
-    padding: 3,
-    gap: 4,
-  },
-  scopeBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-  },
-  scopeBtnActive: {
-    backgroundColor: '#166534',
-  },
-  scopeBtnText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  scopeBtnTextActive: {
-    color: '#ffffff',
-    fontWeight: '700',
-  },
   viewToggleGroup: {
     flexDirection: 'row',
     backgroundColor: '#f1f5f9',
@@ -859,6 +1096,51 @@ const styles = StyleSheet.create({
   closeBtn: {
     padding: 4,
   },
+
+  /* SCOPE SELECTOR STRIP */
+  scopeStrip: {
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  scopeStripLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  scopeScroll: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  scopeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    maxWidth: 220,
+  },
+  scopeChipActive: {
+    backgroundColor: '#166534',
+  },
+  scopeChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  scopeChipTextActive: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+
   previewScroll: {
     padding: 20,
     alignItems: 'center',
@@ -868,7 +1150,6 @@ const styles = StyleSheet.create({
     maxWidth: 960,
     backgroundColor: '#ffffff',
     borderRadius: 12,
-    boxShadow: '0 4px 14px rgba(0,0,0,0.08)',
   },
 
   /* REPORT SHEET NATIVE DESIGN */
@@ -919,7 +1200,7 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   reportCategoryTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '800',
     color: '#1e293b',
     letterSpacing: 0.5,
@@ -944,12 +1225,12 @@ const styles = StyleSheet.create({
     gap: 20,
   },
   heroSubtitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#16a34a',
   },
   heroTitle: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '800',
     color: '#14532d',
     marginTop: 2,
@@ -980,6 +1261,28 @@ const styles = StyleSheet.create({
     height: 110,
     borderRadius: 14,
   },
+  heroBrandPlaceholder: {
+    width: 200,
+    height: 110,
+    borderRadius: 14,
+    backgroundColor: '#14532d',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+  },
+  heroBrandText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#86efac',
+    textAlign: 'center',
+  },
+  heroBrandSub: {
+    fontSize: 10,
+    fontWeight: '500',
+    color: '#dcfce7',
+    textAlign: 'center',
+    marginTop: 4,
+  },
 
   /* 5 KPI CARDS */
   kpiRow: {
@@ -1008,7 +1311,7 @@ const styles = StyleSheet.create({
     color: '#475569',
   },
   kpiNum: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '800',
     color: '#0f172a',
     marginVertical: 2,
@@ -1037,8 +1340,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#475569',
   },
+  sectorEmptyText: {
+    fontSize: 9,
+    color: '#94a3b8',
+    marginTop: 4,
+  },
 
-  /* IMPACT SECTION */
+  /* IMPACT & STATUS SECTION */
   impactBox: {
     paddingHorizontal: 28,
     paddingBottom: 16,
@@ -1077,7 +1385,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 12,
     flexWrap: 'wrap',
     gap: 8,
   },
@@ -1089,6 +1397,7 @@ const styles = StyleSheet.create({
   chartLegend: {
     flexDirection: 'row',
     gap: 10,
+    flexWrap: 'wrap',
   },
   legendChip: {
     flexDirection: 'row',
@@ -1110,47 +1419,39 @@ const styles = StyleSheet.create({
     gap: 16,
     alignItems: 'center',
   },
-  barChartContainer: {
+  statusBarsContainer: {
     flex: 1,
+    gap: 8,
+  },
+  statusBarRow: {
+    gap: 3,
+  },
+  statusBarLabels: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    height: 140,
-    borderBottomWidth: 1,
-    borderBottomColor: '#cbd5e1',
-    alignItems: 'flex-end',
-    paddingBottom: 6,
+    justifyContent: 'space-between',
   },
-  barGroup: {
-    alignItems: 'center',
-    height: '100%',
-    justifyContent: 'flex-end',
-  },
-  barColumns: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 4,
-    height: 110,
-  },
-  barCol: {
-    width: 16,
-    borderRadius: 3,
-    alignItems: 'center',
-  },
-  barColLabel: {
-    fontSize: 8,
-    fontWeight: '700',
+  statusBarStatusText: {
+    fontSize: 10,
+    fontWeight: '600',
     color: '#334155',
-    position: 'absolute',
-    top: -14,
   },
-  locationLabel: {
+  statusBarCountText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#334155',
-    marginTop: 6,
+    color: '#64748b',
+  },
+  statusBarTrack: {
+    height: 10,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 5,
+    overflow: 'hidden',
+  },
+  statusBarFill: {
+    height: '100%',
+    borderRadius: 5,
   },
   overallResultCard: {
-    width: 160,
+    width: 170,
     backgroundColor: '#14532d',
     borderRadius: 8,
     padding: 12,
@@ -1179,7 +1480,6 @@ const styles = StyleSheet.create({
     fontSize: 8,
     color: '#94a3b8',
     marginTop: 6,
-    fontStyle: 'italic',
   },
 
   /* TWO COLUMNS */
@@ -1349,6 +1649,22 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0f172a',
   },
+  emptyPhotosContainer: {
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderStyle: 'dashed',
+    gap: 6,
+  },
+  emptyPhotosText: {
+    fontSize: 11,
+    color: '#64748b',
+    textAlign: 'center',
+  },
 
   /* FOOTER */
   sheetFooter: {
@@ -1374,7 +1690,7 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
 
-  /* MODAL BOTTOM BAR */
+  /* BOTTOM BAR */
   bottomBar: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
