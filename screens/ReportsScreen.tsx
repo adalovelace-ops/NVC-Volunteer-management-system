@@ -928,7 +928,17 @@ export default function ReportsScreen({ navigation, route }: any) {
   }, []);
 
   const userReports = useMemo(
-    () => (user?.role === 'admin' ? reports : reports.filter(report => report.submittedBy === user?.id)),
+    () => {
+      if (user?.role === 'admin') return reports;
+      if (user?.role === 'partner') {
+        return reports.filter(
+          report =>
+            report.submitterRole === 'partner' &&
+            (report.submittedBy === user?.id || (report as any).partnerUserId === user?.id)
+        );
+      }
+      return reports.filter(report => report.submittedBy === user?.id && report.submitterRole === 'volunteer');
+    },
     [reports, user?.id, user?.role]
   );
 
@@ -1005,28 +1015,26 @@ export default function ReportsScreen({ navigation, route }: any) {
   }, []);
 
   const dashboard = (() => {
-    if (activeTopTab === 'all') {
-      return <AllReportsView reports={reports} projects={projects} volunteerTimeLogs={volunteerTimeLogs} volunteers={volunteers} onViewReport={handleViewReport} reportType="all" />;
+    if (user?.role === 'partner') {
+      return (
+        <PartnerReportsDashboard
+          reports={userReports}
+          projects={partnerAcceptedProjects}
+          volunteerTimeLogs={volunteerTimeLogs}
+          volunteerJoinRecords={volunteerJoinRecords}
+          onUploadReport={handleOpenUploadModal}
+          onViewReport={handleViewReport}
+          loading={loading}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+          projectSummaries={partnerProjectSummaries}
+          isAdminView={false}
+          volunteers={volunteers}
+        />
+      );
     }
-    if (activeTopTab === 'volunteer') {
-      if (user?.role === 'admin') {
-        const volunteerOnly = reports.filter(r => r.submitterRole === 'volunteer');
-        return (
-          <VolunteerReportsDashboard
-            reports={volunteerOnly}
-            projects={projects}
-            volunteerTimeLogs={volunteerTimeLogs}
-            volunteerJoinRecords={volunteerJoinRecords}
-            onUploadReport={handleOpenUploadModal}
-            onViewReport={handleViewReport}
-            loading={loading}
-            onRefresh={onRefresh}
-            refreshing={refreshing}
-            isAdminView={true}
-            volunteers={volunteers}
-          />
-        );
-      }
+
+    if (user?.role === 'volunteer') {
       return (
         <VolunteerReportsDashboard
           reports={userReports}
@@ -1042,12 +1050,35 @@ export default function ReportsScreen({ navigation, route }: any) {
         />
       );
     }
+
+    // Admin View with Top Tabs
+    if (activeTopTab === 'all') {
+      return <AllReportsView reports={reports} projects={projects} volunteerTimeLogs={volunteerTimeLogs} volunteers={volunteers} onViewReport={handleViewReport} reportType="all" />;
+    }
+    if (activeTopTab === 'volunteer') {
+      const volunteerOnly = reports.filter(r => r.submitterRole === 'volunteer');
+      return (
+        <VolunteerReportsDashboard
+          reports={volunteerOnly}
+          projects={projects}
+          volunteerTimeLogs={volunteerTimeLogs}
+          volunteerJoinRecords={volunteerJoinRecords}
+          onUploadReport={handleOpenUploadModal}
+          onViewReport={handleViewReport}
+          loading={loading}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+          isAdminView={true}
+          volunteers={volunteers}
+        />
+      );
+    }
     if (activeTopTab === 'partner') {
       const partnerOnly = reports.filter(r => r.submitterRole === 'partner');
       return (
         <PartnerReportsDashboard
-          reports={user?.role === 'admin' ? (partnerOnly.length > 0 ? partnerOnly : reports) : userReports}
-          projects={user?.role === 'admin' ? projects : partnerAcceptedProjects}
+          reports={partnerOnly}
+          projects={projects}
           volunteerTimeLogs={volunteerTimeLogs}
           volunteerJoinRecords={volunteerJoinRecords}
           onUploadReport={handleOpenUploadModal}
@@ -1056,71 +1087,47 @@ export default function ReportsScreen({ navigation, route }: any) {
           onRefresh={onRefresh}
           refreshing={refreshing}
           projectSummaries={partnerProjectSummaries}
-          isAdminView={user?.role === 'admin'}
+          isAdminView={true}
           volunteers={volunteers}
         />
       );
     }
-    // fallback by role (should not reach due to tabs)
-    if (user?.role === 'admin') {
-      return (
-        <AdminReportsDashboard
-          reports={userReports}
-          projects={projects}
-          volunteers={volunteers}
-          onUploadReport={handleOpenUploadModal}
-          onViewReport={handleViewReport}
-          onViewAnalytics={handleViewAnalytics}
-          loading={loading}
-          onRefresh={onRefresh}
-          refreshing={refreshing}
-        />
-      );
-    }
-    if (user?.role === 'partner') {
-      return (
-        <PartnerReportsDashboard
-          reports={userReports}
-          projects={partnerAcceptedProjects}
-          onUploadReport={handleOpenUploadModal}
-          onViewReport={handleViewReport}
-          loading={loading}
-          onRefresh={onRefresh}
-          refreshing={refreshing}
-          projectSummaries={partnerProjectSummaries}
-        />
-      );
-    }
+
     return (
-      <VolunteerReportsDashboard
+      <AdminReportsDashboard
         reports={userReports}
-        projects={volunteerEventProjects}
-        volunteerTimeLogs={volunteerTimeLogs}
-        volunteerJoinRecords={volunteerJoinRecords}
+        projects={projects}
+        volunteers={volunteers}
         onUploadReport={handleOpenUploadModal}
         onViewReport={handleViewReport}
+        onViewAnalytics={handleViewAnalytics}
         loading={loading}
         onRefresh={onRefresh}
         refreshing={refreshing}
-        volunteers={volunteers}
       />
     );
   })();
 
-  const renderTopTabs = () => (
-    <View style={styles.topTabs}>
-      {(['all', 'volunteer', 'partner'] as const).map(k => {
-        const label = k === 'all' ? 'All Reports' : k === 'volunteer' ? 'Volunteer Reports' : 'Partner Reports';
-        const active = activeTopTab === k;
-        return (
-          <TouchableOpacity key={k} style={[styles.topTab, active && styles.topTabActive]} onPress={() => setActiveTopTab(k)} activeOpacity={0.8}>
-            <Text style={[styles.topTabText, active && styles.topTabTextActive]}>{label}</Text>
-            {active ? <View style={styles.topTabUnderline} /> : null}
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
+  const renderTopTabs = () => {
+    if (user?.role !== 'admin') {
+      return null;
+    }
+
+    return (
+      <View style={styles.topTabs}>
+        {(['all', 'volunteer', 'partner'] as const).map(k => {
+          const label = k === 'all' ? 'All Reports' : k === 'volunteer' ? 'Volunteer Reports' : 'Partner Reports';
+          const active = activeTopTab === k;
+          return (
+            <TouchableOpacity key={k} style={[styles.topTab, active && styles.topTabActive]} onPress={() => setActiveTopTab(k)} activeOpacity={0.8}>
+              <Text style={[styles.topTabText, active && styles.topTabTextActive]}>{label}</Text>
+              {active ? <View style={styles.topTabUnderline} /> : null}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    );
+  };
 
   return (
     <>
