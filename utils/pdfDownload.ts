@@ -1,6 +1,8 @@
 import { Alert, Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 
 function sanitizeFilename(filename: string): string {
   return filename.replace(/[\\/:*?"<>|]+/g, '-');
@@ -161,5 +163,24 @@ export async function downloadPdfFile(
     }
     console.error('Unable to save PDF:', error);
     Alert.alert('Download Failed', fallbackMessage);
+  }
+}
+
+export async function downloadHtmlPdf(filename: string, htmlContent: string) {
+  try {
+    const { uri } = await Print.printToFileAsync({ html: htmlContent });
+    if (Platform.OS === 'web') {
+      window.open(uri);
+    } else {
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
+      } else {
+        Alert.alert('Sharing not available', 'Cannot share or save this PDF on your device.');
+      }
+    }
+  } catch (error) {
+    console.error('Error generating PDF', error);
+    Alert.alert('Error', 'Could not generate PDF from template.');
   }
 }

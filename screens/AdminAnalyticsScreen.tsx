@@ -25,7 +25,8 @@ import {
 } from '../models/storage';
 import type { Partner, PartnerProjectApplication, PartnerReport, Project, Volunteer, VolunteerProjectJoinRecord, VolunteerTimeLog } from '../models/types';
 import ModernTheme from '../utils/modernTheme';
-import { buildTextPdf, downloadPdfFile } from '../utils/pdfDownload';
+import { buildTextPdf, downloadPdfFile, downloadHtmlPdf } from '../utils/pdfDownload';
+import { generateReportHtml, ReportTemplateData } from '../utils/pdfReportTemplate';
 
 type MonthPoint = {
   key: string;
@@ -795,6 +796,41 @@ export default function AdminAnalyticsScreen() {
     }
   };
 
+  const handleGenerateVisualReport = async () => {
+    setIsExporting(true);
+    try {
+      // Gather system data for the visual report
+      const recentReports = reports
+        .filter(r => r.mediaFile && r.mediaFile.trim() !== '')
+        .slice(0, 4)
+        .map(r => r.mediaFile!);
+        
+      const highlights = projects
+        .filter(p => p.isEvent && p.title)
+        .slice(0, 5)
+        .map(p => `Conducted event: ${p.title}`);
+        
+      const data: ReportTemplateData = {
+        title: 'Organization Impact Overview',
+        period: `Q${Math.floor(new Date().getMonth() / 3) + 1} ${new Date().getFullYear()}`,
+        submittedOn: new Date().toLocaleDateString(),
+        submittedBy: 'System Administrator',
+        totalProjects: projects.filter(p => !p.isEvent).length,
+        eventsConducted: projects.filter(p => p.isEvent).length,
+        volunteersInvolved: volunteers.length,
+        highlights: highlights.length > 0 ? highlights : ['No events conducted recently.'],
+        photos: recentReports
+      };
+
+      const html = generateReportHtml(data);
+      await downloadHtmlPdf(`Visual_Report_${new Date().toISOString().slice(0, 10)}.pdf`, html);
+    } catch (error: any) {
+      Alert.alert('Export Failed', error?.message || 'Unable to generate visual PDF report.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const cancelHoverClear = useCallback(() => {
     if (hoverClearTimeoutRef.current) {
       clearTimeout(hoverClearTimeoutRef.current);
@@ -847,17 +883,29 @@ export default function AdminAnalyticsScreen() {
             <Text style={styles.screenHeaderTitle}>System Analytics & Impact</Text>
             <Text style={styles.screenHeaderSubtitle}>Real-time metrics, growth trajectory, and organization reports</Text>
           </View>
-          <TouchableOpacity
-            style={styles.exportPdfButton}
-            onPress={() => {
-              setSelectedExportSection('all');
-              setShowExportModal(true);
-            }}
-            activeOpacity={0.85}
-          >
-            <MaterialIcons name="picture-as-pdf" size={18} color="#ffffff" style={{ marginRight: 8 }} />
-            <Text style={styles.exportPdfButtonText}>Generate PDF Report</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              style={[styles.exportPdfButton, { backgroundColor: '#0f766e' }]}
+              onPress={handleGenerateVisualReport}
+              activeOpacity={0.85}
+              disabled={isExporting}
+            >
+              <MaterialIcons name="dashboard" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+              <Text style={styles.exportPdfButtonText}>Visual Report</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.exportPdfButton}
+              onPress={() => {
+                setSelectedExportSection('all');
+                setShowExportModal(true);
+              }}
+              activeOpacity={0.85}
+              disabled={isExporting}
+            >
+              <MaterialIcons name="picture-as-pdf" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+              <Text style={styles.exportPdfButtonText}>Text Report</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.chartCard}>
