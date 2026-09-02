@@ -25,8 +25,9 @@ import {
 } from '../models/storage';
 import type { Partner, PartnerProjectApplication, PartnerReport, Project, Volunteer, VolunteerProjectJoinRecord, VolunteerTimeLog } from '../models/types';
 import ModernTheme from '../utils/modernTheme';
-import { buildTextPdf, downloadPdfFile, downloadHtmlPdf } from '../utils/pdfDownload';
-import { generateReportHtml, ReportTemplateData } from '../utils/pdfReportTemplate';
+import { buildTextPdf, downloadPdfFile } from '../utils/pdfDownload';
+import { useAuth } from '../contexts/AuthContext';
+import ExecutiveReportCardPreviewModal from '../components/ExecutiveReportCardPreviewModal';
 
 type MonthPoint = {
   key: string;
@@ -641,6 +642,7 @@ function generateAnalyticsPdf(
 
 export default function AdminAnalyticsScreen() {
   const { width } = useWindowDimensions();
+  const { user } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [volunteers, setVolunteers] = useState<Volunteer[]>([]);
   const [timeLogs, setTimeLogs] = useState<VolunteerTimeLog[]>([]);
@@ -760,6 +762,8 @@ export default function AdminAnalyticsScreen() {
   const hoverClearTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showExecutiveCardPreview, setShowExecutiveCardPreview] = useState(false);
+  const [cardPreviewProjectId, setCardPreviewProjectId] = useState<string>('all');
   const [selectedExportSection, setSelectedExportSection] = useState<AnalyticsReportSection>('all');
   const [isExporting, setIsExporting] = useState(false);
 
@@ -791,41 +795,6 @@ export default function AdminAnalyticsScreen() {
       }
     } catch (error: any) {
       Alert.alert('Export Failed', error?.message || 'Unable to generate analytics PDF report.');
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const handleGenerateVisualReport = async () => {
-    setIsExporting(true);
-    try {
-      // Gather system data for the visual report
-      const recentReports = reports
-        .filter(r => r.mediaFile && r.mediaFile.trim() !== '')
-        .slice(0, 4)
-        .map(r => r.mediaFile!);
-        
-      const highlights = projects
-        .filter(p => p.isEvent && p.title)
-        .slice(0, 5)
-        .map(p => `Conducted event: ${p.title}`);
-        
-      const data: ReportTemplateData = {
-        title: 'Organization Impact Overview',
-        period: `Q${Math.floor(new Date().getMonth() / 3) + 1} ${new Date().getFullYear()}`,
-        submittedOn: new Date().toLocaleDateString(),
-        submittedBy: 'System Administrator',
-        totalProjects: projects.filter(p => !p.isEvent).length,
-        eventsConducted: projects.filter(p => p.isEvent).length,
-        volunteersInvolved: volunteers.length,
-        highlights: highlights.length > 0 ? highlights : ['No events conducted recently.'],
-        photos: recentReports
-      };
-
-      const html = generateReportHtml(data);
-      await downloadHtmlPdf(`Visual_Report_${new Date().toISOString().slice(0, 10)}.pdf`, html);
-    } catch (error: any) {
-      Alert.alert('Export Failed', error?.message || 'Unable to generate visual PDF report.');
     } finally {
       setIsExporting(false);
     }
@@ -883,16 +852,19 @@ export default function AdminAnalyticsScreen() {
             <Text style={styles.screenHeaderTitle}>System Analytics & Impact</Text>
             <Text style={styles.screenHeaderSubtitle}>Real-time metrics, growth trajectory, and organization reports</Text>
           </View>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <TouchableOpacity
-              style={[styles.exportPdfButton, { backgroundColor: '#0f766e' }]}
-              onPress={handleGenerateVisualReport}
+              style={styles.executiveCardPdfButton}
+              onPress={() => {
+                setCardPreviewProjectId('all');
+                setShowExecutiveCardPreview(true);
+              }}
               activeOpacity={0.85}
-              disabled={isExporting}
             >
-              <MaterialIcons name="dashboard" size={18} color="#ffffff" style={{ marginRight: 8 }} />
-              <Text style={styles.exportPdfButtonText}>Visual Report</Text>
+              <MaterialIcons name="dashboard-customize" size={18} color="#ffffff" style={{ marginRight: 8 }} />
+              <Text style={styles.executiveCardPdfButtonText}>NVC Report Card (Preview & PDF)</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.exportPdfButton}
               onPress={() => {
@@ -900,10 +872,9 @@ export default function AdminAnalyticsScreen() {
                 setShowExportModal(true);
               }}
               activeOpacity={0.85}
-              disabled={isExporting}
             >
               <MaterialIcons name="picture-as-pdf" size={18} color="#ffffff" style={{ marginRight: 8 }} />
-              <Text style={styles.exportPdfButtonText}>Text Report</Text>
+              <Text style={styles.exportPdfButtonText}>Export Raw Data PDF</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1385,6 +1356,17 @@ export default function AdminAnalyticsScreen() {
                         </View>
                       </View>
                       <View style={styles.projectTrackingStats}>
+                        <TouchableOpacity
+                          style={styles.cardExportIconBtn}
+                          onPress={() => {
+                            setCardPreviewProjectId(project.id);
+                            setShowExecutiveCardPreview(true);
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <MaterialIcons name="dashboard-customize" size={13} color="#166534" />
+                          <Text style={styles.cardExportIconText}>Card PDF</Text>
+                        </TouchableOpacity>
                         <View style={styles.projectStatBadge}>
                           <MaterialIcons name="people" size={14} color={ModernTheme.colors.primary[700]} />
                           <Text style={styles.projectStatText}>{project.volunteers?.length || 0}</Text>
@@ -1436,6 +1418,33 @@ export default function AdminAnalyticsScreen() {
                 <MaterialIcons name="close" size={22} color="#64748b" />
               </TouchableOpacity>
             </View>
+
+            {/* EXECUTIVE REPORT CARD BANNER OPTION */}
+            <TouchableOpacity
+              style={styles.executiveModalPromoBanner}
+              onPress={() => {
+                setShowExportModal(false);
+                setCardPreviewProjectId('all');
+                setShowExecutiveCardPreview(true);
+              }}
+              activeOpacity={0.8}
+            >
+              <View style={styles.promoIconWrap}>
+                <MaterialIcons name="eco" size={22} color="#16a34a" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={styles.promoTitle}>NVC Executive Report Card</Text>
+                  <View style={styles.promoBadge}>
+                    <Text style={styles.promoBadgeText}>Official Template</Text>
+                  </View>
+                </View>
+                <Text style={styles.promoDesc}>
+                  Visual executive dashboard with photos, donut sector breakdown, Negros location bar chart, and project highlights.
+                </Text>
+              </View>
+              <MaterialIcons name="chevron-right" size={20} color="#166534" />
+            </TouchableOpacity>
 
             <View style={styles.reportOptionsList}>
               {[
@@ -1524,6 +1533,20 @@ export default function AdminAnalyticsScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* EXECUTIVE REPORT CARD PREVIEW & PDF DOWNLOAD MODAL */}
+      <ExecutiveReportCardPreviewModal
+        visible={showExecutiveCardPreview}
+        onClose={() => setShowExecutiveCardPreview(false)}
+        projects={projects}
+        volunteers={volunteers}
+        timeLogs={timeLogs}
+        partners={partners}
+        joinRecords={volunteerJoinRecords}
+        partnerReports={reports}
+        currentUser={user ? { name: user.name, role: user.role } : undefined}
+        initialProjectId={cardPreviewProjectId}
+      />
     </View>
   );
 }
@@ -2210,22 +2233,83 @@ const styles = StyleSheet.create({
     color: '#64748b',
     marginTop: 2,
   },
-  exportPdfButton: {
+  executiveCardPdfButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#166534',
+    backgroundColor: '#15803d',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 10,
-    shadowColor: '#166534',
+    shadowColor: '#15803d',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.22,
+    shadowRadius: 5,
+    elevation: 4,
+  },
+  executiveCardPdfButtonText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  exportPdfButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#334155',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    shadowColor: '#334155',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 4,
     elevation: 3,
   },
   exportPdfButtonText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
+    color: '#ffffff',
+  },
+  executiveModalPromoBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1.5,
+    borderColor: '#86efac',
+    gap: 12,
+    marginBottom: 14,
+  },
+  promoIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  promoTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#14532d',
+  },
+  promoDesc: {
+    fontSize: 11,
+    color: '#334155',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  promoBadge: {
+    backgroundColor: '#166534',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  promoBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
     color: '#ffffff',
   },
   cardExportIconBtn: {
