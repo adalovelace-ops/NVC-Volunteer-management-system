@@ -35,6 +35,7 @@ import { debounce } from '../utils/navigation';
 type VolunteerNavProp = BottomTabNavigationProp<VolunteerTabParamList>;
 
 function isVolunteerOpportunityOpen(project: Project): boolean {
+  if (project.isDraft) return false;
   const status = getProjectDisplayStatus(project);
   return status !== 'Completed' && status !== 'Cancelled';
 }
@@ -107,7 +108,7 @@ export default function VolunteerDashboardScreen() {
 
   // Google Calendar Integration states
   const [calendarSettings, setCalendarSettings] = useState({
-    calendarId: 'en.philippines#holiday@group.v.calendar.google.com',
+    calendarId: 'nvc4090@gmail.com',
     apiKey: process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '',
   });
   const [googleEvents, setGoogleEvents] = useState<any[]>([]);
@@ -119,12 +120,14 @@ export default function VolunteerDashboardScreen() {
       try {
         const storedId = await AsyncStorage.getItem('gcal_id');
         const storedKey = await AsyncStorage.getItem('gcal_key');
-        if (storedId || storedKey) {
-          setCalendarSettings({
-            calendarId: storedId || 'en.philippines#holiday@group.v.calendar.google.com',
-            apiKey: storedKey || process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '',
-          });
-        }
+        const effectiveId =
+          !storedId || storedId === 'en.philippines#holiday@group.v.calendar.google.com'
+            ? 'nvc4090@gmail.com'
+            : storedId;
+        setCalendarSettings({
+          calendarId: effectiveId,
+          apiKey: storedKey || process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '',
+        });
       } catch (err) {
         console.error('Failed to load Google Calendar settings:', err);
       }
@@ -198,14 +201,9 @@ export default function VolunteerDashboardScreen() {
     }
   }, [user]);
 
-  const isLoaded = useRef(false);
-
   useFocusEffect(
     React.useCallback(() => {
-      if (!isLoaded.current) {
-        void loadDashboardData(true);
-        isLoaded.current = true;
-      }
+      void loadDashboardData(true);
 
       return subscribeToStorageChanges(
         [
@@ -217,9 +215,9 @@ export default function VolunteerDashboardScreen() {
           'adminPlanningCalendars',
           'programTracks',
         ],
-        debounce(() => {
-          void loadDashboardData();
-        }, 1000)
+        () => {
+          void loadDashboardData(true);
+        }
       );
     }, [loadDashboardData])
   );
@@ -262,7 +260,11 @@ export default function VolunteerDashboardScreen() {
   }, [firstDayIndex, daysInMonth]);
 
   const getDayStatus = (dayNum: number) => {
-    const isToday = year === 2026 && month === 6 && dayNum === 27; // Mock today as Jul 27
+    const now = new Date();
+    const isToday =
+      now.getFullYear() === year &&
+      now.getMonth() === month &&
+      now.getDate() === dayNum;
     
     // Check if day has a project or timeline planning item
     const hasTimeline = planningItems.some(item => {
@@ -276,13 +278,13 @@ export default function VolunteerDashboardScreen() {
     });
 
     const hasProject = projects.some(proj => {
-      if (!proj.startDate) return false;
-      const projDate = new Date(proj.startDate);
-      return (
-        projDate.getFullYear() === year &&
-        projDate.getMonth() === month &&
-        projDate.getDate() === dayNum
-      );
+      if (!proj.startDate || proj.isDraft) return false;
+      const start = new Date(proj.startDate);
+      const end = proj.endDate ? new Date(proj.endDate) : start;
+      const currentDay = new Date(year, month, dayNum);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      return currentDay >= start && currentDay <= end;
     });
 
     const hasGoogleEvent = getGoogleEventsForDay(dayNum, month, year, googleEvents).length > 0;
@@ -301,89 +303,209 @@ export default function VolunteerDashboardScreen() {
     setCurrentDate(new Date(year, month + 1, 1));
   };
 
-  // Timeline list merging database + gcal + mockup fallbacks
+  // Timeline list merging database projects/events + gcal + planning items
   const displayTimeline = useMemo(() => {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+
+    const joinedSet = new Set([
+      ...(volunteerProfile?.joinedProjectIds || []),
+      ...(volunteerProfile?.joinedEventIds || []),
+    ]);
+
+    const validParentIds = new Set(projects.map(p => p.id));
+    // Real events from database (only show valid events for volunteers)
+    const realProjectsAndEvents = projects
+      .filter(p => !p.isDraft && p.startDate && Boolean(p.isEvent) && (!p.parentProjectId || validParentIds.has(p.parentProjectId)))
+      .map(p => ({
+        id: p.id,
+        startDate: p.startDate,
+        endDate: p.endDate,
+        title: p.title,
+        type: 'event' as const,
+        isEvent: true,
+        isJoined: joinedSet.has(p.id),
+        category: p.category || 'General',
+        htmlLink: undefined as string | undefined,
+        projectId: p.id,
+      }));
+
+    // Real planning items
     const realTimeline = planningItems
       .filter(item => item.startDate)
       .map(item => ({
         id: item.id,
         startDate: item.startDate,
+        endDate: item.endDate,
         title: item.title,
-        htmlLink: undefined,
+        type: 'planning' as const,
+        isEvent: false,
+        isJoined: false,
+        category: item.category || 'Planning',
+        htmlLink: undefined as string | undefined,
+        projectId: undefined as string | undefined,
       }));
 
+    // Google calendar events
     const googleTimeline = googleEvents.map(event => ({
       id: `google-${event.id}`,
       startDate: event.start?.dateTime || event.start?.date || '',
+      endDate: event.end?.dateTime || event.end?.date,
       title: event.summary || 'Google Calendar Event',
+      type: 'gcal' as const,
+      isEvent: false,
+      isJoined: false,
+      category: 'Calendar',
       htmlLink: event.htmlLink,
+      projectId: undefined as string | undefined,
     }));
 
-    const combined = [...realTimeline, ...googleTimeline]
-      .filter(item => item.startDate)
-      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
-      .slice(0, 5);
+    const combined = [...realProjectsAndEvents, ...realTimeline, ...googleTimeline]
+      .filter(item => item.startDate && !Number.isNaN(new Date(item.startDate).getTime()));
 
-    if (combined.length > 0) return combined;
+    // Filter upcoming (ending today or in the future)
+    const upcoming = combined
+      .filter(item => {
+        const itemEnd = item.endDate ? new Date(item.endDate) : new Date(item.startDate);
+        return !Number.isNaN(itemEnd.getTime()) && itemEnd >= now;
+      })
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
 
-    // Mock timeline as fallback
-    return [
-      { id: 't-1', startDate: '2026-07-07', title: 'Feeding program site visit, Iloilo', htmlLink: undefined },
-      { id: 't-2', startDate: '2026-07-15', title: 'Volunteer orientation, new intake', htmlLink: undefined },
-      { id: 't-3', startDate: '2026-07-23', title: 'Livelihood workshop, Bacolod chapter', htmlLink: undefined },
-      { id: 't-4', startDate: '2026-07-29', title: 'Admin timeline review, Q3 planning', htmlLink: undefined },
-    ];
-  }, [planningItems, googleEvents]);
+    if (upcoming.length > 0) {
+      return upcoming.slice(0, 6);
+    }
+
+    // If no upcoming items, show most recent published items sorted newest-first
+    return combined
+      .sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime())
+      .slice(0, 6);
+  }, [projects, volunteerProfile, planningItems, googleEvents]);
 
   const formatTimelineDate = (dateStr?: string) => {
     if (!dateStr) return '';
     const d = new Date(dateStr);
     if (Number.isNaN(d.getTime())) return dateStr;
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const currentYear = new Date().getFullYear();
+    if (d.getFullYear() !== currentYear) {
+      return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+    }
     return `${months[d.getMonth()]} ${d.getDate()}`;
   };
 
-  // Projects list merging database + mockup fallbacks
+const convertPlanningItemToProjectEvent = (
+  item: AdminPlanningItem
+): Project => {
+  let category: Project['category'] = (item.category as any) || 'Nutrition';
+  let volunteersNeeded = 20;
+  if (item.participantsLabel) {
+    const match = item.participantsLabel.match(/(\d+)/);
+    if (match) {
+      volunteersNeeded = parseInt(match[1], 10);
+    }
+  }
+
+  return {
+    id: item.id,
+    title: item.title,
+    description: item.description || '',
+    partnerId: 'system',
+    imageUrl: undefined,
+    imageHidden: true,
+    programModule: category as any,
+    isEvent: true,
+    status: 'In Progress',
+    category,
+    startDate: item.startDate,
+    endDate: item.endDate,
+    location: {
+      latitude: 10.3157,
+      longitude: 123.8854,
+      address: item.location || 'Bacolod City, Philippines',
+    },
+    volunteersNeeded,
+    volunteers: [],
+    joinedUserIds: [],
+    skillsNeeded: [],
+    communityNeed: '',
+    expectedDeliverables: '',
+    createdAt: item.createdAt || new Date().toISOString(),
+    updatedAt: item.updatedAt || new Date().toISOString(),
+    statusUpdates: [],
+  };
+};
+
+const convertGoogleEventToProjectEvent = (event: any): Project => {
+  const title = event.summary || 'Google Calendar Event';
+  const description = event.description || '';
+  const id = `gcal-${event.id}`;
+  
+  let category: Project['category'] = 'Nutrition';
+  const titleLower = title.toLowerCase();
+  const descLower = description.toLowerCase();
+  if (titleLower.includes('education') || descLower.includes('education')) category = 'Education';
+  else if (titleLower.includes('livelihood') || descLower.includes('livelihood')) category = 'Livelihood';
+  else if (titleLower.includes('disaster') || descLower.includes('disaster') || titleLower.includes('relief') || descLower.includes('relief')) category = 'Disaster';
+  else if (titleLower.includes('community') || descLower.includes('community')) category = 'Livelihood';
+
+  const startVal = event.start?.dateTime || event.start?.date || new Date().toISOString();
+  const endVal = event.end?.dateTime || event.end?.date || startVal;
+
+  return {
+    id,
+    title,
+    description,
+    partnerId: 'system',
+    imageUrl: undefined,
+    imageHidden: true,
+    programModule: category as any,
+    isEvent: true,
+    status: 'In Progress',
+    category,
+    startDate: startVal,
+    endDate: endVal,
+    location: {
+      latitude: 10.3157,
+      longitude: 123.8854,
+      address: event.location || 'Online / Bacolod City',
+    },
+    volunteersNeeded: 15,
+    volunteers: [],
+    joinedUserIds: [],
+    skillsNeeded: [],
+    communityNeed: '',
+    expectedDeliverables: '',
+    createdAt: startVal,
+    updatedAt: endVal,
+    statusUpdates: [],
+  };
+};
+
+  // Real available events from database (excluding orphaned or deleted parent events)
   const displayProjects = useMemo(() => {
-    const realAvailable = projects
-      .filter(p => p.isEvent && isVolunteerOpportunityOpen(p))
-      .slice(0, 3);
+    const validParentProjectIds = new Set(projects.map(p => p.id));
+    // 1. Direct events from database
+    const directEvents = projects.filter(
+      p => !p.isDraft &&
+           isVolunteerOpportunityOpen(p) &&
+           (p.isEvent || Boolean(p.parentProjectId)) &&
+           (!p.parentProjectId || validParentProjectIds.has(p.parentProjectId))
+    );
 
-    if (realAvailable.length > 0) return realAvailable;
+    if (directEvents.length > 0) {
+      return directEvents.slice(0, 3);
+    }
 
-    return [
-      {
-        id: 'mock-p-1',
-        title: 'Mingo Meals packing',
-        category: 'Nutrition',
-        location: { address: 'Bacolod City' },
-        volunteersNeeded: 4,
-        isMock: true,
-      },
-      {
-        id: 'mock-p-2',
-        title: 'After-school tutoring',
-        category: 'Education',
-        location: { address: 'Iloilo chapter' },
-        volunteersNeeded: 2,
-        isMock: true,
-      },
-      {
-        id: 'mock-p-3',
-        title: 'Livelihood skills workshop',
-        category: 'Livelihood',
-        location: { address: 'Negros Occidental' },
-        volunteersNeeded: 6,
-        isMock: true,
-      },
-    ] as any[];
+    // Fallback: any non-draft project with open status
+    const allOpenProjects = projects.filter(
+      p => !p.isDraft &&
+           isVolunteerOpportunityOpen(p) &&
+           (!p.parentProjectId || validParentProjectIds.has(p.parentProjectId))
+    );
+    return allOpenProjects.slice(0, 3);
   }, [projects]);
 
-  const handleJoinProject = async (project: any) => {
-    if (project.isMock) {
-      Alert.alert('Mock Action', 'Join request submitted! (Simulated)');
-      return;
-    }
+  const handleJoinProject = async (project: Project) => {
     if (!volunteerProfile?.id) {
       Alert.alert('Error', 'Profile not loaded yet');
       return;
@@ -548,14 +670,14 @@ export default function VolunteerDashboardScreen() {
 
             <View style={styles.calFoot}>
               <View style={styles.calMetric}>
-                <Text style={styles.calMetricNum}>{planningItems.length || 5}</Text>
+                <Text style={styles.calMetricNum}>{displayTimeline.length}</Text>
                 <Text style={styles.calMetricLabel}>Timeline items</Text>
               </View>
               <View style={styles.calMetric}>
                 <Text style={styles.calMetricNum}>
-                  {projects.filter(p => p.isEvent).length}
+                  {projects.filter(p => !p.isDraft && p.startDate).length}
                 </Text>
-                <Text style={styles.calMetricLabel}>Project dates</Text>
+                <Text style={styles.calMetricLabel}>Active events</Text>
               </View>
             </View>
           </View>
@@ -566,44 +688,79 @@ export default function VolunteerDashboardScreen() {
           <View style={styles.sectionHead}>
             <View>
               <Text style={styles.sectionTitle}>Upcoming timeline</Text>
-              <Text style={styles.sectionSub}>Projects and admin plans</Text>
+              <Text style={styles.sectionSub}>Upcoming events</Text>
             </View>
           </View>
           <View style={[styles.calCard, { paddingVertical: 14, paddingHorizontal: 16 }]}>
-            {displayTimeline.map((item, idx) => {
-              const content = (
-                <View style={styles.timelineItem}>
-                  <View style={styles.timelineDotWrap}>
-                    <View style={[styles.timelineDot, item.htmlLink && { backgroundColor: '#10b981' }]} />
-                    {idx < displayTimeline.length - 1 && <View style={styles.timelineLine} />}
-                  </View>
-                  <View style={styles.timelineContent}>
-                    <Text style={styles.timelineDate}>{formatTimelineDate(item.startDate)}</Text>
-                    <Text style={[styles.timelineTitle, item.htmlLink && { color: '#047857' }]}>
-                      {item.title} {item.htmlLink && '(Google Cal)'}
-                    </Text>
-                  </View>
-                </View>
-              );
+            {displayTimeline.length === 0 ? (
+              <View style={{ paddingVertical: 20, alignItems: 'center', justifyContent: 'center' }}>
+                <MaterialIcons name="event-available" size={32} color="#94a3b8" style={{ marginBottom: 6 }} />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748b' }}>No upcoming timeline items</Text>
+                <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>Upcoming events will appear here</Text>
+              </View>
+            ) : (
+              displayTimeline.map((item, idx) => {
+                const dotColor = item.htmlLink ? '#10b981' : item.isJoined ? '#16a34a' : item.isEvent ? '#0284c7' : '#64748b';
 
-              if (item.htmlLink) {
-                return (
-                  <TouchableOpacity
-                    key={item.id}
-                    onPress={() => {
-                      Linking.openURL(item.htmlLink).catch(err => {
-                        console.error('Failed to open link:', err);
-                      });
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    {content}
-                  </TouchableOpacity>
+                const content = (
+                  <View style={styles.timelineItem}>
+                    <View style={styles.timelineDotWrap}>
+                      <View style={[styles.timelineDot, { backgroundColor: dotColor }]} />
+                      {idx < displayTimeline.length - 1 && <View style={styles.timelineLine} />}
+                    </View>
+                    <View style={styles.timelineContent}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <Text style={styles.timelineDate}>{formatTimelineDate(item.startDate)}</Text>
+                        {item.isJoined ? (
+                          <View style={{ backgroundColor: '#dcfce7', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '700', color: '#166534' }}>Joined</Text>
+                          </View>
+                        ) : item.isEvent ? (
+                          <View style={{ backgroundColor: '#e0f2fe', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '700', color: '#0369a1' }}>Event</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      <Text style={[styles.timelineTitle, item.htmlLink && { color: '#047857' }]} numberOfLines={2}>
+                        {item.title} {item.htmlLink && '(Google Cal)'}
+                      </Text>
+                    </View>
+                  </View>
                 );
-              }
 
-              return <View key={item.id}>{content}</View>;
-            })}
+                if (item.htmlLink) {
+                  return (
+                    <TouchableOpacity
+                      key={item.id}
+                      onPress={() => {
+                        Linking.openURL(item.htmlLink!).catch(err => {
+                          console.error('Failed to open link:', err);
+                        });
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      {content}
+                    </TouchableOpacity>
+                  );
+                }
+
+                if (item.projectId) {
+                  return (
+                    <TouchableOpacity
+                      key={item.id}
+                      onPress={() => {
+                        navigation.navigate('ProjectDetails', { projectId: item.projectId! });
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      {content}
+                    </TouchableOpacity>
+                  );
+                }
+
+                return <View key={item.id}>{content}</View>;
+              })
+            )}
           </View>
         </View>
 
@@ -643,26 +800,34 @@ export default function VolunteerDashboardScreen() {
             </TouchableOpacity>
           </View>
 
-          {displayProjects.map(project => (
-            <View key={project.id} style={styles.projectRow}>
-              <View style={styles.projectIcon}>
-                {getProjectIcon(project.category)}
-              </View>
-              <View style={styles.projectInfo}>
-                <Text style={styles.projectTitleText}>{project.title}</Text>
-                <Text style={styles.projectMeta}>
-                  {project.location?.address || 'Bacolod City'} · {project.volunteersNeeded || 4} volunteers needed
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={styles.projectJoin}
-                onPress={() => handleJoinProject(project)}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.projectJoinText}>Join</Text>
-              </TouchableOpacity>
+          {displayProjects.length === 0 ? (
+            <View style={{ paddingVertical: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' }}>
+              <MaterialIcons name="event-busy" size={32} color="#94a3b8" style={{ marginBottom: 6 }} />
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#64748b' }}>No available events right now</Text>
+              <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>Check back soon for new volunteer opportunities</Text>
             </View>
-          ))}
+          ) : (
+            displayProjects.map(project => (
+              <View key={project.id} style={styles.projectRow}>
+                <View style={styles.projectIcon}>
+                  {getProjectIcon(project.category)}
+                </View>
+                <View style={styles.projectInfo}>
+                  <Text style={styles.projectTitleText}>{project.title}</Text>
+                  <Text style={styles.projectMeta}>
+                    {project.location?.address || 'Bacolod City'} · {project.volunteersNeeded || 0} volunteers needed
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.projectJoin}
+                  onPress={() => handleJoinProject(project)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.projectJoinText}>Join</Text>
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
         </View>
 
       </ScrollView>

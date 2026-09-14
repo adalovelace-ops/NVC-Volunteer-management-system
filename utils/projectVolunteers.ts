@@ -107,3 +107,21 @@ export function getProjectVolunteerMapCount(
 ): number {
   return getProjectVolunteerMapEntries(project, volunteers, joinRecords).length;
 }
+
+export function getProjectVolunteersNeeded(
+  project?: Project | null,
+  projects: Project[] = []
+): number {
+  if (!project) return 0;
+  if (typeof project.volunteersNeeded === 'number' && project.volunteersNeeded > 0) {
+    return project.volunteersNeeded;
+  }
+  const childEvents = projects.filter(
+    p => p.parentProjectId === project.id || (p.isEvent && p.category === project.category && p.id !== project.id)
+  );
+  if (childEvents.length > 0) {
+    const sum = childEvents.reduce((acc, curr) => acc + (Number(curr.volunteersNeeded) || 0), 0);
+    if (sum > 0) return sum;
+  }
+  return Number(project.volunteersNeeded) || 1;
+}

@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Image, Linking, Alert, ActivityIndicator, useWindowDimensions } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import type { PartnerProjectApplication } from '../models/types';
+import { openAttachmentUri } from '../utils/media';
 
 interface Props {
   application: PartnerProjectApplication;
@@ -107,7 +108,7 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
       return;
     }
     if (onOpenAttachment) return onOpenAttachment(url);
-    Linking.openURL(url).catch(() => Alert.alert('Unable to open attachment'));
+    void openAttachmentUri(url).catch(() => Alert.alert('Unable to open attachment'));
   };
 
   const isDraft = rawStatus === 'pending' || rawStatus === 'draft' || rawStatus === 'proposed' || !application.status;

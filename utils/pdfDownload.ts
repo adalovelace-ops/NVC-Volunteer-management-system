@@ -166,7 +166,18 @@ export async function downloadPdfFile(
   }
 }
 
-export async function downloadHtmlPdf(filename: string, htmlContent: string) {
+export async function downloadHtmlPdf(firstArg: string, secondArg: string) {
+  let filename = firstArg;
+  let htmlContent = secondArg;
+
+  if (firstArg && (firstArg.includes('<html') || firstArg.includes('<!DOCTYPE') || firstArg.includes('<main'))) {
+    htmlContent = firstArg;
+    filename = secondArg || 'Report.pdf';
+  } else if (secondArg && (secondArg.includes('<html') || secondArg.includes('<!DOCTYPE') || secondArg.includes('<main'))) {
+    filename = firstArg || 'Report.pdf';
+    htmlContent = secondArg;
+  }
+
   const safeFilename = sanitizeFilename(filename.endsWith('.pdf') ? filename : `${filename}.pdf`);
 
   // Web environment: open styled print window which lets user save/print PDF directly

@@ -49,7 +49,7 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [applications, setApplications] = useState<PartnerProjectApplication[]>([]);
   const [view, setView] = useState<'list' | 'detail'>('list');
-  const [activeTab, setActiveTab] = useState<'approved' | 'pending' | 'all'>('approved');
+  const [activeTab, setActiveTab] = useState<'approved' | 'pending' | 'all' | 'partnered-projects' | 'approved-proposals'>('approved');
   const [pendingFilter, setPendingFilter] = useState<'all' | 'registrations' | 'proposals'>('all');
   const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -409,6 +409,25 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
   }, [pendingProposals, searchTerm]);
 
   const partnerProjectCount = projects.filter(project => allPartnersList.some(partner => partner.id === project.partnerId)).length;
+
+  const partneredProjectsList = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    const list = projects.filter(project => allPartnersList.some(partner => partner.id === project.partnerId));
+    if (!normalizedSearch) return list;
+    return list.filter(p => (p.title || '').toLowerCase().includes(normalizedSearch) || (p.category || '').toLowerCase().includes(normalizedSearch));
+  }, [projects, allPartnersList, searchTerm]);
+
+  const approvedProposalsList = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    const list = applications.filter(app => app.status === 'Approved');
+    if (!normalizedSearch) return list;
+    return list.filter(app => {
+      const title = app.proposalDetails?.proposedTitle || app.projectId || '';
+      const name = app.partnerName || '';
+      return `${title} ${name}`.toLowerCase().includes(normalizedSearch);
+    });
+  }, [applications, searchTerm]);
+
   const nextSectorFilter = () => {
     const currentIndex = sectorFilters.indexOf(sectorFilter);
     setSectorFilter(sectorFilters[(currentIndex + 1) % sectorFilters.length]);
@@ -466,20 +485,13 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
                 </Text>
               </View>
               <View style={styles.detailPendingActions}>
-                    <TouchableOpacity
-                      style={styles.appRejectButton}
-                      onPress={() => openPartnerReview(selectedPartner, 'revision')}
-                    >
-                      <MaterialIcons name="replay" size={16} color="#dc2626" />
-                      <Text style={styles.appRejectButtonText}>For Revise</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.appRejectButton, styles.appRejectButtonHard]}
-                      onPress={() => openPartnerReview(selectedPartner, 'rejection')}
-                    >
-                      <MaterialIcons name="block" size={16} color="#b91c1c" />
-                      <Text style={styles.appRejectButtonText}>Totally Reject</Text>
-                    </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.appRejectButton, styles.appRejectButtonHard]}
+                  onPress={() => openPartnerReview(selectedPartner, 'rejection')}
+                >
+                  <MaterialIcons name="block" size={16} color="#b91c1c" />
+                  <Text style={styles.appRejectButtonText}>Totally Reject</Text>
+                </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.appApproveButton}
                       onPress={() => handleApprovePartner(selectedPartner)}
@@ -765,6 +777,7 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
               highlight: totalPendingCount > 0,
             },
             {
+              tab: 'partnered-projects' as const,
               label: 'Partnered projects',
               value: partnerProjectCount,
               note: 'Projects with a partner',
@@ -773,6 +786,7 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
               color: '#2f69bd',
             },
             {
+              tab: 'approved-proposals' as const,
               label: 'Approved Proposals',
               value: applications.filter(app => app.status === 'Approved').length,
               note: 'Proposals approved',
@@ -843,6 +857,34 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
           </TouchableOpacity>
 
           <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'partnered-projects' && styles.tabButtonActive]}
+            onPress={() => setActiveTab('partnered-projects')}
+          >
+            <MaterialIcons
+              name="folder-special"
+              size={18}
+              color={activeTab === 'partnered-projects' ? '#2f69bd' : '#64748b'}
+            />
+            <Text style={[styles.tabButtonText, activeTab === 'partnered-projects' && styles.tabButtonTextActive]}>
+              Partnered Projects ({partnerProjectCount})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'approved-proposals' && styles.tabButtonActive]}
+            onPress={() => setActiveTab('approved-proposals')}
+          >
+            <MaterialIcons
+              name="check-circle"
+              size={18}
+              color={activeTab === 'approved-proposals' ? '#7c52bd' : '#64748b'}
+            />
+            <Text style={[styles.tabButtonText, activeTab === 'approved-proposals' && styles.tabButtonTextActive]}>
+              Approved Proposals ({applications.filter(app => app.status === 'Approved').length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
             style={[styles.tabButton, activeTab === 'all' && styles.tabButtonActive]}
             onPress={() => setActiveTab('all')}
           >
@@ -894,22 +936,34 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
               <Text style={styles.directoryTitle}>
                 {activeTab === 'pending'
                   ? 'Pending Review Queue'
-                  : activeTab === 'all'
-                    ? 'All Partner Organizations'
-                    : 'Active Partners'}
+                  : activeTab === 'partnered-projects'
+                    ? 'Projects With Partner Organizations'
+                    : activeTab === 'approved-proposals'
+                      ? 'Approved Collaboration Proposals'
+                      : activeTab === 'all'
+                        ? 'All Partner Organizations'
+                        : 'Active Partners'}
               </Text>
               <Text style={styles.directorySubtitle}>
                 {activeTab === 'pending'
                   ? 'Review submitted partner registrations and project collaboration proposals.'
-                  : activeTab === 'all'
-                    ? 'Browse all partner organization records and their review statuses.'
-                    : 'Browse verified organizations collaborating on projects.'}
+                  : activeTab === 'partnered-projects'
+                    ? 'Active projects currently partnered with verified organizations.'
+                    : activeTab === 'approved-proposals'
+                      ? 'Review and access approved project collaboration proposals.'
+                      : activeTab === 'all'
+                        ? 'Browse all partner organization records and their review statuses.'
+                        : 'Browse verified organizations collaborating on projects.'}
               </Text>
             </View>
             <Text style={styles.directoryCount}>
               {activeTab === 'pending'
                 ? `${(pendingFilter === 'proposals' ? 0 : filteredPartners.length) + (pendingFilter === 'registrations' ? 0 : filteredPendingProposals.length)} items`
-                : `${filteredPartners.length} shown`}
+                : activeTab === 'partnered-projects'
+                  ? `${partneredProjectsList.length} projects`
+                  : activeTab === 'approved-proposals'
+                    ? `${approvedProposalsList.length} proposals`
+                    : `${filteredPartners.length} shown`}
             </Text>
           </View>
 
@@ -1109,14 +1163,6 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
                       </TouchableOpacity>
 
                       <TouchableOpacity
-                        style={styles.appRejectButton}
-                        onPress={() => openPartnerReview(partner, 'revision')}
-                      >
-                        <MaterialIcons name="replay" size={16} color="#dc2626" />
-                        <Text style={styles.appRejectButtonText}>For Revise</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
                         style={[styles.appRejectButton, styles.appRejectButtonHard]}
                         onPress={() => openPartnerReview(partner, 'rejection')}
                       >
@@ -1178,19 +1224,115 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
               );
             })}
 
-            {!loadError &&
-              filteredPartners.length === 0 &&
-              (activeTab !== 'pending' || filteredPendingProposals.length === 0) ? (
+            {/* 3. Partnered Projects Tab View */}
+            {activeTab === 'partnered-projects' && partneredProjectsList.map(project => {
+              const partner = allPartnersList.find(p => p.id === project.partnerId);
+              return (
+                <TouchableOpacity
+                  key={project.id}
+                  style={styles.partnerCard}
+                  onPress={() => {
+                    if (navigation) {
+                      navigateToAvailableRoute(navigation, 'Projects', { projectId: project.id });
+                    }
+                  }}
+                  activeOpacity={0.78}
+                >
+                  <View style={[styles.partnerAvatar, { backgroundColor: '#eef4ff' }]}>
+                    <MaterialIcons name="folder-special" size={24} color="#2f69bd" />
+                  </View>
+                  <View style={styles.partnerCardContent}>
+                    <Text style={styles.partnerCardName}>{project.title}</Text>
+                    <View style={styles.partnerTags}>
+                      <Text style={[styles.partnerCardSector, { backgroundColor: '#eef4ff', color: '#1e40af' }]}>
+                        {project.category || 'Partnered Project'}
+                      </Text>
+                      {partner ? (
+                        <Text style={styles.partnerFocus}>Partner: {partner.name}</Text>
+                      ) : null}
+                    </View>
+                    <Text style={styles.partnerCardMeta}>
+                      {project.volunteers?.length || 0} volunteer{(project.volunteers?.length || 0) === 1 ? '' : 's'} • {getProjectDisplayStatus(project)}
+                    </Text>
+                  </View>
+                  <MaterialIcons name="chevron-right" size={24} color="#667085" />
+                </TouchableOpacity>
+              );
+            })}
+
+            {/* 4. Approved Proposals Tab View */}
+            {activeTab === 'approved-proposals' && approvedProposalsList.map(proposal => {
+              const proposedTitle = proposal.proposalDetails?.proposedTitle || proposal.projectId;
+              return (
+                <TouchableOpacity
+                  key={proposal.id}
+                  style={styles.proposalCard}
+                  onPress={() => {
+                    if (proposal.projectId && navigation) {
+                      navigateToAvailableRoute(navigation, 'Projects', { projectId: proposal.projectId });
+                    }
+                  }}
+                  activeOpacity={0.78}
+                >
+                  <View style={styles.applicationCardHeader}>
+                    <View style={[styles.applicationAvatar, { backgroundColor: '#f6efff' }]}>
+                      <MaterialIcons name="check-circle" size={24} color="#7c52bd" />
+                    </View>
+                    <View style={styles.applicationHeaderCopy}>
+                      <View style={styles.applicationTitleRow}>
+                        <Text style={styles.applicationName}>{proposedTitle}</Text>
+                        <View style={[styles.proposalPill, { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' }]}>
+                          <MaterialIcons name="check" size={12} color="#166534" />
+                          <Text style={[styles.proposalPillText, { color: '#166534' }]}>Approved Proposal</Text>
+                        </View>
+                      </View>
+                      <View style={styles.applicationMetaTags}>
+                        <Text style={[styles.partnerCardSector, { backgroundColor: '#f3e8ff', color: '#6b21a8' }]}>
+                          {proposal.proposalDetails?.requestedProgramModule || 'Program'}
+                        </Text>
+                        <Text style={styles.applicationAppliedDate}>
+                          Partner: {proposal.partnerName}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  {proposal.proposalDetails?.proposedDescription ? (
+                    <Text style={styles.applicationDescription} numberOfLines={2}>
+                      {proposal.proposalDetails.proposedDescription}
+                    </Text>
+                  ) : null}
+                </TouchableOpacity>
+              );
+            })}
+
+            {/* Partner list for approved/all tabs */}
+            {(activeTab === 'approved' || activeTab === 'all') && filteredPartners.length === 0 ? (
               <View style={styles.emptyDirectory}>
-                <MaterialIcons
-                  name={activeTab === 'pending' ? "assignment-turned-in" : "search-off"}
-                  size={36}
-                  color="#98a2b3"
-                />
+                <MaterialIcons name="search-off" size={36} color="#98a2b3" />
+                <Text style={styles.emptyText}>No partners match this search.</Text>
+              </View>
+            ) : null}
+
+            {activeTab === 'partnered-projects' && partneredProjectsList.length === 0 ? (
+              <View style={styles.emptyDirectory}>
+                <MaterialIcons name="folder-open" size={36} color="#98a2b3" />
+                <Text style={styles.emptyText}>No partnered projects found.</Text>
+              </View>
+            ) : null}
+
+            {activeTab === 'approved-proposals' && approvedProposalsList.length === 0 ? (
+              <View style={styles.emptyDirectory}>
+                <MaterialIcons name="assignment-turned-in" size={36} color="#98a2b3" />
+                <Text style={styles.emptyText}>No approved proposals found.</Text>
+              </View>
+            ) : null}
+
+            {activeTab === 'pending' && filteredPartners.length === 0 && filteredPendingProposals.length === 0 ? (
+              <View style={styles.emptyDirectory}>
+                <MaterialIcons name="assignment-turned-in" size={36} color="#98a2b3" />
                 <Text style={styles.emptyText}>
-                  {activeTab === 'pending'
-                    ? "No pending applications or proposals. New registrations and project submissions will appear here."
-                    : "No partners match this search."}
+                  No pending applications or proposals. New registrations and project submissions will appear here.
                 </Text>
               </View>
             ) : null}

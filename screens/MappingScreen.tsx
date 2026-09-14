@@ -109,17 +109,18 @@ export default function MappingScreen({ navigation }: any) {
       const visibleProjects =
         user?.role === 'partner'
           ? mapSourceProjects.filter(
-              project => partnerProjectIds.has(project.id)
+              project => !project.isDraft && partnerProjectIds.has(project.id)
             )
           : user?.role === 'volunteer'
           ? mapSourceProjects.filter(
               project =>
-                joinedVolunteerProjectIds.has(project.id) ||
+                !project.isDraft &&
+                (joinedVolunteerProjectIds.has(project.id) ||
                 (snapshot.volunteerProfile && (project.volunteers || []).includes(snapshot.volunteerProfile.id)) ||
                 (snapshot.volunteerProfile && (project.internalTasks || []).some(task =>
                   task.assignedVolunteerId === snapshot.volunteerProfile?.id ||
                   (task.assignedVolunteerIds || []).includes(snapshot.volunteerProfile?.id || '')
-                ))
+                )))
             )
           : mapSourceProjects;
 

@@ -100,6 +100,21 @@ class TTLCache:
 _projects_snapshot_cache = TTLCache(ttl_seconds=300)  # Increased from 2 minutes to 5 minutes
 _projects_snapshot_lock = threading.Lock()
 _storage_collection_cache = TTLCache(ttl_seconds=120)  # Increased from 1 minute to 2 minutes
+_message_query_cache = TTLCache(ttl_seconds=30)
+_message_query_locks: dict[str, threading.Lock] = {}
+_message_query_locks_guard = threading.Lock()
+
+
+def _get_message_query_lock(cache_key: str) -> threading.Lock:
+    """Stampede protection: only one worker queries DB per key."""
+    with _message_query_locks_guard:
+        lock = _message_query_locks.get(cache_key)
+        if lock is None:
+            lock = threading.Lock()
+            _message_query_locks[cache_key] = lock
+        return lock
+
+
 NON_CACHEABLE_COLLECTION_KEYS = {"programTracks", "programs"}
 _DEFAULT_SNAPSHOT_FIELDS = {
     "projects",
@@ -218,6 +233,9 @@ class PartnerProjectApplicationReviewPayload(BaseModel):
 class VolunteerMatchReviewPayload(BaseModel):
     status: str
     reviewedBy: str
+    reviewNotes: str | None = None
+    notes: str | None = None
+    rejectionReason: str | None = None
 
 
 # Request payload for direct chat messages.
@@ -596,6 +614,21 @@ def ensure_message_storage() -> None:
             )
             # Indexes for fast message lookups by participant and timestamp
             cursor.execute(
+                "alter table public.messages add column if not exists deleted boolean not null default false"
+            )
+            cursor.execute(
+                "alter table public.messages add column if not exists edited boolean not null default false"
+            )
+            cursor.execute(
+                "alter table public.messages add column if not exists reply_to_id text"
+            )
+            cursor.execute(
+                "alter table public.messages add column if not exists reply_to_content text"
+            )
+            cursor.execute(
+                "alter table public.messages add column if not exists reply_to_sender_name text"
+            )
+            cursor.execute(
                 "create index if not exists messages_sender_id_idx on public.messages (sender_id)"
             )
             cursor.execute(
@@ -651,6 +684,21 @@ def ensure_project_group_message_storage() -> None:
                 "alter table project_group_messages add column if not exists response_to_title text"
             )
             cursor.execute(
+                "alter table project_group_messages add column if not exists deleted boolean not null default false"
+            )
+            cursor.execute(
+                "alter table project_group_messages add column if not exists edited boolean not null default false"
+            )
+            cursor.execute(
+                "alter table project_group_messages add column if not exists reply_to_id text"
+            )
+            cursor.execute(
+                "alter table project_group_messages add column if not exists reply_to_content text"
+            )
+            cursor.execute(
+                "alter table project_group_messages add column if not exists reply_to_sender_name text"
+            )
+            cursor.execute(
                 "update project_group_messages set kind = 'message' where kind is null"
             )
             # Index for fast group message lookups by project
@@ -690,6 +738,11 @@ def serialize_message_row(row: Any) -> dict[str, Any]:
         "timestamp": row["timestamp"].isoformat() if hasattr(row["timestamp"], "isoformat") else row["timestamp"],
         "read": bool(row["read"]),
         "attachments": attachments,
+        "deleted": bool(row.get("deleted", False)),
+        "edited": bool(row.get("edited", False)),
+        "replyToId": row.get("reply_to_id"),
+        "replyToContent": row.get("reply_to_content"),
+        "replyToSenderName": row.get("reply_to_sender_name"),
     }
 
 
@@ -719,6 +772,11 @@ def serialize_project_group_message_row(row: Any) -> dict[str, Any]:
         "responseAction": row.get("response_action"),
         "responseToTitle": row.get("response_to_title"),
         "attachments": attachments,
+        "deleted": bool(row.get("deleted", False)),
+        "edited": bool(row.get("edited", False)),
+        "replyToId": row.get("reply_to_id"),
+        "replyToContent": row.get("reply_to_content"),
+        "replyToSenderName": row.get("reply_to_sender_name"),
     }
 
 
@@ -897,73 +955,108 @@ def _cascade_delete_project_references(connection: Any, related_project_ids: set
 
     changed_keys: list[str] = []
 
-    events = get_postgres_hot_storage_collection(connection, "events")
-    event_ids_to_delete = {
-        str(event.get("id") or "").strip()
-        for event in events
-        if str(event.get("id") or "").strip() in related_ids
-        or str(event.get("parentProjectId") or "").strip() in related_ids
-    }
-    if event_ids_to_delete:
-        related_ids.update(event_ids_to_delete)
-        filtered_events = [
-            event
-            for event in events
-            if str(event.get("id") or "").strip() not in event_ids_to_delete
-        ]
-        if len(filtered_events) != len(events):
-            replace_postgres_hot_storage_collection(connection, "events", filtered_events)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT id FROM events WHERE parent_project_id = ANY(%s)",
+            (list(related_ids),),
+        )
+        for row in cursor.fetchall():
+            if row and row[0]:
+                related_ids.add(str(row[0]).strip())
+
+        cursor.execute(
+            "SELECT id FROM projects WHERE parent_project_id = ANY(%s)",
+            (list(related_ids),),
+        )
+        for row in cursor.fetchall():
+            if row and row[0]:
+                related_ids.add(str(row[0]).strip())
+
+        all_ids = list(related_ids)
+        if not all_ids:
+            return []
+
+        cursor.execute("DELETE FROM events WHERE id = ANY(%s) OR parent_project_id = ANY(%s)", (all_ids, all_ids))
+        if cursor.rowcount > 0:
             changed_keys.append("events")
 
-    for key in PROJECT_REFERENCE_STORAGE_KEYS:
-        items = get_postgres_hot_storage_collection(connection, key)
-        filtered_items = _filter_project_references(items, related_ids)
-        if len(filtered_items) != len(items):
-            replace_postgres_hot_storage_collection(connection, key, filtered_items)
-            changed_keys.append(key)
+        cursor.execute("DELETE FROM projects WHERE parent_project_id = ANY(%s)", (all_ids,))
+        if cursor.rowcount > 0 and "projects" not in changed_keys:
+            changed_keys.append("projects")
 
-    group_messages = _get_special_storage_collection(connection, "projectGroupMessages")
-    filtered_group_messages = _filter_project_references(group_messages, related_ids)
-    if len(filtered_group_messages) != len(group_messages):
-        _replace_special_storage_collection(connection, "projectGroupMessages", filtered_group_messages)
-        changed_keys.append("projectGroupMessages")
+        cursor.execute("DELETE FROM status_updates WHERE project_id = ANY(%s)", (all_ids,))
+        if cursor.rowcount > 0:
+            changed_keys.append("statusUpdates")
 
-    volunteers = get_postgres_hot_storage_collection(connection, "volunteers")
-    filtered_volunteers: list[dict[str, Any]] = []
-    volunteers_changed = False
-    related_id_keys = {project_id.lower() for project_id in related_ids}
-    for volunteer in volunteers:
-        past_projects = [
-            project_id
-            for project_id in (volunteer.get("pastProjects") or [])
-            if str(project_id or "").strip().lower() not in related_id_keys
-        ]
-        if len(past_projects) != len(volunteer.get("pastProjects") or []):
-            volunteers_changed = True
-            filtered_volunteers.append({**volunteer, "pastProjects": past_projects})
-        else:
-            filtered_volunteers.append(volunteer)
-    if volunteers_changed:
-        replace_postgres_hot_storage_collection(connection, "volunteers", filtered_volunteers)
-        changed_keys.append("volunteers")
+        cursor.execute("DELETE FROM partner_project_applications WHERE project_id = ANY(%s)", (all_ids,))
+        if cursor.rowcount > 0:
+            changed_keys.append("partnerProjectApplications")
 
-    calendars = get_postgres_hot_storage_collection(connection, "adminPlanningCalendars")
-    filtered_calendars: list[dict[str, Any]] = []
-    calendars_changed = False
-    for calendar in calendars:
-        planning_items = [
-            item
-            for item in (calendar.get("planningItems") or [])
-            if str(item.get("linkedProjectId") or "").strip().lower() not in related_id_keys
-        ]
-        if len(planning_items) != len(calendar.get("planningItems") or []):
-            calendars_changed = True
-            filtered_calendars.append({**calendar, "planningItems": planning_items})
-        else:
-            filtered_calendars.append(calendar)
-    if calendars_changed:
-        replace_postgres_hot_storage_collection(connection, "adminPlanningCalendars", filtered_calendars)
-        changed_keys.append("adminPlanningCalendars")
+        cursor.execute("DELETE FROM reports WHERE project_id = ANY(%s)", (all_ids,))
+        if cursor.rowcount > 0:
+            changed_keys.append("partnerReports")
+            changed_keys.append("publishedImpactReports")
+
+        cursor.execute("DELETE FROM volunteer_event_joins WHERE project_id = ANY(%s)", (all_ids,))
+        if cursor.rowcount > 0:
+            changed_keys.append("volunteerProjectJoins")
+
+        cursor.execute("DELETE FROM volunteer_matches WHERE project_id = ANY(%s)", (all_ids,))
+        if cursor.rowcount > 0:
+            changed_keys.append("volunteerMatches")
+
+        cursor.execute("DELETE FROM volunteer_time_logs WHERE project_id = ANY(%s)", (all_ids,))
+        if cursor.rowcount > 0:
+            changed_keys.append("volunteerTimeLogs")
+
+        cursor.execute("DELETE FROM admin_planning_items WHERE linked_project_id = ANY(%s)", (all_ids,))
+        if cursor.rowcount > 0:
+            changed_keys.append("adminPlanningCalendars")
+
+        try:
+            cursor.execute("DELETE FROM project_group_messages WHERE project_id = ANY(%s)", (all_ids,))
+            if cursor.rowcount > 0:
+                changed_keys.append("projectGroupMessages")
+        except Exception:
+            pass
+
+        try:
+            cursor.execute("DELETE FROM public.messages WHERE project_id = ANY(%s)", (all_ids,))
+            if cursor.rowcount > 0:
+                changed_keys.append("messages")
+        except Exception:
+            pass
+
+        for tid in all_ids:
+            cursor.execute(
+                "UPDATE volunteers SET past_projects = array_remove(past_projects, %s) WHERE %s = ANY(past_projects)",
+                (tid, tid),
+            )
+            if cursor.rowcount > 0 and "volunteers" not in changed_keys:
+                changed_keys.append("volunteers")
+
+        cursor.execute("SELECT admin_planning_calendars_id, planning_items FROM admin_planning_calendars")
+        for cal_id, items_raw in cursor.fetchall():
+            if not items_raw:
+                continue
+            try:
+                items_list = json.loads(items_raw) if isinstance(items_raw, str) else items_raw
+                if isinstance(items_list, list):
+                    filtered = [
+                        item
+                        for item in items_list
+                        if isinstance(item, dict)
+                        and str(item.get("linkedProjectId") or "").strip() not in related_ids
+                    ]
+                    if len(filtered) != len(items_list):
+                        cursor.execute(
+                            "UPDATE admin_planning_calendars SET planning_items = %s WHERE admin_planning_calendars_id = %s",
+                            (json.dumps(filtered), cal_id),
+                        )
+                        if "adminPlanningCalendars" not in changed_keys:
+                            changed_keys.append("adminPlanningCalendars")
+            except Exception:
+                pass
 
     return changed_keys
 
@@ -2381,6 +2474,7 @@ def _cleanup_expired_registration_otps() -> None:
 
 
 def _send_registration_otp_email(email: str, otp: str) -> None:
+    load_dotenv(override=True)
     sender = str(os.getenv("OTP_GMAIL_SENDER", "")).strip()
     app_password = "".join(str(os.getenv("OTP_GMAIL_APP_PASSWORD", "")).split())
     if not sender or not app_password:
@@ -2424,6 +2518,7 @@ def _send_registration_otp_email(email: str, otp: str) -> None:
 
 
 def _send_calendar_sync_email(payload: GcalSyncPayload) -> None:
+    load_dotenv(override=True)
     sender = str(os.getenv("OTP_GMAIL_SENDER", "")).strip()
     app_password = "".join(str(os.getenv("OTP_GMAIL_APP_PASSWORD", "")).split())
     if not sender or not app_password:
@@ -3152,15 +3247,18 @@ async def start_volunteer_log(volunteer_id: str, payload: VolunteerTimeLogStartP
         #         detail="Attendance has already been recorded for this event today.",
         #     )
 
+        log_id = str(today_log.get("id")) if today_log and today_log.get("id") else f"timelog-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+        time_in = str(today_log.get("timeIn")) if today_log and today_log.get("timeIn") else now.isoformat()
+
         new_log = {
-            "id": f"timelog-{int(datetime.now(timezone.utc).timestamp() * 1000)}",
+            "id": log_id,
             "volunteerId": volunteer_id,
             "projectId": payload.projectId,
-            "timeIn": now.isoformat(),
+            "timeIn": time_in,
             "attendanceConfirmedAt": now.isoformat(),
             "attendancePhoto": attendance_photo,
             "completionPhoto": attendance_photo,
-            "note": payload.note,
+            "note": payload.note if payload.note is not None else (today_log.get("note") if today_log else None),
         }
         _postgres_upsert_hot_item(connection, "volunteerTimeLogs", new_log)
         connection.commit()
@@ -3777,12 +3875,14 @@ async def review_volunteer_match(match_id: str, payload: VolunteerMatchReviewPay
     _require_postgres()
     broadcast_messages = []
     next_status = str(payload.status or "").strip()
-    if next_status not in {"Matched", "Rejected"}:
-        raise HTTPException(status_code=400, detail="Volunteer request review must match or reject the request.")
+    if next_status not in {"Matched", "Rejected", "Requested"}:
+        raise HTTPException(status_code=400, detail="Volunteer request review must match, reject, or request.")
 
     reviewed_by = str(payload.reviewedBy or "").strip()
     if not reviewed_by:
         raise HTTPException(status_code=400, detail="A reviewer id is required.")
+
+    notes_text = str(payload.reviewNotes or payload.notes or payload.rejectionReason or "").strip()
 
     broadcast_keys = ["volunteerMatches"]
     with get_connection() as connection:
@@ -3805,18 +3905,20 @@ async def review_volunteer_match(match_id: str, payload: VolunteerMatchReviewPay
         updated_match = {
             **match,
             "status": next_status,
+            "reviewNotes": notes_text if notes_text else match.get("reviewNotes"),
+            "rejectionReason": notes_text if notes_text else match.get("rejectionReason"),
             "requestedAt": str(match.get("requestedAt") or match.get("matchedAt") or ""),
             "matchedAt": datetime.now(timezone.utc).isoformat(),
-            "reviewedAt": datetime.now(timezone.utc).isoformat(),
-            "reviewedBy": reviewed_by,
+            "reviewedAt": datetime.now(timezone.utc).isoformat() if next_status != "Requested" else None,
+            "reviewedBy": reviewed_by if next_status != "Requested" else None,
         }
         _postgres_upsert_hot_item(connection, "volunteerMatches", updated_match)
 
-        if next_status == "Matched":
-            joined_user_ids = list(project.get("joinedUserIds") or [])
-            volunteer_ids = list(project.get("volunteers") or [])
-            volunteer_user_id = str(volunteer.get("userId") or "")
+        joined_user_ids = list(project.get("joinedUserIds") or [])
+        volunteer_ids = list(project.get("volunteers") or [])
+        volunteer_user_id = str(volunteer.get("userId") or "")
 
+        if next_status == "Matched":
             _postgres_upsert_hot_item(
                 connection,
                 project_storage_key,
@@ -3837,6 +3939,22 @@ async def review_volunteer_match(match_id: str, payload: VolunteerMatchReviewPay
             msg_row = _insert_join_group_message(connection, project_id, volunteer_user_id)
             if msg_row:
                 broadcast_messages.append((project_id, serialize_project_group_message_row(msg_row)))
+        else:
+            # If rejected or requested, remove from project joined lists if present
+            next_joined_user_ids = [uid for uid in joined_user_ids if uid != volunteer_user_id]
+            next_volunteer_ids = [vid for vid in volunteer_ids if vid != volunteer_id]
+            if len(next_joined_user_ids) != len(joined_user_ids) or len(next_volunteer_ids) != len(volunteer_ids):
+                _postgres_upsert_hot_item(
+                    connection,
+                    project_storage_key,
+                    {
+                        **project,
+                        "joinedUserIds": next_joined_user_ids,
+                        "volunteers": next_volunteer_ids,
+                        "updatedAt": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                broadcast_keys.append(project_storage_key)
 
         updated_volunteer = _postgres_sync_volunteer_engagement_status(connection, volunteer_id)
         if updated_volunteer is not None:
@@ -3986,104 +4104,7 @@ async def remove_volunteer_from_project(project_id: str, volunteer_id: str) -> d
     return {"success": True, "project": updated_project, "volunteerProfile": updated_volunteer}
 
 
-@app.get("/messages")
-# API endpoint that returns all direct messages for one user.
-def get_messages(user_id: str, limit: int = 500) -> dict[str, list[dict[str, Any]]]:
-    import time
-    request_start = time.time()
-    ensure_message_storage()
-    from psycopg.rows import dict_row
 
-    with get_connection() as connection:
-        current_user = _get_user_by_id(user_id, connection)
-        current_role = str(current_user.get("role") or "") if current_user else ""
-        
-        query_start = time.time()
-        with connection.cursor(row_factory=dict_row) as cursor:
-            cursor.execute(
-                """
-                select id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
-                from public.messages
-                where sender_id = %s or recipient_id = %s
-                order by timestamp desc, id desc
-                limit %s
-                """,
-                (user_id, user_id, limit),
-            )
-            rows = cursor.fetchall()
-        query_time = time.time() - query_start
-
-        if current_role and rows:
-            # Batch-fetch all other-user IDs in one query instead of N+1 lookups
-            batch_start = time.time()
-            other_user_ids = list({
-                (row["recipient_id"] if row["sender_id"] == user_id else row["sender_id"])
-                for row in rows
-            })
-            with connection.cursor(row_factory=dict_row) as cursor:
-                cursor.execute(
-                    "SELECT users_id AS id, role FROM users WHERE users_id = ANY(%s)",
-                    (other_user_ids,),
-                )
-                role_by_id = {r["id"]: str(r["role"] or "") for r in cursor.fetchall()}
-            batch_time = time.time() - batch_start
-
-            filter_start = time.time()
-            rows = [
-                row for row in rows
-                if _is_direct_message_pair_allowed(
-                    current_role,
-                    role_by_id.get(
-                        row["recipient_id"] if row["sender_id"] == user_id else row["sender_id"],
-                        ""
-                    )
-                )
-            ]
-            filter_time = time.time() - filter_start
-            
-            total_time = time.time() - request_start
-            if total_time > 2.0:
-                print(f"[PERF] /messages for {user_id}: query={query_time:.1f}s, batch={batch_time:.1f}s, filter={filter_time:.1f}s, total={total_time:.1f}s, found {len(rows)} messages")
-        else:
-            total_time = time.time() - request_start
-            if total_time > 2.0:
-                print(f"[PERF] /messages for {user_id}: query={query_time:.1f}s, total={total_time:.1f}s, found {len(rows)} messages")
-                
-    return {"messages": [serialize_message_row(row) for row in rows]}
-
-
-@app.get("/messages/conversation")
-# API endpoint that returns the direct-message history between two users.
-def get_conversation(user1: str, user2: str, limit: int = 200) -> dict[str, list[dict[str, Any]]]:
-    import time
-    request_start = time.time()
-    ensure_message_storage()
-    from psycopg.rows import dict_row
-
-    with get_connection() as connection:
-        _assert_direct_message_access(connection, user1, user2)
-        query_start = time.time()
-        with connection.cursor(row_factory=dict_row) as cursor:
-            # Limit must be an integer literal, not parameterized
-            limit = max(1, min(limit, 10000))  # Clamp to reasonable range
-            cursor.execute(
-                f"""
-                select id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
-                from public.messages
-                where (sender_id = %s and recipient_id = %s)
-                   or (sender_id = %s and recipient_id = %s)
-                order by timestamp asc, id asc
-                limit {limit}
-                """,
-                (user1, user2, user2, user1),
-            )
-            rows = cursor.fetchall()
-        query_time = time.time() - query_start
-        total_time = time.time() - request_start
-        if total_time > 2.0:
-            print(f"[PERF] /messages/conversation between {user1} and {user2}: query={query_time:.1f}s, total={total_time:.1f}s, found {len(rows)} messages")
-            
-    return {"messages": [serialize_message_row(row) for row in rows]}
 
 @app.get("/projects/{project_id}/group-messages")
 # API endpoint that returns project group chat messages for an authorized user.
@@ -4120,54 +4141,7 @@ def get_project_group_messages(project_id: str, user_id: str, limit: int = 200) 
     return {"messages": [serialize_project_group_message_row(row) for row in rows]}
 
 
-@app.post("/messages")
-# API endpoint that creates a direct message.
-async def create_message(payload: MessagePayload) -> dict[str, Any]:
-    ensure_message_storage()
-    attachments = payload.attachments or []
-    from psycopg.rows import dict_row
 
-    with get_connection() as connection:
-        _assert_direct_message_access(connection, payload.senderId, payload.recipientId)
-        with connection.cursor(row_factory=dict_row) as cursor:
-            # Check if message already exists
-            cursor.execute(
-                "SELECT id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments FROM public.messages WHERE id = %s",
-                (payload.id,),
-            )
-            row = cursor.fetchone()
-            
-            # If new message, insert it
-            if row is None:
-                cursor.execute(
-                    """
-                    INSERT INTO public.messages (
-                      id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
-                    """,
-                    (
-                        payload.id,
-                        payload.senderId,
-                        payload.recipientId,
-                        payload.projectId,
-                        payload.content,
-                        payload.timestamp,
-                        payload.read,
-                        json.dumps(attachments),
-                    ),
-                )
-                row = cursor.fetchone()
-                _trace(f"[INSERT] Message {payload.id} inserted and committed")
-        # IMPORTANT: Commit happens when exiting 'with connection.cursor' block
-        connection.commit()
-        _trace(f"[COMMIT] Message {payload.id} transaction committed")
-
-    _invalidate_collection_cache(["messages"])
-    message = serialize_message_row(row)
-    await connection_manager.broadcast_message_event(message)
-    return message
 
 
 @app.post("/projects/{project_id}/group-messages")
@@ -4631,6 +4605,82 @@ def get_admin_dashboard_snapshot() -> dict[str, Any]:
         return {"items": {k: [] for k in _ADMIN_DASHBOARD_KEYS}}
 
 
+@app.delete("/projects/{project_id}")
+async def delete_project_direct(project_id: str) -> dict[str, Any]:
+    _require_postgres()
+    target_id = str(project_id or "").strip()
+    if not target_id:
+        raise HTTPException(status_code=400, detail="Missing project id.")
+
+    changed_keys = ["projects", "programs", "events"]
+    with get_connection() as connection:
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id FROM events WHERE parent_project_id = %s UNION SELECT id FROM projects WHERE parent_project_id = %s",
+                    (target_id, target_id),
+                )
+                child_ids = {str(row[0]).strip() for row in cursor.fetchall() if row and row[0]}
+                all_target_ids = {target_id} | child_ids
+
+                cursor.execute("DELETE FROM projects WHERE id = ANY(%s) OR parent_project_id = %s", (list(all_target_ids), target_id))
+                cursor.execute("DELETE FROM programs WHERE id = ANY(%s) OR parent_project_id = %s", (list(all_target_ids), target_id))
+                cursor.execute("DELETE FROM events WHERE id = ANY(%s) OR parent_project_id = %s", (list(all_target_ids), target_id))
+
+            cascaded = _cascade_delete_project_references(connection, all_target_ids)
+            for k in cascaded:
+                if k not in changed_keys:
+                    changed_keys.append(k)
+
+            connection.commit()
+        except Exception as e:
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+            print(f"[ERROR] delete_project_direct failed for id={target_id}: {e}", flush=True)
+            raise HTTPException(status_code=500, detail=f"Failed to delete project: {str(e)}")
+
+    _invalidate_collection_cache(changed_keys)
+    _projects_snapshot_cache.clear()
+    await connection_manager.broadcast_storage_event(changed_keys)
+    return {"status": "ok", "deletedId": target_id, "changedKeys": changed_keys}
+
+
+@app.delete("/events/{event_id}")
+async def delete_event_direct(event_id: str) -> dict[str, Any]:
+    _require_postgres()
+    target_id = str(event_id or "").strip()
+    if not target_id:
+        raise HTTPException(status_code=400, detail="Missing event id.")
+
+    changed_keys = ["events", "projects"]
+    with get_connection() as connection:
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM events WHERE id = %s", (target_id,))
+                cursor.execute("DELETE FROM projects WHERE id = %s", (target_id,))
+
+            cascaded = _cascade_delete_project_references(connection, {target_id})
+            for k in cascaded:
+                if k not in changed_keys:
+                    changed_keys.append(k)
+
+            connection.commit()
+        except Exception as e:
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+            print(f"[ERROR] delete_event_direct failed for id={target_id}: {e}", flush=True)
+            raise HTTPException(status_code=500, detail=f"Failed to delete event: {str(e)}")
+
+    _invalidate_collection_cache(changed_keys)
+    _projects_snapshot_cache.clear()
+    await connection_manager.broadcast_storage_event(changed_keys)
+    return {"status": "ok", "deletedId": target_id, "changedKeys": changed_keys}
+
+
 @app.put("/storage/{key}")
 # API endpoint that writes one storage key and broadcasts the change.
 async def put_storage_item(key: str, payload: StoragePayload) -> dict[str, str]:
@@ -4894,6 +4944,7 @@ async def clear_all_caches() -> dict[str, Any]:
     _invalidate_collection_cache()
     _projects_snapshot_cache.clear()
     _storage_collection_cache.clear()
+    _message_query_cache.clear()
     await connection_manager.broadcast_storage_event(list(HOT_STORAGE_TABLES.keys()) + list(SPECIAL_STORAGE_KEYS))
     return {"status": "ok", "message": "All caches cleared successfully"}
 
@@ -4915,4 +4966,375 @@ def bootstrap_storage() -> dict[str, str]:
     _invalidate_collection_cache()
     _projects_snapshot_cache.clear()
     return {"status": "ok"}
+
+
+# --- Direct Messaging & Conversation Endpoints ---
+
+class MessageCreatePayload(BaseModel):
+    id: str | None = None
+    senderId: str
+    recipientId: str
+    projectId: str | None = None
+    content: str
+    timestamp: str | None = None
+    read: bool = False
+    attachments: list[Any] = []
+
+
+def serialize_message_row(row: dict[str, Any]) -> dict[str, Any]:
+    attachments = row.get("attachments")
+    if isinstance(attachments, str):
+        try:
+            attachments = json.loads(attachments)
+        except Exception:
+            attachments = []
+    elif not isinstance(attachments, list):
+        attachments = []
+
+    ts = row.get("timestamp")
+    if hasattr(ts, "isoformat"):
+        ts_str = ts.isoformat()
+    else:
+        ts_str = str(ts or "")
+
+    return {
+        "id": str(row.get("id") or ""),
+        "senderId": str(row.get("sender_id") or ""),
+        "recipientId": str(row.get("recipient_id") or ""),
+        "projectId": row.get("project_id"),
+        "content": str(row.get("content") or ""),
+        "timestamp": ts_str,
+        "read": bool(row.get("read", False)),
+        "attachments": attachments,
+    }
+
+
+@app.get("/messages")
+def get_messages(
+    user_id: str,
+    limit: int = 120,
+    compact: bool = False,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return all direct messages for one user (inbox/outbox), with optional compact payload."""
+    from psycopg.rows import dict_row
+
+    limit_val = max(1, min(int(limit), 120))
+    cache_key = f"messages:{user_id}:{limit_val}:{'compact' if compact else 'full'}"
+    cached = _message_query_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    with _get_message_query_lock(cache_key):
+        cached = _message_query_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        content_expr = "left(content, 280) as content" if compact else "content"
+        attachments_expr = "'[]'::jsonb as attachments" if compact else "attachments"
+
+        with get_connection() as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, sender_id, recipient_id, project_id, {content_expr}, timestamp, read, {attachments_expr}
+                    FROM (
+                      SELECT id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
+                      FROM public.messages
+                      WHERE sender_id = %s
+                      UNION ALL
+                      SELECT id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
+                      FROM public.messages
+                      WHERE recipient_id = %s
+                    ) AS user_messages
+                    ORDER BY timestamp DESC, id DESC
+                    LIMIT %s
+                    """,
+                    (user_id, user_id, limit_val),
+                )
+                rows = cursor.fetchall()
+
+        result = {"messages": [serialize_message_row(row) for row in rows]}
+        _message_query_cache.set(cache_key, result)
+        return result
+
+
+@app.get("/messages/conversation")
+def get_conversation(
+    user1: str,
+    user2: str,
+    limit: int = 120,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return chronological conversation history between two users using indexed UNION ALL."""
+    from psycopg.rows import dict_row
+
+    limit_val = max(1, min(int(limit), 120))
+    cache_key = f"conversation:{min(user1, user2)}:{max(user1, user2)}:{limit_val}"
+    cached = _message_query_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    with _get_message_query_lock(cache_key):
+        cached = _message_query_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        with get_connection() as connection:
+            with connection.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
+                    FROM (
+                      SELECT id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
+                      FROM public.messages
+                      WHERE sender_id = %s AND recipient_id = %s
+                      UNION ALL
+                      SELECT id, sender_id, recipient_id, project_id, content, timestamp, read, attachments
+                      FROM public.messages
+                      WHERE sender_id = %s AND recipient_id = %s
+                    ) AS conversation
+                    ORDER BY timestamp ASC, id ASC
+                    LIMIT %s
+                    """,
+                    (user1, user2, user2, user1, limit_val),
+                )
+                rows = cursor.fetchall()
+
+        result = {"messages": [serialize_message_row(row) for row in rows]}
+        _message_query_cache.set(cache_key, result)
+        return result
+
+
+@app.post("/messages")
+async def create_message(payload: MessageCreatePayload) -> dict[str, Any]:
+    """Persist a message to database and invalidate query cache."""
+    msg_id = payload.id or f"msg-{secrets.token_hex(8)}"
+    ts = payload.timestamp or datetime.now(timezone.utc).isoformat()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO public.messages (id, sender_id, recipient_id, project_id, content, timestamp, read, attachments)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                ON CONFLICT (id) DO UPDATE SET
+                  content = EXCLUDED.content,
+                  read = EXCLUDED.read,
+                  attachments = EXCLUDED.attachments
+                """,
+                (
+                    msg_id,
+                    payload.senderId,
+                    payload.recipientId,
+                    payload.projectId,
+                    payload.content,
+                    ts,
+                    payload.read,
+                    json.dumps(payload.attachments),
+                ),
+            )
+        connection.commit()
+
+    _message_query_cache.clear()
+    msg_dict = {
+        "id": msg_id,
+        "senderId": payload.senderId,
+        "recipientId": payload.recipientId,
+        "projectId": payload.projectId,
+        "content": payload.content,
+        "timestamp": ts,
+        "read": payload.read,
+        "attachments": payload.attachments,
+    }
+    try:
+        await connection_manager.broadcast_message_event(msg_dict)
+    except Exception:
+        pass
+    return {"success": True, "id": msg_id, "message": msg_dict}
+
+
+@app.patch("/messages/{message_id}/read")
+def mark_message_read(message_id: str) -> dict[str, Any]:
+    """Mark a direct message as read and invalidate cache."""
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE public.messages SET read = true WHERE id = %s",
+                (message_id,),
+            )
+        connection.commit()
+
+    _message_query_cache.clear()
+    return {"success": True}
+
+
+@app.patch("/messages/{message_id}")
+async def update_message_endpoint(message_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Edit or soft-delete a direct message."""
+    ensure_message_storage()
+    from psycopg.rows import dict_row
+
+    new_content = payload.get("content")
+    is_deleted = bool(payload.get("deleted", False))
+    is_edited = bool(payload.get("edited", False))
+    
+    with get_connection() as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            if is_deleted:
+                cursor.execute(
+                    """
+                    UPDATE public.messages
+                    SET deleted = true, content = 'This message was deleted'
+                    WHERE id = %s
+                    RETURNING id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments, deleted, edited, reply_to_id, reply_to_content, reply_to_sender_name
+                    """,
+                    (message_id,),
+                )
+            elif is_edited and new_content is not None:
+                cursor.execute(
+                    """
+                    UPDATE public.messages
+                    SET edited = true, content = %s
+                    WHERE id = %s
+                    RETURNING id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments, deleted, edited, reply_to_id, reply_to_content, reply_to_sender_name
+                    """,
+                    (new_content, message_id),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments, deleted, edited, reply_to_id, reply_to_content, reply_to_sender_name
+                    FROM public.messages
+                    WHERE id = %s
+                    """,
+                    (message_id,),
+                )
+            row = cursor.fetchone()
+        connection.commit()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Message not found.")
+
+    _message_query_cache.clear()
+    msg_dict = serialize_message_row(row)
+    try:
+        await connection_manager.broadcast_message_event(msg_dict)
+    except Exception:
+        pass
+    return {"success": True, "message": msg_dict}
+
+
+@app.delete("/messages/{message_id}")
+async def delete_message_endpoint(message_id: str) -> dict[str, Any]:
+    """Soft delete a direct message so it shows 'This message was deleted'."""
+    ensure_message_storage()
+    from psycopg.rows import dict_row
+
+    with get_connection() as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                UPDATE public.messages
+                SET deleted = true, content = 'This message was deleted'
+                WHERE id = %s
+                RETURNING id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments, deleted, edited, reply_to_id, reply_to_content, reply_to_sender_name
+                """,
+                (message_id,),
+            )
+            row = cursor.fetchone()
+        connection.commit()
+
+    _message_query_cache.clear()
+    if row is not None:
+        msg_dict = serialize_message_row(row)
+        try:
+            await connection_manager.broadcast_message_event(msg_dict)
+        except Exception:
+            pass
+    return {"success": True}
+
+
+@app.patch("/project-group-messages/{message_id}")
+async def update_project_group_message_endpoint(message_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Edit or soft-delete a project group chat message."""
+    ensure_project_group_message_storage()
+    from psycopg.rows import dict_row
+
+    new_content = payload.get("content")
+    is_deleted = bool(payload.get("deleted", False))
+    is_edited = bool(payload.get("edited", False))
+
+    with get_connection() as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            if is_deleted:
+                cursor.execute(
+                    """
+                    UPDATE project_group_messages
+                    SET deleted = true, content = 'This message was deleted'
+                    WHERE id = %s
+                    RETURNING id as project_group_messages_id, project_id, sender_id, content, timestamp, kind, need_post, scope_proposal, response_to_message_id, response_action, response_to_title, attachments, deleted, edited, reply_to_id, reply_to_content, reply_to_sender_name
+                    """,
+                    (message_id,),
+                )
+            elif is_edited and new_content is not None:
+                cursor.execute(
+                    """
+                    UPDATE project_group_messages
+                    SET edited = true, content = %s
+                    WHERE id = %s
+                    RETURNING id as project_group_messages_id, project_id, sender_id, content, timestamp, kind, need_post, scope_proposal, response_to_message_id, response_action, response_to_title, attachments, deleted, edited, reply_to_id, reply_to_content, reply_to_sender_name
+                    """,
+                    (new_content, message_id),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id as project_group_messages_id, project_id, sender_id, content, timestamp, kind, need_post, scope_proposal, response_to_message_id, response_action, response_to_title, attachments, deleted, edited, reply_to_id, reply_to_content, reply_to_sender_name
+                    FROM project_group_messages
+                    WHERE id = %s
+                    """,
+                    (message_id,),
+                )
+            row = cursor.fetchone()
+        connection.commit()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Project group message not found.")
+
+    _invalidate_collection_cache(["projectGroupMessages"])
+    msg_dict = serialize_project_group_message_row(row)
+    try:
+        await connection_manager.broadcast_project_group_message_event(row["project_id"], msg_dict)
+    except Exception:
+        pass
+    return {"success": True, "message": msg_dict}
+
+
+@app.delete("/project-group-messages/{message_id}")
+async def delete_project_group_message_endpoint(message_id: str) -> dict[str, Any]:
+    """Soft delete a project group chat message."""
+    ensure_project_group_message_storage()
+    from psycopg.rows import dict_row
+
+    with get_connection() as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute(
+                """
+                UPDATE project_group_messages
+                SET deleted = true, content = 'This message was deleted'
+                WHERE id = %s
+                RETURNING id as project_group_messages_id, project_id, sender_id, content, timestamp, kind, need_post, scope_proposal, response_to_message_id, response_action, response_to_title, attachments, deleted, edited, reply_to_id, reply_to_content, reply_to_sender_name
+                """,
+                (message_id,),
+            )
+            row = cursor.fetchone()
+        connection.commit()
+
+    _invalidate_collection_cache(["projectGroupMessages"])
+    if row is not None:
+        msg_dict = serialize_project_group_message_row(row)
+        try:
+            await connection_manager.broadcast_project_group_message_event(row["project_id"], msg_dict)
+        except Exception:
+            pass
+    return {"success": True}
+
 

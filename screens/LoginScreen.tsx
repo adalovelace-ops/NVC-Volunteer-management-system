@@ -12,10 +12,12 @@ import {
   Modal,
   useWindowDimensions,
   Image,
+  Platform,
 } from "react-native";
 import { format, parseISO } from "date-fns";
 import ModernTheme from "../utils/modernTheme";
 import loginBackgroundImage from "../assets/about-us-2020.jpg";
+import mobileLoginBackgroundImage from "../assets/login.png";
 
 // Safe Platform accessor for web environments
 function getPlatformOS(): string {
@@ -66,6 +68,12 @@ import {
   subscribeToStorageChanges,
 } from "../models/storage";
 import { showError, showInfo } from "../utils/errorHandler";
+import {
+  validatePasswordStrength,
+  checkLoginLockout,
+  recordFailedLoginAttempt,
+  resetFailedLoginAttempts,
+} from "../utils/security";
 import { useAuth } from "../contexts/AuthContext";
 import AppLogo from "../components/AppLogo";
 import InlineLoadError from "../components/InlineLoadError";
@@ -147,6 +155,24 @@ const ADMIN_DEMO_ACCOUNT: DemoLoginAccount = {
   badge: "ADMIN",
 };
 
+const VOLUNTEER_DEMO_ACCOUNT: DemoLoginAccount = {
+  id: "demo-volunteer",
+  name: "Volunteer Demo",
+  identifier: "volunteer@nvc.org",
+  password: "password123",
+  badge: "VOLUNTEER",
+  mobileRole: "volunteer",
+};
+
+const PARTNER_DEMO_ACCOUNT: DemoLoginAccount = {
+  id: "demo-partner",
+  name: "Partner Demo",
+  identifier: "partner@nvc.org",
+  password: "password123",
+  badge: "PARTNER",
+  mobileRole: "partner",
+};
+
 function getVisibleDemoAccounts(
   isWeb: boolean,
   selectedMobileRole: MobileEntryRole | null,
@@ -155,7 +181,7 @@ function getVisibleDemoAccounts(
     return [ADMIN_DEMO_ACCOUNT];
   }
 
-  return [ADMIN_DEMO_ACCOUNT];
+  return [VOLUNTEER_DEMO_ACCOUNT, PARTNER_DEMO_ACCOUNT];
 }
 
 // Returns a clean volunteer membership form state for the signup modal.
@@ -784,28 +810,32 @@ export default function LoginScreen() {
       });
     };
 
-    setLoginError(null);
+      setLoginError(null);
 
-    if (!isWeb && !activeMobileRole) {
-      Alert.alert(
-        "Select Account Type",
-        "Choose whether you are signing in as a volunteer or partner organization first.",
+      if (!trimmedIdentifier || !trimmedPassword) {
+        showLoginError("Validation Error", "Please fill in all fields");
+        return;
+      }
+
+      const lockout = checkLoginLockout(trimmedIdentifier);
+      if (lockout.isLocked) {
+        const minutes = Math.floor(lockout.remainingSeconds / 60);
+        const seconds = lockout.remainingSeconds % 60;
+        const timeStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+        showLoginError(
+          "Account Temporarily Locked",
+          `Too many failed login attempts. For security, please wait ${timeStr} before trying again.`
+        );
+        return;
+      }
+
+      const locallyMatchedUser = findUserByLoginIdentifier(
+        savedAccounts,
+        trimmedIdentifier,
       );
-      return;
-    }
-
-    if (!trimmedIdentifier || !trimmedPassword) {
-      showLoginError("Validation Error", "Please fill in all fields");
-      return;
-    }
-
-    const locallyMatchedUser = findUserByLoginIdentifier(
-      savedAccounts,
-      trimmedIdentifier,
-    );
-    const localPasswordMatches =
-      locallyMatchedUser &&
-      (locallyMatchedUser.password || "").trim() === trimmedPassword;
+      const localPasswordMatches =
+        locallyMatchedUser &&
+        (locallyMatchedUser.password || "").trim() === trimmedPassword;
 
     if (backendStatus !== "online" && savedAccounts.length > 0) {
       if (!localPasswordMatches) {
@@ -919,6 +949,7 @@ export default function LoginScreen() {
       }
 
       // Update auth context - this triggers state change and navigation
+      resetFailedLoginAttempts(trimmedIdentifier);
       await login(user);
       setBackendStatus("online");
       setBackendMessage(`Backend connected to Postgres: ${getApiBaseUrl()}`);
@@ -949,7 +980,23 @@ export default function LoginScreen() {
         setBackendStatus("offline");
         setBackendMessage(message);
       }
-      showLoginError(title, message);
+
+      if (title === "Incorrect Password") {
+        const lockoutStatus = recordFailedLoginAttempt(trimmedIdentifier);
+        if (lockoutStatus.isLocked) {
+          showLoginError(
+            "Account Locked",
+            "Too many failed login attempts. Account is temporarily locked for 5 minutes."
+          );
+        } else {
+          showLoginError(
+            title,
+            `${message} (${lockoutStatus.attemptsLeft} attempts remaining before temporary lockout)`
+          );
+        }
+      } else {
+        showLoginError(title, message);
+      }
     } finally {
       setLoading(false);
     }
@@ -1005,6 +1052,14 @@ export default function LoginScreen() {
       setSignupUserType(selectedMobileRole === "partner" ? "Adult" : "Student");
       setSignupStep("details");
     }
+    setShowSignupModal(true);
+  };
+
+  const openVolunteerSignupModal = () => {
+    resetSignupForm();
+    setSignupRole("volunteer");
+    setSignupUserType("Student");
+    setSignupStep("details");
     setShowSignupModal(true);
   };
 
@@ -1276,10 +1331,11 @@ export default function LoginScreen() {
       return;
     }
 
-    if (signupPassword.length < 6) {
-      const errorMsg = "Password must be at least 6 characters.";
+    const passwordStrength = validatePasswordStrength(signupPassword);
+    if (!passwordStrength.isValid) {
+      const errorMsg = passwordStrength.feedback;
       setSignupValidationError(errorMsg);
-      Alert.alert("Validation Error", errorMsg);
+      Alert.alert("Password Requirements Not Met", errorMsg);
       return;
     }
 
@@ -1389,9 +1445,8 @@ export default function LoginScreen() {
                 signupPartnerApplication.sectorType !== "NGO"
                   ? signupPartnerApplication.secRegistrationNo.trim()
                   : "",
-              validIdPhoto: signupPartnerApplication.validIdPhoto.trim(),
               advocacyFocus: signupPartnerApplication.advocacyFocus,
-            }
+            } as any
             : undefined,
         volunteerMembershipSheet:
           signupRole === "volunteer"
@@ -1609,368 +1664,271 @@ export default function LoginScreen() {
 
   return (
     <>
-      {isWeb ? (
-        <ImageBackground
-          source={loginBackgroundImage}
-          style={styles.webBackgroundImage}
-          resizeMode="cover"
-        >
-          <View style={styles.webDarkOverlay} />
-        </ImageBackground>
-      ) : null}
-
-      <ScrollView
-        style={[styles.container, isWeb && styles.webOuterContainer]}
-        contentContainerStyle={[
-          styles.contentContainer,
-          isWeb && styles.webContentContainer,
-          isCompactLayout && styles.compactContentContainer,
-        ]}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="always"
-      >
-        <View
-          style={[
-            styles.pageWrapper,
-            isWeb && styles.webPage,
-            isWeb && screenWidth < 960 && styles.webPageStacked,
-          ]}
-        >
-          {isWeb ? (
-            <View style={styles.webHeroPane}>
-              <View style={styles.leftBrandHeader}>
-                <AppLogo width={160} />
-              </View>
-              <View style={styles.pillBadge}>
-                <Text style={styles.pillBadgeText}>NVC FOUNDATION</Text>
-              </View>
-              <Text style={styles.webHeroHeadingOriginal}>
-                A nation free from hunger and poverty,
-              </Text>
-              <Text style={styles.webHeroSubHeadingOriginal}>
-                built through personal social responsibility and collaborative partnerships.
-              </Text>
-            </View>
-          ) : null}
-
-          <View
-            style={[
-              styles.contentShell,
-              isWeb ? styles.webCardShell : styles.mobileContentShell,
-              isCompactLayout && styles.compactContentShell,
-              isWeb && screenWidth < 960 && styles.webCardShellStacked,
-            ]}
+      {!isWeb ? (
+        <View style={styles.mobileScreenContainer}>
+          <ImageBackground
+            source={mobileLoginBackgroundImage}
+            style={styles.mobileBackgroundImage}
+            resizeMode="cover"
           >
-            {!isWeb ? (
-              <View style={styles.brandSection}>
-                <AppLogo width={220} />
-              </View>
-            ) : null}
-
-            {false ? (
-              <View style={styles.webAccessNotice}>
-                <Text style={styles.webAccessNoticeTitle}>
-                  Web access is for admin only
-                </Text>
-                <Text style={styles.webAccessNoticeText}>
-                  Volunteer and partner accounts can sign in through the mobile
-                  app.
-                </Text>
-              </View>
-            ) : null}
-
-            <View
-              style={[
-                styles.backendStatusCard,
-                backendStatus === "online"
-                  ? styles.backendStatusOnline
-                  : backendStatus === "offline"
-                    ? styles.backendStatusOffline
-                    : styles.backendStatusChecking,
-              ]}
-            >
-              <View style={styles.backendStatusRow}>
+            <View style={styles.mobileDarkOverlay}>
+              {/* Database Status Dot (Top-Left) */}
+              <TouchableOpacity
+                style={styles.mobileStatusDotWrap}
+                onPress={() => {
+                  Alert.alert(
+                    backendStatus === "online"
+                      ? "Database Connected"
+                      : backendStatus === "offline"
+                        ? "Database Unavailable"
+                        : "Checking Database",
+                    backendMessage,
+                  );
+                }}
+                activeOpacity={0.7}
+                accessibilityLabel="Database status"
+              >
                 <View
                   style={[
-                    styles.backendStatusDot,
+                    styles.mobileStatusDot,
                     backendStatus === "online"
-                      ? styles.backendStatusDotOnline
+                      ? styles.mobileStatusDotOnline
                       : backendStatus === "offline"
-                        ? styles.backendStatusDotOffline
-                        : styles.backendStatusDotChecking,
+                        ? styles.mobileStatusDotOffline
+                        : styles.mobileStatusDotChecking,
                   ]}
                 />
-                <Text style={styles.backendStatusTitle}>
-                  {backendStatus === "online"
-                    ? "Database Connected"
-                    : backendStatus === "offline"
-                      ? "Database Unavailable"
-                      : "Checking Database"}
-                </Text>
-              </View>
-              <Text style={styles.backendStatusText}>{backendMessage}</Text>
-            </View>
+              </TouchableOpacity>
 
-            {!isWeb && !selectedMobileRole ? (
-              <View style={styles.mobilePortalContainer}>
-                {/* Top Nav Bar */}
-                <View style={styles.mobileTopBar}>
-                  <View style={{ flex: 1 }} />
-                  <View style={styles.mobileTopHelpRow}>
-                    <MaterialIcons name="auto-awesome" size={13} color="#166534" style={{ marginRight: 4 }} />
-                    <Text style={styles.mobileTopHelpText}>New here? Choose a portal to begin</Text>
-                  </View>
-                </View>
-
-                {/* Main Header */}
-                <View style={styles.portalHeroHeader}>
-                  <Text style={styles.portalEyebrow}>GET STARTED</Text>
-                  <Text style={styles.portalHeadline}>Choose Your Mobile Portal</Text>
-                  <Text style={styles.portalSubtext}>
-                    Select whether you are signing in as a volunteer or a partner organization before continuing.
-                  </Text>
-                </View>
-
-                {/* Cards Grid */}
-                <View style={[styles.portalGridContainer, stackSelectionCards && styles.portalGridContainerStacked]}>
-                  {/* Volunteer Card */}
-                  <View style={styles.portalTileCard}>
-                    <View style={styles.volunteerBadgeIconWrap}>
-                      <MaterialIcons name="volunteer-activism" size={24} color="#e11d48" />
+              <ScrollView
+                contentContainerStyle={styles.mobileScrollContainer}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {/* Glassmorphic Login Card */}
+                <View style={styles.glassLoginCard}>
+                  {/* Header with Logo and Title */}
+                  <View style={styles.glassHeaderRow}>
+                    <View style={styles.glassLogoWrap}>
+                      <AppLogo width={48} />
                     </View>
-                    <Text style={styles.portalTileTitle}>Volunteer</Text>
-                    <Text style={styles.portalTileDescription}>
-                      Join projects, track your hours, and manage your volunteer activities.
-                    </Text>
-                    <TouchableOpacity
-                      style={styles.portalTileButton}
-                      onPress={() => handleSelectMobileRole("volunteer")}
-                      activeOpacity={0.88}
-                    >
-                      <Text style={styles.portalTileButtonText}>Continue as Volunteer</Text>
-                      <MaterialIcons name="arrow-forward" size={16} color="#ffffff" />
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Partner Organization Card */}
-                  <View style={styles.portalTileCard}>
-                    <View style={styles.partnerBadgeIconWrap}>
-                      <MaterialIcons name="domain" size={24} color="#2563eb" />
+                    <View style={styles.glassHeaderTitleWrap}>
+                      <Text style={styles.glassHeaderTitle}>NVC CONNECT</Text>
+                      <Text style={styles.glassHeaderSubtitle}>Partner & Volunteer Log In</Text>
                     </View>
-                    <Text style={styles.portalTileTitle}>Partner Organization</Text>
-                    <Text style={styles.portalTileDescription}>
-                      Coordinate organization projects, submit reports, and collaborate with NVC.
-                    </Text>
-                    <TouchableOpacity
-                      style={styles.portalTileButton}
-                      onPress={() => handleSelectMobileRole("partner")}
-                      activeOpacity={0.88}
-                    >
-                      <Text style={styles.portalTileButtonText}>Continue as Partner Organization</Text>
-                      <MaterialIcons name="arrow-forward" size={16} color="#ffffff" />
-                    </TouchableOpacity>
                   </View>
-                </View>
 
-                {/* Bottom Sign up link */}
-                <TouchableOpacity
-                  style={styles.portalSignupFooter}
-                  onPress={openSignupModal}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.portalSignupFooterText}>
-                    Sign up as a Volunteer or Partner
-                  </Text>
-                </TouchableOpacity>
-
-                {renderQuickLoginSection()}
-              </View>
-            ) : !isWeb && selectedMobileRole ? (
-              <View style={styles.mobileLoginContainer}>
-                {/* Back to portal selector */}
-                <TouchableOpacity
-                  style={styles.loginBackNavButton}
-                  onPress={handleBackToRoleSelection}
-                  activeOpacity={0.8}
-                >
-                  <MaterialIcons name="arrow-back" size={16} color="#166534" />
-                  <Text style={styles.loginBackNavText}>Change portal</Text>
-                </TouchableOpacity>
-
-                {/* Centered Welcome Header */}
-                <View style={styles.loginCenterHeader}>
-                  <View style={styles.loginTopIconSquare}>
-                    <MaterialIcons name="login" size={22} color="#ffffff" />
-                  </View>
-                  <Text style={styles.loginHeaderTitle}>Welcome back</Text>
-                  <Text style={styles.loginHeaderSubtitle}>
-                    Log in to your account
-                  </Text>
-                </View>
-
-                {/* Login Card Form */}
-                <View style={styles.loginBoxCard}>
-                  {/* Continue with Google */}
-                  <TouchableOpacity
-                    style={styles.googleLoginButton}
-                    onPress={() => {
-                      Alert.alert(
-                        "Google Sign-In",
-                        "Google Sign-In is configured for mobile builds. Please use your credentials or quick demo logins below."
-                      );
+                  {/* Email, Username, or Phone Input */}
+                  <TextInput
+                    style={styles.glassInput}
+                    placeholder="Email, Username, or Phone"
+                    placeholderTextColor="#94a3b8"
+                    value={identifier}
+                    onChangeText={(val) => {
+                      setIdentifier(val);
+                      if (loginError) setLoginError(null);
                     }}
-                    activeOpacity={0.85}
-                  >
-                    <View style={styles.googleGIcon}>
-                      <Text style={styles.googleGText}>G</Text>
-                    </View>
-                    <Text style={styles.googleLoginButtonText}>Continue with Google</Text>
-                  </TouchableOpacity>
+                    autoCapitalize="none"
+                    editable={!loading}
+                  />
 
-                  {/* OR Divider */}
-                  <View style={styles.loginOrDivider}>
-                    <View style={styles.loginDividerLine} />
-                    <Text style={styles.loginDividerText}>OR</Text>
-                    <View style={styles.loginDividerLine} />
-                  </View>
+                  {/* Password Input */}
+                  <TextInput
+                    style={styles.glassInput}
+                    placeholder="Password"
+                    placeholderTextColor="#94a3b8"
+                    value={password}
+                    onChangeText={(val) => {
+                      setPassword(val);
+                      if (loginError) setLoginError(null);
+                    }}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    editable={!loading}
+                  />
 
-                  {/* Email / Username field */}
-                  <View style={styles.inputFieldGroup}>
-                    <Text style={styles.inputFieldLabel}>Email</Text>
-                    <View style={styles.inputBoxWithIcon}>
-                      <MaterialIcons name="mail-outline" size={18} color="#94a3b8" style={styles.inputLeftIcon} />
-                      <TextInput
-                        style={styles.cleanTextInput}
-                        placeholder="you@example.com"
-                        placeholderTextColor="#94a3b8"
-                        value={identifier}
-                        onChangeText={(value) => {
-                          setIdentifier(value);
-                          if (loginError) setLoginError(null);
-                        }}
-                        autoCapitalize="none"
-                        keyboardType="email-address"
-                        editable={!loading}
-                      />
-                    </View>
-                  </View>
-
-                  {/* Password field */}
-                  <View style={styles.inputFieldGroup}>
-                    <View style={styles.passwordFieldHeaderRow}>
-                      <Text style={styles.inputFieldLabel}>Password</Text>
-                      <TouchableOpacity
-                        onPress={() => {
-                          Alert.alert(
-                            "Forgot Password",
-                            "Please contact your NVC system administrator to recover or reset your account password."
-                          );
-                        }}
-                      >
-                        <Text style={styles.forgotPasswordLinkText}>Forgot password?</Text>
-                      </TouchableOpacity>
-                    </View>
-                    <View style={styles.inputBoxWithIcon}>
-                      <MaterialIcons name="lock-outline" size={18} color="#94a3b8" style={styles.inputLeftIcon} />
-                      <TextInput
-                        style={styles.cleanTextInput}
-                        placeholder="••••••••"
-                        placeholderTextColor="#94a3b8"
-                        value={password}
-                        onChangeText={(value) => {
-                          setPassword(value);
-                          if (loginError) setLoginError(null);
-                        }}
-                        secureTextEntry
-                        editable={!loading}
-                        autoCapitalize="none"
-                      />
-                    </View>
-                  </View>
-
+                  {/* Error Box */}
                   {loginError ? (
-                    <InlineLoadError
-                      title={loginError.title}
-                      message={loginError.message}
-                    />
+                    <View style={styles.glassErrorBox}>
+                      <MaterialIcons name="error-outline" size={14} color="#fca5a5" style={{ marginRight: 6 }} />
+                      <Text style={styles.glassErrorText}>{loginError.message}</Text>
+                    </View>
                   ) : null}
 
-                  {/* Primary Login button */}
+                  {/* Log In Button */}
                   <TouchableOpacity
                     style={[
-                      styles.loginSubmitButton,
+                      styles.glassLoginButton,
                       loading && styles.buttonDisabled,
-                      (!identifier || !password) && styles.loginSubmitButtonInactive,
+                      (!identifier.trim() || !password.trim()) && styles.glassLoginButtonInactive,
                     ]}
-                    onPress={() => {
-                      void handleLogin();
-                    }}
-                    disabled={loading || !identifier || !password}
-                    activeOpacity={0.88}
-                    accessibilityLabel="Mobile Log In"
+                    onPress={() => void handleLogin()}
+                    disabled={loading || !identifier.trim() || !password.trim()}
+                    activeOpacity={0.85}
                   >
                     {loading ? (
-                      <ActivityIndicator color="#fff" />
+                      <ActivityIndicator color="#ffffff" size="small" />
                     ) : (
-                      <Text style={styles.loginSubmitButtonText}>Log in</Text>
+                      <Text style={styles.glassLoginButtonText}>Log In</Text>
                     )}
                   </TouchableOpacity>
-                </View>
 
-                {/* Bottom link: Don't have an account? Create one */}
-                <View style={styles.loginBottomPromptRow}>
-                  <Text style={styles.loginBottomPromptText}>Don't have an account? </Text>
-                  <TouchableOpacity onPress={openSignupModal} activeOpacity={0.8}>
-                    <Text style={styles.loginBottomPromptLink}>Create one</Text>
+                  {/* Sign up as Volunteer or Partner Link */}
+                  <TouchableOpacity
+                    onPress={openSignupModal}
+                    activeOpacity={0.8}
+                    style={styles.glassSignupTouch}
+                  >
+                    <Text style={styles.glassSignupText}>Sign up as Volunteer or Partner</Text>
                   </TouchableOpacity>
                 </View>
 
-                {renderQuickLoginSection()}
-
-                {visibleSavedAccounts.length > 0 && (
-                  <View style={styles.demoSection}>
-                    <Text style={styles.demoTitle}>
-                      {`Saved ${selectedMobileRoleLabel} Accounts:`}
-                    </Text>
-                    {visibleSavedAccounts.map((account) => (
-                      <TouchableOpacity
-                        key={account.id}
-                        style={[
-                          styles.savedAccountCard,
-                          loading && styles.accountCardDisabled,
-                        ]}
-                        onPress={() => {
-                          void handleUseSavedAccount(account);
-                        }}
-                        activeOpacity={0.85}
-                        disabled={loading}
-                      >
-                        <View style={styles.savedAccountHeader}>
-                          <Text style={styles.savedAccountName}>
-                            {account.name}
-                          </Text>
-                          <Text style={styles.savedAccountRole}>
-                            {account.role}
-                          </Text>
-                        </View>
-                        <Text style={styles.savedAccountCredential}>
-                          {account.email ||
-                            account.phone ||
-                            "No login identifier"}
-                        </Text>
-                        <Text style={styles.savedAccountPassword}>
-                          {account.password}
-                        </Text>
-                        <Text style={styles.savedAccountHint}>
-                          Tap to sign in instantly
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                {/* Quick Demo Section on Mobile */}
+                {visibleDemoAccounts.length > 0 && (
+                  <View style={styles.mobileDemoContainer}>
+                    <Text style={styles.mobileDemoHeading}>Quick Demo Accounts</Text>
+                    <View style={styles.mobileDemoGrid}>
+                      {visibleDemoAccounts.map((account) => (
+                        <TouchableOpacity
+                          key={account.id}
+                          style={styles.mobileDemoChip}
+                          onPress={() => void handleQuickLogin(account)}
+                          disabled={loading}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={styles.mobileDemoChipName}>{account.name}</Text>
+                          <Text style={styles.mobileDemoChipBadge}>{account.badge}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
                   </View>
                 )}
+
+                {/* Saved Volunteer & Partner Accounts on Mobile */}
+                {visibleSavedAccounts.length > 0 && (
+                  <View style={[styles.mobileDemoContainer, { marginTop: 14, marginBottom: 24 }]}>
+                    <Text style={styles.mobileDemoHeading}>Saved Accounts</Text>
+                    <View style={styles.mobileSavedAccountsList}>
+                      {visibleSavedAccounts.map((account) => (
+                        <TouchableOpacity
+                          key={account.id}
+                          style={styles.mobileSavedAccountCard}
+                          onPress={() => void handleUseSavedAccount(account)}
+                          disabled={loading}
+                          activeOpacity={0.8}
+                        >
+                          <View style={styles.mobileSavedAccountHeader}>
+                            <Text style={styles.mobileSavedAccountName} numberOfLines={1}>
+                              {account.name}
+                            </Text>
+                            <View
+                              style={[
+                                styles.mobileSavedAccountBadge,
+                                account.role === "partner"
+                                  ? styles.mobileSavedAccountBadgePartner
+                                  : styles.mobileSavedAccountBadgeVolunteer,
+                              ]}
+                            >
+                              <Text style={styles.mobileSavedAccountBadgeText}>
+                                {account.role ? account.role.toUpperCase() : "USER"}
+                              </Text>
+                            </View>
+                          </View>
+                          <Text style={styles.mobileSavedAccountCred} numberOfLines={1}>
+                            {account.email || account.phone || "No identifier"}
+                          </Text>
+                          <Text style={styles.mobileSavedAccountHint}>Tap to sign in</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                )}
+              </ScrollView>
+            </View>
+          </ImageBackground>
+        </View>
+      ) : (
+        <>
+          <ImageBackground
+            source={loginBackgroundImage}
+            style={styles.webBackgroundImage}
+            resizeMode="cover"
+          >
+            <View style={styles.webDarkOverlay} />
+          </ImageBackground>
+
+          <ScrollView
+            style={[styles.container, styles.webOuterContainer]}
+            contentContainerStyle={[
+              styles.contentContainer,
+              styles.webContentContainer,
+              isCompactLayout && styles.compactContentContainer,
+            ]}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="always"
+          >
+            <View
+              style={[
+                styles.pageWrapper,
+                styles.webPage,
+                screenWidth < 960 && styles.webPageStacked,
+              ]}
+            >
+              <View style={styles.webHeroPane}>
+                <View style={styles.leftBrandHeader}>
+                  <AppLogo width={160} />
+                </View>
+                <View style={styles.pillBadge}>
+                  <Text style={styles.pillBadgeText}>NVC FOUNDATION</Text>
+                </View>
+                <Text style={styles.webHeroHeadingOriginal}>
+                  A nation free from hunger and poverty,
+                </Text>
+                <Text style={styles.webHeroSubHeadingOriginal}>
+                  built through personal social responsibility and collaborative partnerships.
+                </Text>
               </View>
-            ) : (
-              <>
+
+              <View
+                style={[
+                  styles.contentShell,
+                  styles.webCardShell,
+                  isCompactLayout && styles.compactContentShell,
+                  screenWidth < 960 && styles.webCardShellStacked,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.backendStatusCard,
+                    backendStatus === "online"
+                      ? styles.backendStatusOnline
+                      : backendStatus === "offline"
+                        ? styles.backendStatusOffline
+                        : styles.backendStatusChecking,
+                  ]}
+                >
+                  <View style={styles.backendStatusRow}>
+                    <View
+                      style={[
+                        styles.backendStatusDot,
+                        backendStatus === "online"
+                          ? styles.backendStatusDotOnline
+                          : backendStatus === "offline"
+                            ? styles.backendStatusDotOffline
+                            : styles.backendStatusDotChecking,
+                      ]}
+                    />
+                    <Text style={styles.backendStatusTitle}>
+                      {backendStatus === "online"
+                        ? "Database Connected"
+                        : backendStatus === "offline"
+                          ? "Database Unavailable"
+                          : "Checking Database"}
+                    </Text>
+                  </View>
+                  <Text style={styles.backendStatusText}>{backendMessage}</Text>
+                </View>
+
                 <TextInput
                   style={[styles.input, isCompactLayout && styles.compactInput]}
                   placeholder="Email, Username, or Phone"
@@ -2022,7 +1980,7 @@ export default function LoginScreen() {
                     <ActivityIndicator color="#fff" />
                   ) : (
                     <Text style={styles.buttonText}>
-                      {isWeb && !identifier && !password ? "Quick Sign In" : "Log In"}
+                      {!identifier && !password ? "Quick Sign In" : "Log In"}
                     </Text>
                   )}
                 </TouchableOpacity>
@@ -2072,11 +2030,11 @@ export default function LoginScreen() {
                 <TouchableOpacity onPress={openSignupModal}>
                   <Text style={styles.signupText}>Sign up as Admin</Text>
                 </TouchableOpacity>
-              </>
-            )}
-          </View>
-        </View>
-      </ScrollView>
+              </View>
+            </View>
+          </ScrollView>
+        </>
+      )}
 
       {showSignupModal ? (
         <Modal
@@ -5177,5 +5135,303 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 12,
     fontWeight: "700",
+  },
+  mobileScreenContainer: {
+    flex: 1,
+    backgroundColor: "#0f172a",
+  },
+  mobileBackgroundImage: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: "100%",
+    height: "100%",
+  },
+  mobileDarkOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.45)",
+  },
+  mobileStatusDotWrap: {
+    position: "absolute",
+    top: 24,
+    left: 24,
+    zIndex: 100,
+    padding: 8,
+  },
+  mobileStatusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  mobileStatusDotOnline: {
+    backgroundColor: "#22c55e",
+    shadowColor: "#22c55e",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.95,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  mobileStatusDotOffline: {
+    backgroundColor: "#ef4444",
+    shadowColor: "#ef4444",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.95,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  mobileStatusDotChecking: {
+    backgroundColor: "#eab308",
+    shadowColor: "#eab308",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.95,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  mobileScrollContainer: {
+    flexGrow: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 32,
+  },
+  glassLoginCard: {
+    backgroundColor: "rgba(40, 48, 44, 0.72)",
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.18)",
+    padding: 24,
+    width: "100%",
+    maxWidth: 340,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.45,
+    shadowRadius: 24,
+    elevation: 12,
+  },
+  glassHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 22,
+    gap: 12,
+  },
+  glassLogoWrap: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  glassHeaderTitleWrap: {
+    justifyContent: "center",
+  },
+  glassHeaderTitle: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#ffffff",
+    letterSpacing: 0.5,
+  },
+  glassHeaderSubtitle: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "rgba(255, 255, 255, 0.85)",
+    marginTop: 1,
+  },
+  glassInput: {
+    backgroundColor: "#ffffff",
+    borderRadius: 14,
+    height: 48,
+    paddingHorizontal: 16,
+    fontSize: 14,
+    color: "#0f172a",
+    marginBottom: 12,
+    borderWidth: 0,
+  },
+  glassErrorBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(239, 68, 68, 0.2)",
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.4)",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 12,
+  },
+  glassErrorText: {
+    fontSize: 12,
+    color: "#fca5a5",
+    flex: 1,
+    lineHeight: 16,
+  },
+  glassLoginButton: {
+    backgroundColor: "rgba(120, 130, 140, 0.85)",
+    borderRadius: 14,
+    height: 48,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  glassLoginButtonInactive: {
+    opacity: 0.7,
+  },
+  glassLoginButtonText: {
+    color: "#ffffff",
+    fontWeight: "800",
+    fontSize: 16,
+  },
+  glassSignupTouch: {
+    alignItems: "center",
+    paddingVertical: 4,
+  },
+  glassSignupText: {
+    color: "#a3e635",
+    fontWeight: "800",
+    fontSize: 13,
+    textAlign: "center",
+  },
+  mobileDemoContainer: {
+    marginTop: 20,
+    width: "100%",
+    maxWidth: 340,
+    alignItems: "center",
+  },
+  mobileDemoHeading: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "rgba(255, 255, 255, 0.7)",
+    marginBottom: 8,
+  },
+  mobileDemoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: 8,
+  },
+  mobileDemoChip: {
+    backgroundColor: "rgba(15, 23, 42, 0.65)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.15)",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  mobileDemoChipName: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#f8fafc",
+  },
+  mobileDemoChipBadge: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#86efac",
+  },
+  mobileSavedAccountsList: {
+    width: "100%",
+    gap: 8,
+  },
+  mobileSavedAccountCard: {
+    backgroundColor: "rgba(15, 23, 42, 0.75)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.18)",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  mobileSavedAccountHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  mobileSavedAccountName: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#ffffff",
+    flex: 1,
+    marginRight: 8,
+  },
+  mobileSavedAccountBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  mobileSavedAccountBadgeVolunteer: {
+    backgroundColor: "rgba(22, 163, 74, 0.35)",
+    borderWidth: 1,
+    borderColor: "#86efac",
+  },
+  mobileSavedAccountBadgePartner: {
+    backgroundColor: "rgba(99, 102, 241, 0.35)",
+    borderWidth: 1,
+    borderColor: "#c7d2fe",
+  },
+  mobileSavedAccountBadgeText: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#ffffff",
+  },
+  mobileSavedAccountCred: {
+    fontSize: 11,
+    color: "#94a3b8",
+    marginBottom: 4,
+  },
+  mobileSavedAccountHint: {
+    fontSize: 10,
+    color: "#a3e635",
+    fontWeight: "600",
+  },
+  imagePickerSection: {
+    marginVertical: 12,
+  },
+  imagePreviewContainer: {
+    position: "relative",
+    width: "100%",
+    height: 160,
+    borderRadius: 8,
+    overflow: "hidden",
+    backgroundColor: "#f1f5f9",
+    marginTop: 8,
+  },
+  imagePreview: {
+    width: "100%",
+    height: "100%",
+  },
+  removeImageButton: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    borderRadius: 14,
+    width: 28,
+    height: 28,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  imagePickerButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    gap: 8,
+    marginTop: 8,
+  },
+  imagePickerButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#475569",
+  },
+  imagePickerHint: {
+    fontSize: 11,
+    color: "#64748b",
+    marginTop: 6,
+    lineHeight: 16,
   },
 });

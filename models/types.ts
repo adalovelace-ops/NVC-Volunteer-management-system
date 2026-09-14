@@ -136,6 +136,7 @@ export interface AdminPlanningItem {
   id: string;
   title: string;
   description?: string;
+  category?: string;
   calendarId: string;
   linkedProjectId?: string;
   startDate: string;
@@ -176,6 +177,7 @@ export interface Project {
   programModule?: AdvocacyFocus;
   program_id?: string;
   isEvent?: boolean;
+  isDraft?: boolean;
   parentProjectId?: string;
   statusMode?: 'System' | 'Manual';
   manualStatus?: 'Planning' | 'In Progress' | 'On Hold' | 'Completed' | 'Cancelled';
@@ -247,6 +249,8 @@ export interface Volunteer {
     availableDays: string[]; // ['Monday', 'Tuesday', etc.]
   };
   pastProjects: string[]; // Project IDs
+  joinedProjectIds?: string[];
+  joinedEventIds?: string[];
   totalHoursContributed: number;
   rating: number; // 1-5
   disputeStatus?: 'None' | 'Disputed' | 'Pending Mediation' | 'Resolved';
@@ -308,6 +312,11 @@ export interface Message {
   timestamp: string;
   read: boolean;
   attachments?: string[]; // File URLs
+  deleted?: boolean;
+  edited?: boolean;
+  replyToId?: string;
+  replyToContent?: string;
+  replyToSenderName?: string;
 }
 
 export type ProjectGroupMessageKind = 'message' | 'need-post' | 'scope-proposal';
@@ -355,6 +364,11 @@ export interface ProjectGroupMessage {
   responseAction?: NeedResponseAction;
   responseToTitle?: string;
   attachments?: string[]; // File URLs
+  deleted?: boolean;
+  edited?: boolean;
+  replyToId?: string;
+  replyToContent?: string;
+  replyToSenderName?: string;
 }
 
 // Represents a volunteer-to-project matching request or assignment.
@@ -367,6 +381,8 @@ export interface VolunteerProjectMatch {
   matchedAt: string;
   reviewedAt?: string;
   reviewedBy?: string;
+  reviewNotes?: string;
+  rejectionReason?: string;
   hoursContributed: number;
 }
 

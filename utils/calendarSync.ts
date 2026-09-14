@@ -9,7 +9,9 @@ export interface CalendarConfig {
 const STORAGE_KEY_GCAL_ID = 'gcal_id';
 const STORAGE_KEY_GCAL_KEY = 'gcal_key';
 
-const DEFAULT_CALENDAR_ID = 'en.philippines#holiday@group.v.calendar.google.com';
+const DEFAULT_CALENDAR_ID = 'nvc4090@gmail.com';
+const OLD_DEFAULT_CALENDAR_ID = 'en.philippines#holiday@group.v.calendar.google.com';
+export const GOOGLE_CALENDAR_EMBED_URL = 'https://calendar.google.com/calendar/embed?src=nvc4090%40gmail.com&ctz=UTC';
 
 /**
  * Reads Google Calendar settings from AsyncStorage or fallback defaults.
@@ -24,8 +26,10 @@ export async function getStoredCalendarConfig(): Promise<CalendarConfig> {
       process.env.GOOGLE_MAPS_API_KEY ||
       '';
 
+    const calendarId = (!storedId || storedId === OLD_DEFAULT_CALENDAR_ID) ? DEFAULT_CALENDAR_ID : storedId;
+
     return {
-      calendarId: storedId || DEFAULT_CALENDAR_ID,
+      calendarId,
       apiKey: storedKey || defaultApiKey,
     };
   } catch (err) {

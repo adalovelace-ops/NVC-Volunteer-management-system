@@ -12,6 +12,7 @@ import {
   FlatList,
   Platform,
   Image,
+  ActivityIndicator,
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { format } from 'date-fns';
@@ -58,6 +59,7 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
+  const [isReviewingAccount, setIsReviewingAccount] = useState<{ loading: boolean; text: string } | null>(null);
 
   useEffect(() => {
     if (navigation) {
@@ -244,6 +246,7 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
     const previousVolunteers = volunteers;
     const previousSelected = selectedVolunteer;
     try {
+      setIsReviewingAccount({ loading: true, text: 'Approving Volunteer...' });
       const updated = {
         ...selectedVolunteer,
         registrationStatus: 'Approved' as const,
@@ -268,6 +271,8 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
         getRequestErrorTitle(error),
         getRequestErrorMessage(error, 'Failed to approve volunteer application.')
       );
+    } finally {
+      setIsReviewingAccount(null);
     }
   };
 
@@ -282,6 +287,7 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
     const previousSelected = selectedVolunteer;
     const reason = rejectionReason.trim() || 'Application did not meet requirements.';
     try {
+      setIsReviewingAccount({ loading: true, text: 'Declining Volunteer...' });
       const updated = {
         ...selectedVolunteer,
         registrationStatus: 'Rejected' as const,
@@ -307,6 +313,8 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
         getRequestErrorTitle(error),
         getRequestErrorMessage(error, 'Failed to reject volunteer application.')
       );
+    } finally {
+      setIsReviewingAccount(null);
     }
   };
 
@@ -684,7 +692,7 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                     <View style={styles.applicationFieldRow}>
                       <Text style={[styles.applicationFieldLabel, { flex: 1 }]}>Certifications / Trainings</Text>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                        {certificateUri && isImageMediaUri(certificateUri) ? (
+                        {certificateUri ? (
                           <TouchableOpacity
                             onPress={async () => {
                               try {
@@ -703,9 +711,7 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                         ) : null}
                         <Text style={styles.applicationFieldValue}>
                           {certificateUri
-                            ? isImageMediaUri(certificateUri)
-                              ? getAttachmentLabel(certificateUri)
-                              : certificateUri
+                            ? getAttachmentLabel(certificateUri)
                             : '-'}
                         </Text>
                       </View>
@@ -724,10 +730,45 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                       </View>
                     ) : null}
 
+                    {/* Documents List */}
+                    <View style={{ marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#e2e8f0' }}>
+                      <Text style={[styles.applicationFieldLabel, { marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11 }]}>Documents</Text>
+                      <View style={{ gap: 8 }}>
+                        {[
+                          { name: 'Valid ID', uri: validIdPhotoUri },
+                          { name: 'Training Certificate', uri: certificateUri }
+                        ].map((doc, idx) => (
+                          <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                              <MaterialIcons name="attachment" size={16} color="#64748b" style={{ marginRight: 6 }} />
+                              <Text style={{ fontSize: 13, color: '#334155', fontWeight: '500' }}>{doc.name}</Text>
+                            </View>
+                            {doc.uri ? (
+                              <TouchableOpacity
+                                onPress={async () => {
+                                  try {
+                                    await openAttachmentUri(doc.uri);
+                                  } catch (error: any) {
+                                    Alert.alert('Document View Failed', error?.message || 'Unable to open document.');
+                                  }
+                                }}
+                                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, backgroundColor: '#f0fdf4', borderRadius: 6, borderWidth: 1, borderColor: '#bbf7d0' }}
+                              >
+                                <MaterialIcons name="visibility" size={14} color="#166534" />
+                                <Text style={{ fontSize: 11, color: '#166534', fontWeight: '700' }}>View</Text>
+                              </TouchableOpacity>
+                            ) : (
+                              <Text style={{ fontSize: 12, color: '#94a3b8', fontWeight: '500' }}>Missing</Text>
+                            )}
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+
                     {validIdPhotoUri ? (
                       <View style={{ marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#e2e8f0' }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                          <Text style={styles.applicationFieldLabel}>Valid ID Photo</Text>
+                          <Text style={styles.applicationFieldLabel}>Valid ID Photo Preview</Text>
                           <TouchableOpacity
                             onPress={async () => {
                               try {
@@ -937,7 +978,7 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                     <View style={styles.applicationFieldRow}>
                       <Text style={[styles.applicationFieldLabel, { flex: 1 }]}>Certifications / Trainings</Text>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                        {certificateUri && isImageMediaUri(certificateUri) ? (
+                        {certificateUri ? (
                           <TouchableOpacity
                             onPress={async () => {
                               try {
@@ -956,9 +997,7 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                         ) : null}
                         <Text style={styles.applicationFieldValue}>
                           {certificateUri
-                            ? isImageMediaUri(certificateUri)
-                              ? getAttachmentLabel(certificateUri)
-                              : certificateUri
+                            ? getAttachmentLabel(certificateUri)
                             : '-'}
                         </Text>
                       </View>
@@ -977,10 +1016,45 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                       </View>
                     ) : null}
 
+                    {/* Documents List */}
+                    <View style={{ marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#e2e8f0' }}>
+                      <Text style={[styles.applicationFieldLabel, { marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11 }]}>Documents</Text>
+                      <View style={{ gap: 8 }}>
+                        {[
+                          { name: 'Valid ID', uri: validIdPhotoUri },
+                          { name: 'Training Certificate', uri: certificateUri }
+                        ].map((doc, idx) => (
+                          <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                              <MaterialIcons name="attachment" size={16} color="#64748b" style={{ marginRight: 6 }} />
+                              <Text style={{ fontSize: 13, color: '#334155', fontWeight: '500' }}>{doc.name}</Text>
+                            </View>
+                            {doc.uri ? (
+                              <TouchableOpacity
+                                onPress={async () => {
+                                  try {
+                                    await openAttachmentUri(doc.uri);
+                                  } catch (error: any) {
+                                    Alert.alert('Document View Failed', error?.message || 'Unable to open document.');
+                                  }
+                                }}
+                                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, backgroundColor: '#f0fdf4', borderRadius: 6, borderWidth: 1, borderColor: '#bbf7d0' }}
+                              >
+                                <MaterialIcons name="visibility" size={14} color="#166534" />
+                                <Text style={{ fontSize: 11, color: '#166534', fontWeight: '700' }}>View</Text>
+                              </TouchableOpacity>
+                            ) : (
+                              <Text style={{ fontSize: 12, color: '#94a3b8', fontWeight: '500' }}>Missing</Text>
+                            )}
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+
                     {validIdPhotoUri ? (
                       <View style={{ marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: '#e2e8f0' }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                          <Text style={styles.applicationFieldLabel}>Valid ID Photo</Text>
+                          <Text style={styles.applicationFieldLabel}>Valid ID Photo Preview</Text>
                           <TouchableOpacity
                             onPress={async () => {
                               try {
@@ -1361,6 +1435,21 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
         scrollEnabled={true}
         contentContainerStyle={styles.listContent}
       />
+
+      {/* Review Account Loading Modal */}
+      {isReviewingAccount && (
+        <Modal transparent visible animationType="fade">
+          <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.45)', justifyContent: 'center', alignItems: 'center', zIndex: 99999 }}>
+            <View style={{ backgroundColor: '#ffffff', padding: 28, borderRadius: 18, alignItems: 'center', gap: 14, minWidth: 240, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 16, elevation: 10 }}>
+              <ActivityIndicator size="large" color="#166534" />
+              <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>
+                {isReviewingAccount.text}
+              </Text>
+              <Text style={{ fontSize: 12, color: '#64748b' }}>Please wait a moment</Text>
+            </View>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 }

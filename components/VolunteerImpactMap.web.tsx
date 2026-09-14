@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import Constants from 'expo-constants';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
-import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+import { MaterialIcons } from '@expo/vector-icons';
 import { Project } from '../models/types';
 import {
   PHILIPPINES_BOUNDS,
@@ -88,6 +89,7 @@ type VolunteerImpactMapProps = {
   subtitle?: string;
   initialMapStyleKey?: MapStylePresetKey;
   dashboardVariant?: boolean;
+  isPersonal?: boolean;
   volunteerAccounts?: MapAccountOption[];
   partnerAccounts?: MapAccountOption[];
   onVolunteerPress?: (volunteerId: string) => void;
@@ -95,11 +97,14 @@ type VolunteerImpactMapProps = {
 };
 
 function getWebGoogleMapsApiKey() {
+  const expoExtra = Constants.expoConfig?.extra as { webGoogleMapsApiKey?: string } | undefined;
   return (
-    process.env.GOOGLE_MAPS_WEB_API_KEY ||
-    process.env.VITE_GOOGLE_MAPS_WEB_API_KEY ||
     process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY ||
-    'AIzaSyDrZWSM9FJ7pURqvnd2lNqK5y0I084kupE'
+    expoExtra?.webGoogleMapsApiKey ||
+    process.env.GOOGLE_MAPS_WEB_API_KEY ||
+    process.env.GOOGLE_MAPS_API_KEY ||
+    process.env.VITE_GOOGLE_MAPS_WEB_API_KEY ||
+    ''
   );
 }
 
@@ -115,7 +120,7 @@ function getGoogleMapsErrorMessage(apiKey: string) {
   const currentOrigin = getCurrentWebOrigin();
 
   if (!apiKey.trim()) {
-    return 'Google Maps web key is missing. Add GOOGLE_MAPS_WEB_API_KEY to .env and restart the web app.';
+    return 'Google Maps web key is missing. Add EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY to .env and restart the web app.';
   }
 
   return `Google Maps could not load for the impact map. Allow ${currentOrigin} in your Google Maps web key referrers and make sure the Maps JavaScript API is enabled.`;
@@ -198,6 +203,26 @@ function getMappedCountLabel(selectedMapStyleKey: MapStylePresetKey, count: numb
   return `${count} mapped ${count === 1 ? 'project' : 'projects'}`;
 }
 
+function getMapLegendTitle(selectedMapStyleKey: MapStylePresetKey) {
+  return selectedMapStyleKey === 'volunteer-view' ? 'Event Status' : 'Project Status';
+}
+
+function getMapLegendTotalLabel(selectedMapStyleKey: MapStylePresetKey, count: number) {
+  if (selectedMapStyleKey === 'volunteer-view') {
+    return `Total ${count === 1 ? 'Event' : 'Events'}`;
+  }
+
+  return `Total ${count === 1 ? 'Project' : 'Projects'}`;
+}
+
+function getMapLegendFootnote(selectedMapStyleKey: MapStylePresetKey, selectedStatus: string | null, selectedLocation: string | null) {
+  if (selectedStatus || selectedLocation) {
+    return 'Clear filters';
+  }
+
+  return selectedMapStyleKey === 'volunteer-view' ? 'Volunteer events' : 'Across Philippines';
+}
+
 // Displays the project impact map using the Google Maps JavaScript API on web.
 export default function VolunteerImpactMap({
   projects,
@@ -205,6 +230,7 @@ export default function VolunteerImpactMap({
   subtitle = 'Pinned places where you completed volunteer work.',
   initialMapStyleKey = 'volunteer-view',
   dashboardVariant = false,
+  isPersonal,
   volunteerAccounts,
   partnerAccounts,
   onVolunteerPress,
@@ -229,7 +255,9 @@ export default function VolunteerImpactMap({
   const [mapError, setMapError] = useState<string | null>(null);
   const [showMapStyleMenu, setShowMapStyleMenu] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [showLocationMenu, setShowLocationMenu] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
+  const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
   const [selectedMapStyleKey, setSelectedMapStyleKey] =
     useState<MapStylePresetKey>(initialMapStyleKey);
   const [selectedVolunteerId, setSelectedVolunteerId] = useState<string | null>(
@@ -283,28 +311,77 @@ export default function VolunteerImpactMap({
       ? partnerOptions.find(option => option.id === selectedPartnerId) || partnerOptions[0] || null
       : null;
 
-  const scopedProjects =
-    selectedMapStyleKey === 'admin-overview'
-      ? mappedProjects
-      : selectedMapStyleKey === 'volunteer-view'
-      ? hasVolunteerScope
-        ? selectedAccountOption?.mappedProjects || []
-        : mappedEvents
-      : hasPartnerScope
+  const isPersonalView = isPersonal || title === 'Personal Impact Map';
+
+  const scopedProjects = isPersonalView
+    ? mappedProjects
+    : selectedMapStyleKey === 'admin-overview'
+    ? mappedProjects
+    : selectedMapStyleKey === 'volunteer-view'
+    ? hasVolunteerScope
       ? selectedAccountOption?.mappedProjects || []
-      : mappedProjects;
-  const displayProjects = selectedStatus
-    ? scopedProjects.filter(project => {
-        const status = getProjectDisplayStatus(project) as any;
-        if (selectedStatus === 'Planning') {
-          return status === 'Planning' || status === 'Planned' || (project as any).proposalStage;
+      : mappedEvents
+    : hasPartnerScope
+    ? selectedAccountOption?.mappedProjects || []
+    : mappedProjects;
+  
+  // Build available locations from projects with data
+  const availableLocations = useMemo(() => {
+    const locationMap = new Map<string, { count: number; label: string }>();
+    
+    scopedProjects.forEach(project => {
+      const region = project.locationRegion || project.location.region;
+      const city = project.locationCity || project.location.city;
+      
+      if (region && city) {
+        const locationKey = `${region}|${city}`;
+        const locationLabel = `${city}, ${region}`;
+        const existing = locationMap.get(locationKey);
+        
+        if (existing) {
+          existing.count++;
+        } else {
+          locationMap.set(locationKey, { count: 1, label: locationLabel });
         }
-        if (selectedStatus === 'Active') {
-          return status === 'In Progress' || status === 'Active' || project.status === 'Approved';
+      }
+    });
+    
+    return Array.from(locationMap.entries())
+      .map(([key, data]) => ({
+        key,
+        label: data.label,
+        count: data.count,
+      }))
+      .sort((a, b) => b.count - a.count); // Sort by project count descending
+  }, [scopedProjects]);
+  
+  const displayProjects = useMemo(() => {
+    let filtered = scopedProjects;
+    
+    // Filter by status
+    if (selectedStatus) {
+      filtered = filtered.filter(project => {
+        const status = getProjectDisplayStatus(project);
+        return selectedStatus === 'Planned' ? status === 'Planning' : status === selectedStatus;
+      });
+    }
+    
+    // Filter by location
+    if (selectedLocation) {
+      filtered = filtered.filter(project => {
+        const region = project.locationRegion || project.location.region;
+        const city = project.locationCity || project.location.city;
+        
+        if (region && city) {
+          const locationKey = `${region}|${city}`;
+          return locationKey === selectedLocation;
         }
-        return status === selectedStatus;
-      })
-    : scopedProjects;
+        return false;
+      });
+    }
+    
+    return filtered;
+  }, [scopedProjects, selectedStatus, selectedLocation]);
 
   useEffect(() => {
     setSelectedProject(displayProjects[0] || null);
@@ -381,19 +458,16 @@ export default function VolunteerImpactMap({
             ),
           });
 
-          const listener = marker.addListener('click', () => {
-            setSelectedProject(project);
-          });
-
-          const hoverOpenListener = marker.addListener('mouseover', () => {
+          const showEventInfoWindow = () => {
             if (infoWindowCloseTimerRef.current) {
               clearTimeout(infoWindowCloseTimerRef.current);
               infoWindowCloseTimerRef.current = null;
             }
-            markerHoveringRef.current = true;
-            if (openInfoWindowProjectIdRef.current === project.id) {
-              return;
-            }
+            setSelectedProject(project);
+            map.panTo({
+              lat: project.location.latitude,
+              lng: project.location.longitude,
+            });
             const volunteerHits = (volunteerAccounts || [])
               .filter(account => (account.projectIds || []).includes(project.id))
               .sort((a, b) => a.label.localeCompare(b.label));
@@ -405,23 +479,49 @@ export default function VolunteerImpactMap({
             const container = document.createElement('div');
             container.style.minWidth = '220px';
             container.style.maxWidth = '280px';
-            container.style.fontFamily = 'DM Sans, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
+            container.style.fontFamily = "'Nunito', sans-serif";
             container.style.fontSize = '12px';
             container.style.lineHeight = '16px';
+            container.style.padding = '4px';
 
             const titleDiv = document.createElement('div');
-            titleDiv.style.fontWeight = '700';
+            titleDiv.style.fontWeight = '800';
             titleDiv.style.color = '#0f172a';
+            titleDiv.style.fontSize = '14px';
             titleDiv.style.marginBottom = '4px';
             titleDiv.textContent = project.title;
             container.appendChild(titleDiv);
 
-            const typeDiv = document.createElement('div');
-            typeDiv.style.fontWeight = '700';
-            typeDiv.style.color = '#475569';
-            typeDiv.style.marginBottom = '6px';
-            typeDiv.textContent = project.isEvent ? 'Event' : 'Project';
-            container.appendChild(typeDiv);
+            const badgeRow = document.createElement('div');
+            badgeRow.style.display = 'flex';
+            badgeRow.style.alignItems = 'center';
+            badgeRow.style.gap = '6px';
+            badgeRow.style.marginBottom = '8px';
+            badgeRow.innerHTML = `
+              <span style="font-weight:700;font-size:10px;padding:2px 6px;border-radius:4px;background:#dcfce7;color:#166534;">
+                ${project.isEvent ? 'EVENT' : 'PROJECT'}
+              </span>
+              <span style="font-weight:700;font-size:10px;padding:2px 6px;border-radius:4px;background:#f1f5f9;color:#475569;">
+                ${project.category || 'Volunteer Work'}
+              </span>
+            `;
+            container.appendChild(badgeRow);
+
+            const locationDiv = document.createElement('div');
+            locationDiv.style.color = '#334155';
+            locationDiv.style.fontSize = '11px';
+            locationDiv.style.marginBottom = '4px';
+            locationDiv.textContent = `📍 ${project.location.address || project.locationCity || 'Negros Occidental'}`;
+            container.appendChild(locationDiv);
+
+            if (project.startDate) {
+              const dateDiv = document.createElement('div');
+              dateDiv.style.color = '#64748b';
+              dateDiv.style.fontSize = '11px';
+              dateDiv.style.marginBottom = '6px';
+              dateDiv.textContent = `📅 ${project.startDate}${project.endDate ? ` - ${project.endDate}` : ''}`;
+              container.appendChild(dateDiv);
+            }
 
             if (partnerHits.length > 0) {
               const partner = partnerHits[0];
@@ -434,50 +534,29 @@ export default function VolunteerImpactMap({
               partnerRow.style.textAlign = 'left';
               partnerRow.style.border = '0';
               partnerRow.style.background = 'transparent';
-              partnerRow.style.padding = '6px 0';
+              partnerRow.style.padding = '4px 0';
               partnerRow.style.cursor = onPartnerPress ? 'pointer' : 'default';
               partnerRow.innerHTML = `<span style="font-weight:600;color:#0f766e;">Partner:</span> <span style="color:#0f172a;text-decoration:${onPartnerPress ? 'underline' : 'none'};">${partner.label}</span>`;
               container.appendChild(partnerRow);
             }
 
             const volunteerHeader = document.createElement('div');
-            volunteerHeader.style.marginTop = partnerHits.length ? '6px' : '0';
-            volunteerHeader.style.fontWeight = '600';
+            volunteerHeader.style.marginTop = '6px';
+            volunteerHeader.style.fontWeight = '700';
+            volunteerHeader.style.fontSize = '11px';
             volunteerHeader.style.color = '#166534';
             volunteerHeader.textContent = `Volunteers (${volunteerHits.length})`;
             container.appendChild(volunteerHeader);
 
-            if (volunteerHits.length === 0) {
-              const empty = document.createElement('div');
-              empty.style.color = '#64748b';
-              empty.style.paddingTop = '4px';
-              empty.textContent = 'No volunteers joined yet.';
-              container.appendChild(empty);
-            } else {
-              volunteerHits.slice(0, 8).forEach(volunteer => {
-                const row = document.createElement('button');
-                row.type = 'button';
-                row.dataset.kind = 'volunteer';
-                row.dataset.id = volunteer.id;
-                row.style.display = 'block';
-                row.style.width = '100%';
-                row.style.textAlign = 'left';
-                row.style.border = '0';
-                row.style.background = 'transparent';
-                row.style.padding = '5px 0';
-                row.style.cursor = onVolunteerPress ? 'pointer' : 'default';
+            if (volunteerHits.length > 0) {
+              volunteerHits.slice(0, 6).forEach(volunteer => {
+                const row = document.createElement('div');
+                row.style.fontSize = '11px';
                 row.style.color = '#0f172a';
-                row.style.textDecoration = onVolunteerPress ? 'underline' : 'none';
-                row.textContent = volunteer.label;
+                row.style.padding = '2px 0';
+                row.textContent = `• ${volunteer.label}`;
                 container.appendChild(row);
               });
-              if (volunteerHits.length > 8) {
-                const more = document.createElement('div');
-                more.style.color = '#64748b';
-                more.style.paddingTop = '4px';
-                more.textContent = `+${volunteerHits.length - 8} more`;
-                container.appendChild(more);
-              }
             }
 
             container.addEventListener('click', (event) => {
@@ -493,7 +572,6 @@ export default function VolunteerImpactMap({
               } else if (kind === 'partner') {
                 onPartnerPress?.(id);
               }
-              infoWindow.close();
             });
 
             container.addEventListener('mouseenter', () => {
@@ -514,12 +592,21 @@ export default function VolunteerImpactMap({
                 }
                 infoWindow.close();
                 openInfoWindowProjectIdRef.current = null;
-              }, 200);
+              }, 400);
             });
 
             infoWindow.setContent(container);
             infoWindow.open({ map, anchor: marker });
             openInfoWindowProjectIdRef.current = project.id;
+          };
+
+          const listener = marker.addListener('click', () => {
+            showEventInfoWindow();
+          });
+
+          const hoverOpenListener = marker.addListener('mouseover', () => {
+            markerHoveringRef.current = true;
+            showEventInfoWindow();
           });
 
           const hoverCloseListener = marker.addListener('mouseout', () => {
@@ -595,34 +682,83 @@ export default function VolunteerImpactMap({
     currentAccountOptions,
     selectedAccountOption
   );
-  const showAccountPicker = selectedMapStyleKey !== 'admin-overview' && currentAccountOptions.length > 0;
+  const showAccountPicker = !isPersonalView && selectedMapStyleKey !== 'admin-overview' && currentAccountOptions.length > 1;
   const selectedAccountLabel = getAccountPickerLabel(selectedMapStyleKey, selectedAccountOption);
   const accountPickerTitle = getAccountPickerTitle(selectedMapStyleKey);
   const accountIconName = getAccountIconName(selectedMapStyleKey);
 
   const statusLegend = [
-    { key: 'Planning', label: 'Planning', color: '#2563EB', desc: 'when on proposal stage' },
-    { key: 'Active', label: 'Active', color: '#16A34A', desc: 'approved' },
-    { key: 'On Hold', label: 'On Hold', color: '#D97706', desc: 'manual override admin' },
-    { key: 'Completed', label: 'Completed', color: '#7C3AED', desc: 'none after date' },
-    { key: 'Cancelled', label: 'Cancelled', color: '#DC2626', desc: 'manual override admin' },
+    { label: 'In Progress', color: '#5b9b57' }, { label: 'Planned', color: '#5f8fdc' },
+    { label: 'Completed', color: '#8e58d6' }, { label: 'On Hold', color: '#e7a23d' },
+    { label: 'Cancelled', color: '#b95258' },
   ];
 
   return (
     <View style={styles.section}>
       {dashboardVariant ? (
         <View style={styles.dashboardTabs}>
-          <TouchableOpacity style={[styles.dashboardTab, styles.dashboardTabActive]} onPress={() => setShowMapStyleMenu(true)}>
-            <MaterialIcons name="handshake" size={27} color="#5a8f52" />
-            <Text style={[styles.dashboardTabText, styles.dashboardTabTextActive]}>Partner</Text>
+          <TouchableOpacity
+            style={[
+              styles.dashboardTab,
+              selectedMapStyleKey === 'partner-view' && styles.dashboardTabActive,
+            ]}
+            onPress={() => setSelectedMapStyleKey('partner-view')}
+          >
+            <MaterialIcons
+              name="handshake"
+              size={27}
+              color={selectedMapStyleKey === 'partner-view' ? '#5a8f52' : '#64748b'}
+            />
+            <Text
+              style={[
+                styles.dashboardTabText,
+                selectedMapStyleKey === 'partner-view' && styles.dashboardTabTextActive,
+              ]}
+            >
+              Partner
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.dashboardTab} onPress={() => setSelectedMapStyleKey('volunteer-view')}>
-            <MaterialIcons name="group" size={27} color="#64748b" />
-            <Text style={styles.dashboardTabText}>Volunteer</Text>
+          <TouchableOpacity
+            style={[
+              styles.dashboardTab,
+              selectedMapStyleKey === 'volunteer-view' && styles.dashboardTabActive,
+            ]}
+            onPress={() => setSelectedMapStyleKey('volunteer-view')}
+          >
+            <MaterialIcons
+              name="group"
+              size={27}
+              color={selectedMapStyleKey === 'volunteer-view' ? '#5a8f52' : '#64748b'}
+            />
+            <Text
+              style={[
+                styles.dashboardTabText,
+                selectedMapStyleKey === 'volunteer-view' && styles.dashboardTabTextActive,
+              ]}
+            >
+              Volunteer
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.dashboardTab} onPress={() => setSelectedMapStyleKey('admin-overview')}>
-            <MaterialIcons name="event" size={27} color="#475569" />
-            <Text style={styles.dashboardTabText}>Events</Text>
+          <TouchableOpacity
+            style={[
+              styles.dashboardTab,
+              selectedMapStyleKey === 'admin-overview' && styles.dashboardTabActive,
+            ]}
+            onPress={() => setSelectedMapStyleKey('admin-overview')}
+          >
+            <MaterialIcons
+              name="event"
+              size={27}
+              color={selectedMapStyleKey === 'admin-overview' ? '#5a8f52' : '#64748b'}
+            />
+            <Text
+              style={[
+                styles.dashboardTabText,
+                selectedMapStyleKey === 'admin-overview' && styles.dashboardTabTextActive,
+              ]}
+            >
+              Events
+            </Text>
           </TouchableOpacity>
         </View>
       ) : null}
@@ -647,6 +783,56 @@ export default function VolunteerImpactMap({
         </View>
 
         <View style={[styles.headerActions, dashboardVariant && styles.dashboardHeaderActions]}>
+          {!dashboardVariant && availableLocations.length > 0 ? (
+            <TouchableOpacity
+              style={[
+                styles.mapStyleButton,
+                styles.locationPickerButton,
+                {
+                  backgroundColor: selectedLocation ? selectedMapStyle.accentColor : selectedMapStyle.chipBg,
+                  borderColor: selectedLocation ? selectedMapStyle.accentColor : selectedMapStyle.chipBorder,
+                },
+              ]}
+              onPress={() => setShowLocationMenu(true)}
+            >
+              <MaterialIcons 
+                name="location-city" 
+                size={18} 
+                color={selectedLocation ? '#ffffff' : selectedMapStyle.accentColor} 
+              />
+              <Text
+                style={[
+                  styles.mapStyleButtonText, 
+                  styles.locationPickerText, 
+                  { color: selectedLocation ? '#ffffff' : selectedMapStyle.accentColor }
+                ]}
+                numberOfLines={1}
+              >
+                {selectedLocation 
+                  ? availableLocations.find(loc => loc.key === selectedLocation)?.label || 'All Locations'
+                  : 'All Locations'
+                }
+              </Text>
+              {selectedLocation ? (
+                <TouchableOpacity 
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    setSelectedLocation(null);
+                  }}
+                  style={{ padding: 2 }}
+                >
+                  <MaterialIcons name="close" size={18} color="#ffffff" />
+                </TouchableOpacity>
+              ) : (
+                <MaterialIcons
+                  name="keyboard-arrow-down"
+                  size={22}
+                  color={selectedMapStyle.accentColor}
+                />
+              )}
+            </TouchableOpacity>
+          ) : null}
+          
           {!dashboardVariant && showAccountPicker ? (
             <TouchableOpacity
               style={[
@@ -674,23 +860,25 @@ export default function VolunteerImpactMap({
             </TouchableOpacity>
           ) : null}
 
-          <TouchableOpacity
-            style={[
-              styles.mapStyleButton,
-              dashboardVariant && styles.dashboardViewButton,
-              {
-                backgroundColor: dashboardVariant ? '#ffffff' : selectedMapStyle.chipBg,
-                borderColor: dashboardVariant ? '#e2e8f0' : selectedMapStyle.chipBorder,
-              },
-            ]}
-            onPress={() => setShowMapStyleMenu(true)}
-          >
-            <MaterialIcons name="tune" size={dashboardVariant ? 27 : 18} color={dashboardVariant ? '#5a8f52' : selectedMapStyle.accentColor} />
-            <Text style={[styles.mapStyleButtonText, dashboardVariant && styles.dashboardViewButtonText, { color: dashboardVariant ? '#334155' : selectedMapStyle.accentColor }]}>
-              {dashboardVariant ? 'Partner view' : selectedMapStyle.label}
-            </Text>
-            <MaterialIcons name="keyboard-arrow-down" size={22} color={dashboardVariant ? '#334155' : selectedMapStyle.accentColor} />
-          </TouchableOpacity>
+          {!isPersonalView ? (
+            <TouchableOpacity
+              style={[
+                styles.mapStyleButton,
+                dashboardVariant && styles.dashboardViewButton,
+                {
+                  backgroundColor: dashboardVariant ? '#ffffff' : selectedMapStyle.chipBg,
+                  borderColor: dashboardVariant ? '#e2e8f0' : selectedMapStyle.chipBorder,
+                },
+              ]}
+              onPress={() => setShowMapStyleMenu(true)}
+            >
+              <MaterialIcons name="tune" size={dashboardVariant ? 27 : 18} color={dashboardVariant ? '#5a8f52' : selectedMapStyle.accentColor} />
+              <Text style={[styles.mapStyleButtonText, dashboardVariant && styles.dashboardViewButtonText, { color: dashboardVariant ? '#334155' : selectedMapStyle.accentColor }]}>
+                {selectedMapStyle.label}
+              </Text>
+              <MaterialIcons name="keyboard-arrow-down" size={22} color={dashboardVariant ? '#334155' : selectedMapStyle.accentColor} />
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
 
@@ -707,56 +895,24 @@ export default function VolunteerImpactMap({
         <MapHost ref={mapElementRef} style={styles.mapHost} />
         {dashboardVariant ? (
           <View style={styles.mapLegend}>
-            <Text style={styles.legendTitle}>Project Status</Text>
-            {statusLegend.map(status => {
-              const count = scopedProjects.filter(p => {
-                const s = getProjectDisplayStatus(p) as any;
-                if (status.key === 'Planning') return s === 'Planning' || s === 'Planned' || (p as any).proposalStage;
-                if (status.key === 'Active') return s === 'In Progress' || s === 'Active' || p.status === 'Approved';
-                return s === status.key;
-              }).length;
-
-              return (
-                <TouchableOpacity
-                  key={status.key}
-                  style={[styles.legendRow, selectedStatus === status.key && styles.legendRowActive]}
-                  onPress={() => setSelectedStatus(current => (current === status.key ? null : status.key))}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
-                    <MaterialIcons name="location-on" size={20} color={status.color} />
-                    <Text style={styles.legendLabel}>{status.label}</Text>
-                  </View>
-                  <View
-                    style={{
-                      backgroundColor: selectedStatus === status.key ? status.color : '#f1f5f9',
-                      paddingHorizontal: 6,
-                      paddingVertical: 1,
-                      borderRadius: 10,
-                      minWidth: 20,
-                      alignItems: 'center',
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 11,
-                        fontWeight: '800',
-                        color: selectedStatus === status.key ? '#ffffff' : '#475569',
-                      }}
-                    >
-                      {count}
-                    </Text>
-                  </View>
-                  {selectedStatus === status.key ? (
-                    <MaterialIcons name="check" size={14} color={status.color} style={{ marginLeft: 4 }} />
-                  ) : null}
-                </TouchableOpacity>
-              );
-            })}
+            <Text style={styles.legendTitle}>{getMapLegendTitle(selectedMapStyleKey)}</Text>
+            {statusLegend.map(status => <TouchableOpacity key={status.label} style={[styles.legendRow, selectedStatus === status.label && styles.legendRowActive]} onPress={() => setSelectedStatus(current => current === status.label ? null : status.label)}>
+              <MaterialIcons name="location-on" size={16} color={status.color} />
+              <Text style={styles.legendLabel}>{status.label}</Text>
+              {selectedStatus === status.label ? <MaterialIcons name="check" size={14} color={status.color} /> : null}
+            </TouchableOpacity>)}
             <View style={styles.legendDivider} />
-            <Text style={styles.legendTotalLabel}>Total Projects</Text>
+            <Text style={styles.legendTotalLabel}>
+              {getMapLegendTotalLabel(selectedMapStyleKey, displayProjects.length)}
+            </Text>
             <Text style={styles.legendTotal}>{displayProjects.length}</Text>
-            <TouchableOpacity onPress={() => setSelectedStatus(null)}>
-              <Text style={styles.legendFootnote}>{selectedStatus ? 'Clear filter' : 'Across Philippines'}</Text>
+            <TouchableOpacity onPress={() => {
+              setSelectedStatus(null);
+              setSelectedLocation(null);
+            }}>
+              <Text style={styles.legendFootnote}>
+                {getMapLegendFootnote(selectedMapStyleKey, selectedStatus, selectedLocation)}
+              </Text>
             </TouchableOpacity>
           </View>
         ) : null}
@@ -780,11 +936,51 @@ export default function VolunteerImpactMap({
 
       {selectedProject ? (
         <View style={styles.detailCard}>
-          <Text style={styles.detailTitle}>{selectedProject.title}</Text>
-          <Text style={styles.detailMeta}>
-            {`${selectedProject.isEvent ? 'Event' : 'Project'} | ${selectedProject.category} | ${getProjectDisplayStatus(selectedProject)}`}
-          </Text>
-          <Text style={styles.detailAddress}>{selectedProject.location.address}</Text>
+          <View style={styles.detailCardHeader}>
+            <View style={{ flex: 1 }}>
+              <View style={styles.detailTagRow}>
+                <View style={[styles.detailTypeTag, selectedProject.isEvent ? styles.detailTypeTagEvent : styles.detailTypeTagProject]}>
+                  <Text style={styles.detailTypeTagText}>{selectedProject.isEvent ? 'EVENT' : 'PROJECT'}</Text>
+                </View>
+                <View style={styles.detailCategoryTag}>
+                  <Text style={styles.detailCategoryTagText}>{selectedProject.category || 'Volunteer Work'}</Text>
+                </View>
+                <View style={styles.detailStatusTag}>
+                  <Text style={styles.detailStatusTagText}>{getProjectDisplayStatus(selectedProject)}</Text>
+                </View>
+              </View>
+              <Text style={styles.detailTitle}>{selectedProject.title}</Text>
+            </View>
+          </View>
+
+          <View style={styles.detailInfoGrid}>
+            <View style={styles.detailInfoItem}>
+              <MaterialIcons name="place" size={16} color="#166534" />
+              <Text style={styles.detailAddress} numberOfLines={1}>
+                {selectedProject.location.address || selectedProject.locationCity || 'Negros Occidental'}
+              </Text>
+            </View>
+            {selectedProject.startDate ? (
+              <View style={styles.detailInfoItem}>
+                <MaterialIcons name="event" size={16} color="#166534" />
+                <Text style={styles.detailDateText}>
+                  {selectedProject.startDate}{selectedProject.endDate ? ` - ${selectedProject.endDate}` : ''}
+                </Text>
+              </View>
+            ) : null}
+            <View style={styles.detailInfoItem}>
+              <MaterialIcons name="group" size={16} color="#166534" />
+              <Text style={styles.detailVolunteersText}>
+                {selectedProject.volunteers?.length || 0} volunteer{(selectedProject.volunteers?.length || 0) === 1 ? '' : 's'} joined
+              </Text>
+            </View>
+          </View>
+
+          {selectedProject.description ? (
+            <Text style={styles.detailDescription} numberOfLines={2}>
+              {selectedProject.description}
+            </Text>
+          ) : null}
         </View>
       ) : null}
 
@@ -869,6 +1065,71 @@ export default function VolunteerImpactMap({
           </View>
         </TouchableOpacity>
       </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={showLocationMenu}
+        onRequestClose={() => setShowLocationMenu(false)}
+      >
+        <TouchableOpacity
+          style={styles.menuBackdrop}
+          activeOpacity={1}
+          onPress={() => setShowLocationMenu(false)}
+        >
+          <View style={styles.mapStyleMenu}>
+            <Text style={styles.mapStyleMenuTitle}>Filter by Location</Text>
+            <Text style={styles.locationMenuSubtitle}>
+              Select a location with available projects
+            </Text>
+            <ScrollView style={styles.accountList} showsVerticalScrollIndicator={false}>
+              {/* All Locations option */}
+              <TouchableOpacity
+                style={[
+                  styles.mapStyleMenuItem, 
+                  !selectedLocation && styles.mapStyleMenuItemActive
+                ]}
+                onPress={() => {
+                  setSelectedLocation(null);
+                  setShowLocationMenu(false);
+                }}
+              >
+                <View style={styles.mapStyleMenuItemTextWrap}>
+                  <Text style={styles.mapStyleMenuItemTitle}>All Locations</Text>
+                  <Text style={styles.mapStyleMenuItemDescription}>
+                    {scopedProjects.length} {scopedProjects.length === 1 ? 'project' : 'projects'}
+                  </Text>
+                </View>
+                {!selectedLocation ? <MaterialIcons name="check" size={20} color="#2563eb" /> : null}
+              </TouchableOpacity>
+
+              {/* Individual location options */}
+              {availableLocations.map(location => {
+                const isActive = location.key === selectedLocation;
+
+                return (
+                  <TouchableOpacity
+                    key={location.key}
+                    style={[styles.mapStyleMenuItem, isActive && styles.mapStyleMenuItemActive]}
+                    onPress={() => {
+                      setSelectedLocation(location.key);
+                      setShowLocationMenu(false);
+                    }}
+                  >
+                    <View style={styles.mapStyleMenuItemTextWrap}>
+                      <Text style={styles.mapStyleMenuItemTitle}>{location.label}</Text>
+                      <Text style={styles.mapStyleMenuItemDescription}>
+                        {location.count} {location.count === 1 ? 'project' : 'projects'}
+                      </Text>
+                    </View>
+                    {isActive ? <MaterialIcons name="check" size={20} color="#2563eb" /> : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -899,18 +1160,18 @@ const styles = StyleSheet.create({
   dashboardTitle: { fontSize: 25 },
   dashboardSubtitle: { fontSize: 17 },
   mapLegend: {
-    position: 'absolute', top: 26, left: 30, width: 196, paddingHorizontal: 22, paddingVertical: 18,
-    borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.97)', shadowColor: '#0f172a',
-    shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 4,
+    position: 'absolute', top: 12, left: 12, width: 136, paddingHorizontal: 12, paddingVertical: 10,
+    borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.97)', shadowColor: '#0f172a',
+    shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 3,
   },
-  legendTitle: { fontSize: 14, fontWeight: '800', color: '#1e293b', marginBottom: 13 },
-  legendRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
-  legendRowActive: { backgroundColor: '#f0f8ef', borderRadius: 8, paddingHorizontal: 4 },
-  legendLabel: { fontSize: 14, color: '#64748b', fontWeight: '600' },
-  legendDivider: { height: 1, backgroundColor: '#e2e8f0', marginHorizontal: -22, marginTop: 5, marginBottom: 16 },
-  legendTotalLabel: { fontSize: 14, fontWeight: '800', color: '#334155' },
-  legendTotal: { color: '#5a8f52', fontSize: 35, fontWeight: '800', marginTop: 6 },
-  legendFootnote: { fontSize: 13, color: '#64748b', fontWeight: '600' },
+  legendTitle: { fontSize: 12, fontWeight: '800', color: '#1e293b', marginBottom: 6 },
+  legendRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  legendRowActive: { backgroundColor: '#f0f8ef', borderRadius: 6, paddingHorizontal: 4 },
+  legendLabel: { fontSize: 11, color: '#64748b', fontWeight: '600' },
+  legendDivider: { height: 1, backgroundColor: '#e2e8f0', marginHorizontal: -12, marginTop: 4, marginBottom: 6 },
+  legendTotalLabel: { fontSize: 11, fontWeight: '800', color: '#334155' },
+  legendTotal: { color: '#5a8f52', fontSize: 20, fontWeight: '800', marginTop: 2 },
+  legendFootnote: { fontSize: 10, color: '#64748b', fontWeight: '600', marginTop: 2 },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -954,6 +1215,12 @@ const styles = StyleSheet.create({
   },
   accountPickerButton: {
     maxWidth: 220,
+  },
+  locationPickerButton: {
+    maxWidth: 200,
+  },
+  locationPickerText: {
+    flexShrink: 1,
   },
   accountPickerText: {
     flexShrink: 1,
@@ -1021,23 +1288,99 @@ const styles = StyleSheet.create({
     borderColor: '#d8e8db',
     paddingHorizontal: 16,
     paddingVertical: 14,
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
-  detailTitle: {
-    fontSize: 15,
+  detailCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  detailTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  detailTypeTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  detailTypeTagEvent: {
+    backgroundColor: '#dcfce7',
+  },
+  detailTypeTagProject: {
+    backgroundColor: '#e0f2fe',
+  },
+  detailTypeTagText: {
+    fontSize: 10,
     fontWeight: '800',
-    color: '#0f172a',
+    color: '#166534',
   },
-  detailMeta: {
-    marginTop: 4,
-    fontSize: 12,
+  detailCategoryTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: '#f1f5f9',
+  },
+  detailCategoryTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  detailStatusTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  detailStatusTagText: {
+    fontSize: 10,
     fontWeight: '700',
     color: '#166534',
   },
+  detailTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  detailInfoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginVertical: 8,
+  },
+  detailInfoItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   detailAddress: {
-    marginTop: 6,
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 12,
     color: '#334155',
+  },
+  detailDateText: {
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: '600',
+  },
+  detailVolunteersText: {
+    fontSize: 12,
+    color: '#166534',
+    fontWeight: '600',
+  },
+  detailDescription: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#64748b',
   },
   menuBackdrop: {
     flex: 1,
@@ -1064,6 +1407,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0f172a',
     marginBottom: 10,
+  },
+  locationMenuSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
+    marginBottom: 10,
+    lineHeight: 17,
   },
   accountList: {
     maxHeight: 320,

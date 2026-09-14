@@ -451,6 +451,17 @@ export default function AdminPlanningCalendarScreen({ navigation }: any) {
       return;
     }
 
+    const trimmedPlannerTitle = itemDraft.title.trim().toLowerCase();
+    const duplicatePlannerItem = planningItems.find(item =>
+      item.id !== itemDraft.id &&
+      item.title &&
+      item.title.trim().toLowerCase() === trimmedPlannerTitle
+    );
+    if (duplicatePlannerItem) {
+      Alert.alert('Duplicate Event / Plan', `An item with the title "${itemDraft.title.trim()}" already exists. Please choose a unique title.`);
+      return;
+    }
+
     if (!planningCalendars.some(calendar => calendar.id === itemDraft.calendarId)) {
       Alert.alert('Validation Error', 'Choose a calendar lane for this plan item.');
       return;

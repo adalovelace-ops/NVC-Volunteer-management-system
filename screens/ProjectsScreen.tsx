@@ -724,6 +724,10 @@ export default function ProjectsScreen({ navigation, route }: any) {
       }
       
       if (user.role === 'partner') {
+        if (selectedProject?.isDraft) {
+          Alert.alert('Not Available', 'Draft projects are not available for partner proposals.');
+          return;
+        }
         setProposalProjectId(projectId);
         setPartnerProposalDraft(createPartnerProposalDraft(selectedProject));
         return;
@@ -982,6 +986,12 @@ export default function ProjectsScreen({ navigation, route }: any) {
 
   const visibleProjects = useMemo(() => {
     return projects
+      .filter(project => {
+        if ((user?.role === 'volunteer' || user?.role === 'partner') && project.isDraft) {
+          return false;
+        }
+        return true;
+      })
       .filter(project => (statusFilter === 'All' ? true : getProjectDisplayStatus(project) === statusFilter))
       .filter(project =>
         contentFilter === 'All'

@@ -206,17 +206,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   // Clears the active session and restores the previous user if logout fails.
-  const logout = async () => {
+  const logout = async (reason?: string) => {
     const previousUser = user;
     try {
       setUser(null);
       await saveCurrentUser(null);
+      if (reason) {
+        Alert.alert('Session Expired', reason);
+      }
     } catch (error) {
       setUser(previousUser);
       console.error('Error during logout:', error);
       throw error;
     }
   };
+
+  // Inactivity Auto-Logout (30 minutes of no user activity)
+  useEffect(() => {
+    if (!user) return;
+
+    const INACTIVITY_LIMIT_MS = 30 * 60 * 1000; // 30 minutes
+    let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const resetInactivityTimer = () => {
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      inactivityTimer = setTimeout(() => {
+        void logout('You were automatically signed out after 30 minutes of inactivity for your account security.');
+      }, INACTIVITY_LIMIT_MS);
+    };
+
+    resetInactivityTimer();
+
+    // Web event listeners
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+      const activityEvents = ['mousedown', 'keydown', 'touchstart', 'scroll'];
+      activityEvents.forEach(evt => window.addEventListener(evt, resetInactivityTimer, { passive: true }));
+
+      return () => {
+        if (inactivityTimer) clearTimeout(inactivityTimer);
+        activityEvents.forEach(evt => window.removeEventListener(evt, resetInactivityTimer));
+      };
+    }
+
+    return () => {
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+    };
+  }, [user]);
 
   // Automatically enforce platform boundaries if the session state violates them.
   useEffect(() => {

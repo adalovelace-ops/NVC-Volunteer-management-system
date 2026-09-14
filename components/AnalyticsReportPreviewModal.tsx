@@ -386,7 +386,7 @@ export default function AnalyticsReportPreviewModal({
       `Registered ${volunteers.length} volunteers contributing ${skillAnalytics.contributionCount} verified skills across ${skillAnalytics.slices.length} categories.`,
       `Mobilized ${projects.length} total initiatives (${regularProjects.length} programs and ${events.length} community events).`,
       `Engaged ${partners.length} validated partner organizations across ${Object.keys(sectorCounts).length} sectors.`,
-      `Recorded ${completedHours} verified volunteer service hours through digital timekeeping.`,
+      `Recorded active volunteer mobilization and participation through digital tracking.`,
       `Generated ${reports.length} partner operational and field impact submissions.`,
     ];
 

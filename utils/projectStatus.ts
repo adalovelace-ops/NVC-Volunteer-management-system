@@ -1,8 +1,9 @@
 import { Project } from '../models/types';
 
-type StatusProjectLike = Pick<Project, 'status' | 'startDate' | 'endDate'>;
+type StatusProjectLike = Pick<Project, 'status' | 'startDate' | 'endDate'> &
+  Partial<Pick<Project, 'isDraft'>>;
 type StatusProjectWithModeLike = StatusProjectLike &
-  Partial<Pick<Project, 'statusMode' | 'manualStatus'>>;
+  Partial<Pick<Project, 'statusMode' | 'manualStatus' | 'isDraft'>>;
 
 function normalizeProjectStatusValue(status?: Project['status'] | string | null): Project['status'] {
   const normalizedStatus = String(status || '')
@@ -60,6 +61,10 @@ export function getProjectDisplayStatus(
     return normalizeProjectStatusValue(projectOrStatus);
   }
 
+  if ((projectOrStatus as any).isDraft) {
+    return 'Planning';
+  }
+
   const normalizedStatus = normalizeProjectStatusValue(projectOrStatus.status);
   const normalizedManualStatus = projectOrStatus.manualStatus
     ? normalizeProjectStatusValue(projectOrStatus.manualStatus)
@@ -101,6 +106,9 @@ export function getProjectDisplayStatus(
 export function getProjectStatusColor(
   projectOrStatus?: StatusProjectLike | Project['status'] | string | null
 ) {
+  if (typeof projectOrStatus === 'object' && projectOrStatus && (projectOrStatus as any).isDraft) {
+    return '#64748B';
+  }
   const normalizedStatus = getProjectDisplayStatus(projectOrStatus);
 
   switch (normalizedStatus) {
@@ -122,6 +130,9 @@ export function getProjectStatusColor(
 export function getProjectStatusLabel(
   projectOrStatus?: StatusProjectLike | Project['status'] | string | null
 ): string {
+  if (typeof projectOrStatus === 'object' && projectOrStatus && (projectOrStatus as any).isDraft) {
+    return 'Draft';
+  }
   const normalized = getProjectDisplayStatus(projectOrStatus);
   switch (normalized) {
     case 'Planning':
@@ -142,6 +153,9 @@ export function getProjectStatusLabel(
 export function getProjectStatusTag(
   projectOrStatus?: StatusProjectLike | Project['status'] | string | null
 ): string {
+  if (typeof projectOrStatus === 'object' && projectOrStatus && (projectOrStatus as any).isDraft) {
+    return 'Draft';
+  }
   const normalized = getProjectDisplayStatus(projectOrStatus);
   switch (normalized) {
     case 'Planning':

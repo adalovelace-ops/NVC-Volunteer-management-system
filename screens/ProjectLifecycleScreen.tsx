@@ -345,6 +345,7 @@ type ProjectDraft = {
   expectedDeliverables: string;
   attachmentUrl: string;
   isEvent: boolean;
+  isDraft?: boolean;
 };
 
 type ProjectVolunteerEntry = {
@@ -643,6 +644,7 @@ const createEmptyProjectDraft = (
   expectedDeliverables: '',
   attachmentUrl: '',
   isEvent,
+  isDraft: false,
 });
 
 const createEmptyProjectTaskDraft = (volunteersNeeded: number | string = '1'): ProjectTaskDraft => ({
@@ -1061,7 +1063,7 @@ interface InlineProjectFormProps {
   setDatePickerMode: (mode: 'startDate' | 'endDate' | 'applicationDeadline') => void;
   setSelectedDate: (d: Date) => void;
   setShowDatePicker: (show: boolean) => void;
-  handleSaveProjectRecord: () => void;
+  handleSaveProjectRecord: (isDraftSave?: boolean) => void;
   closeProjectModal: () => void;
   editingProjectId: string | null;
   projectSaveError: string | null;
@@ -1178,6 +1180,27 @@ const InlineProjectForm = React.memo(({
       cancelled = true;
     };
   }, [projectDraft.latitude, projectDraft.longitude]);
+
+  React.useEffect(() => {
+    if (!projectDraft.program_id && programSections.length > 0) {
+      const defaultMod = projectDraft.parentProjectId || programSections[0].module;
+      handleProjectDraftChange('program_id', defaultMod);
+      const matchedSection = programSections.find(s => s.module === defaultMod);
+      const matchedTitle = matchedSection?.title || '';
+      const knownModules: AdvocacyFocus[] = ['Education', 'Livelihood', 'Nutrition', 'Disaster'];
+      let advocacyFocus: AdvocacyFocus = 'Education';
+      for (const module of knownModules) {
+        if (matchedTitle.toLowerCase().includes(module.toLowerCase()) || defaultMod.toLowerCase().includes(module.toLowerCase())) {
+          advocacyFocus = module;
+          break;
+        }
+      }
+      handleProjectDraftChange('programModule', advocacyFocus);
+      if (!projectDraft.parentProjectId) {
+        handleProjectDraftChange('parentProjectId', defaultMod);
+      }
+    }
+  }, [projectDraft.program_id, projectDraft.parentProjectId, programSections]);
 
   const renderSectionHeader = (number: number, title: string, subtitle: string) => (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16, marginTop: 16 }}>
@@ -1338,7 +1361,7 @@ const InlineProjectForm = React.memo(({
                   <TextInput
                     style={[
                       inputStyle,
-                      isDuplicateTitle && { borderColor: '#f59e0b', backgroundColor: '#fffbeb' }
+                      isDuplicateTitle && { borderColor: '#ef4444', backgroundColor: '#fef2f2' }
                     ]}
                     placeholder="e.g., Mingo Meals Program, Brgy. Alangilan"
                     placeholderTextColor="#94a3b8"
@@ -1350,48 +1373,60 @@ const InlineProjectForm = React.memo(({
                       flexDirection: 'row',
                       alignItems: 'center',
                       gap: 6,
-                      backgroundColor: '#fffbeb',
+                      backgroundColor: '#fef2f2',
                       borderWidth: 1,
-                      borderColor: '#fde68a',
+                      borderColor: '#fca5a5',
                       borderRadius: 6,
                       paddingHorizontal: 8,
                       paddingVertical: 5,
                       marginTop: 6,
                     }}>
-                      <MaterialIcons name="warning-amber" size={15} color="#d97706" />
-                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#b45309', flex: 1 }}>
-                        Warning: A program, project, or event with this title already exists.
+                      <MaterialIcons name="error-outline" size={15} color="#dc2626" />
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#b91c1c', flex: 1 }}>
+                        Error: A program, project, or event with this title already exists. Please choose a unique name.
                       </Text>
                     </View>
                   ) : null}
                 </FieldContainer>
-                <FieldContainer label="Program" required>
-              <View style={pickerContainerStyle}>
-                <Picker
-                  selectedValue={projectDraft.program_id}
-                  onValueChange={(itemValue: string) => {
-                    handleProjectDraftChange('program_id', itemValue);
-                    const matchedSection = programSections.find(s => s.module === itemValue);
-                    const matchedTitle = matchedSection?.title || '';
-                    const knownModules: AdvocacyFocus[] = ['Education', 'Livelihood', 'Nutrition', 'Disaster'];
-                    let advocacyFocus: AdvocacyFocus = 'Education';
-                    for (const module of knownModules) {
-                      if (matchedTitle.toLowerCase().includes(module.toLowerCase()) || itemValue.toLowerCase().includes(module.toLowerCase())) {
-                        advocacyFocus = module;
-                        break;
-                      }
-                    }
-                    handleProjectDraftChange('programModule', advocacyFocus);
-                  }}
-                  style={pickerStyle}
-                >
-                  {programSections.map(s => (
-                    <Picker.Item key={s.module} label={s.title} value={s.module} />
-                  ))}
-                </Picker>
-              </View>
-            </FieldContainer>
-          </FieldRow>
+                <FieldContainer label="Parent Program" required>
+                  <View
+                    style={{
+                      height: 42,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: '#cbd5e1',
+                      backgroundColor: '#f8fafc',
+                      paddingHorizontal: 12,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <MaterialIcons name="folder-special" size={18} color="#166534" />
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e293b' }}>
+                        {programSections.find(s => s.module === projectDraft.program_id)?.title ||
+                         programSections.find(s => s.module === projectDraft.parentProjectId)?.title ||
+                         projectDraft.program_id ||
+                         projectDraft.parentProjectId ||
+                         'Program'}
+                      </Text>
+                    </View>
+                    <View
+                      style={{
+                        backgroundColor: '#dcfce7',
+                        borderWidth: 1,
+                        borderColor: '#bbf7d0',
+                        borderRadius: 6,
+                        paddingHorizontal: 8,
+                        paddingVertical: 2,
+                      }}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#166534' }}>Default Program</Text>
+                    </View>
+                  </View>
+                </FieldContainer>
+              </FieldRow>
             );
           })()}
 
@@ -1720,12 +1755,14 @@ const InlineProjectForm = React.memo(({
                 flexDirection: 'row',
                 gap: 6,
               }}
-              onPress={handleSaveProjectRecord}
+              onPress={() => handleSaveProjectRecord(false)}
             >
               <MaterialIcons name="add-circle-outline" size={16} color="#fff" />
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>
                 {editingProjectId
-                  ? (projectDraft.isEvent ? 'Update Event' : 'Update Project')
+                  ? (projectDraft.isEvent
+                      ? (projectDraft.isDraft ? 'Publish Event' : 'Update Event')
+                      : (projectDraft.isDraft ? 'Publish Project' : 'Update Project'))
                   : (projectDraft.isEvent ? 'Create Event' : 'Create Project')}
               </Text>
             </TouchableOpacity>
@@ -1743,8 +1780,7 @@ const InlineProjectForm = React.memo(({
                 backgroundColor: '#fff',
               }}
               onPress={() => {
-                handleProjectDraftChange('status', 'Planning');
-                handleSaveProjectRecord();
+                handleSaveProjectRecord(true);
               }}
             >
               <MaterialIcons name="save" size={16} color="#166534" />
@@ -1842,7 +1878,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const [taskBoardModalVisible, setTaskBoardModalVisible] = useState(false);
   const [showAttendanceTasks, setShowAttendanceTasks] = useState(false);
   const [attendanceSearchQuery, setAttendanceSearchQuery] = useState('');
-  const [attendanceFilter, setAttendanceFilter] = useState<'All' | 'Present' | 'Absent' | 'Late'>('All');
+  const [attendanceFilter, setAttendanceFilter] = useState<'All' | 'Photo is submitted' | 'No submitted' | 'Present' | 'Absent' | 'Late'>('All');
   const [programTracks, setProgramTracks] = useState<ProgramTrack[]>([]);
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [showExtendScheduleModal, setShowExtendScheduleModal] = useState(false);
@@ -1987,7 +2023,12 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const [isProjectSaveSuccess, setIsProjectSaveSuccess] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [taskToDeleteId, setTaskToDeleteId] = useState<string | null>(null);
+  const [taskToRemoveVolunteers, setTaskToRemoveVolunteers] = useState<ProjectInternalTask | null>(null);
+  const [removeVolunteersState, setRemoveVolunteersState] = useState<'confirm' | 'loading' | 'success'>('confirm');
+  const [showExceededVolunteersModal, setShowExceededVolunteersModal] = useState(false);
+  const [exceededModalInfo, setExceededModalInfo] = useState<{ entered: number; max: number }>({ entered: 0, max: 0 });
   const [showParticipantsSection, setShowParticipantsSection] = useState(false);
+  const [saveTaskModalState, setSaveTaskModalState] = useState<'idle' | 'loading' | 'success'>('idle');
   const [isTaskSaveSuccess, setIsTaskSaveSuccess] = useState(false);
   const [taskSaveSuccessMessage, setTaskSaveSuccessMessage] = useState('');
   const [taskSaveNotice, setTaskSaveNotice] = useState<string | null>(null);
@@ -2041,6 +2082,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const [applicantSort, setApplicantSort] = useState<'Newest' | 'Oldest'>('Newest');
   const [selectedMatch, setSelectedMatch] = useState<VolunteerProjectMatch | null>(null);
   const [reviewerNotes, setReviewerNotes] = useState('');
+  const [applicationReviewModalState, setApplicationReviewModalState] = useState<{ loading: boolean; text: string } | null>(null);
   const [showMoreDropdown, setShowMoreDropdown] = useState(false);
   const [programToDelete, setProgramToDelete] = useState<{ id: string; title: string } | null>(null);
   const [showDeleteProgramConfirmModal, setShowDeleteProgramConfirmModal] = useState(false);
@@ -2570,6 +2612,16 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       Alert.alert('Error', 'Program name is required.');
       return;
     }
+    const trimmedProgTitle = programDraft.title.trim().toLowerCase();
+    const duplicateProg = programTracks.find(t =>
+      t.id !== editingProgramId &&
+      t.title &&
+      t.title.trim().toLowerCase() === trimmedProgTitle
+    );
+    if (duplicateProg) {
+      Alert.alert('Duplicate Program Name', `A program with the name "${programDraft.title.trim()}" already exists. Please choose a unique name.`);
+      return;
+    }
     setActionLoadingKey('saveProgramCrud');
     try {
       const now = new Date().toISOString();
@@ -2678,6 +2730,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
   // Selects a project and loads all related lifecycle details.
   const handleSelectProject = async (project: Project) => {
+    if (user?.role === 'partner' && project.isDraft) {
+      Alert.alert('Not Available', 'Draft projects are not available for partners.');
+      return;
+    }
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       windowScrollOffsetRef.current = window.scrollY || window.pageYOffset || 0;
     }
@@ -2705,9 +2761,15 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       return;
     }
 
+    if (user?.role === 'partner' && nextProject.isDraft) {
+      Alert.alert('Not Available', 'Draft projects are not available for partners.');
+      navigation.setParams({ projectId: undefined });
+      return;
+    }
+
     void handleSelectProject(nextProject);
     navigation.setParams({ projectId: undefined });
-  }, [navigation, projects, route?.params?.projectId]);
+  }, [navigation, projects, route?.params?.projectId, user?.role]);
 
   // Opens the project editor pre-wired to a specific program track.
   const openCreateProjectInProgramModal = (trackId: string, trackTitle: string, proposal?: any) => {
@@ -2754,7 +2816,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
   const openCreateEventInProgramModal = (trackId: string, trackTitle: string) => {
     const parentProjects = projects.filter(
-      project => !project.isEvent && (project.program_id === trackId || project.parentProjectId === trackId)
+      project =>
+        !project.isEvent &&
+        (user?.role !== 'partner' || !project.isDraft) &&
+        (project.program_id === trackId || project.parentProjectId === trackId)
     );
 
     if (parentProjects.length === 0) {
@@ -2795,6 +2860,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
   // Opens the project modal in create-event mode with the selected program prefilled.
   const openCreateEventModal = (parentProject: Project) => {
+    if (user?.role === 'partner' && parentProject.isDraft) {
+      Alert.alert('Not Available', 'Draft projects cannot have events created under them by partners.');
+      return;
+    }
     setEditingProjectId(null);
     setProjectEditorMode('event');
     const eventTitle = parentProject.title ? `${parentProject.title} Event` : 'New Event';
@@ -2893,6 +2962,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       attachmentUrl:
         (project.attachments || []).find(attachment => attachment.type === 'document')?.url || '',
       isEvent: !!project.isEvent,
+      isDraft: Boolean(project.isDraft),
     });
     applyProjectLocationSelectionFromAddress(project.location.address);
     setProjectSaveError(null);
@@ -2959,26 +3029,22 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   };
 
   const deleteProjectLikeRecord = async (project: Project) => {
-    const deletePrimary = async () => {
-      if (project.isEvent) {
-        await deleteEvent(project.id);
-        return;
+    if (project.isEvent) {
+      await deleteEvent(project.id);
+    } else {
+      const childEvents = projects.filter(p => p.parentProjectId === project.id);
+      for (const child of childEvents) {
+        try {
+          if (child.isEvent) {
+            await deleteEvent(child.id);
+          } else {
+            await deleteProject(child.id);
+          }
+        } catch (e) {
+          console.warn('Failed to delete child event:', e);
+        }
       }
       await deleteProject(project.id);
-    };
-
-    const deleteFallback = async () => {
-      if (project.isEvent) {
-        await deleteProject(project.id);
-        return;
-      }
-      await deleteEvent(project.id);
-    };
-
-    try {
-      await deletePrimary();
-    } catch {
-      await deleteFallback();
     }
   };
 
@@ -3264,6 +3330,24 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     setTaskDraft(current => ({ ...current, [key]: value }));
   };
 
+  const handleTaskVolunteersInputChange = (text: string, maxAllowed: number) => {
+    const cleaned = text.replace(/[^0-9]/g, '');
+    if (!cleaned) {
+      setTaskDraft(current => ({ ...current, volunteersNeeded: '' }));
+      return;
+    }
+
+    const num = parseInt(cleaned, 10);
+    if (num > maxAllowed) {
+      setExceededModalInfo({ entered: num, max: maxAllowed });
+      setShowExceededVolunteersModal(true);
+      setTaskDraft(current => ({ ...current, volunteersNeeded: String(maxAllowed) }));
+      return;
+    }
+
+    setTaskDraft(current => ({ ...current, volunteersNeeded: String(num) }));
+  };
+
   const handlePickProjectImage = async () => {
     try {
       const pickedImage = await pickImageFromDevice();
@@ -3302,11 +3386,12 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
   const openCreateTaskModal = () => {
     setEditingTaskId(null);
-    setTaskDraft(createEmptyProjectTaskDraft());
+    setTaskDraft(createEmptyProjectTaskDraft(activeSelectedProject?.volunteersNeeded || 1));
     setCustomTaskSkill('');
     setShowAssignmentDropdown(false);
     setIsTaskSaveSuccess(false);
     setTaskSaveSuccessMessage('');
+    setSaveTaskModalState('idle');
     setShowTaskModal(true);
   };
 
@@ -3317,7 +3402,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       title: task.title,
       description: task.description,
       category: task.category,
-      volunteersNeeded: String((task as any).volunteersNeeded || getTaskAssignedVolunteerIds(task).length || 1),
+      volunteersNeeded: String((task as any).volunteersNeeded || activeSelectedProject?.volunteersNeeded || 1),
       priority: task.priority,
       status: task.status,
       assignedVolunteerIds: getTaskAssignedVolunteerIds(task),
@@ -3328,15 +3413,17 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     setShowAssignmentDropdown(false);
     setIsTaskSaveSuccess(false);
     setTaskSaveSuccessMessage('');
+    setSaveTaskModalState('idle');
     setShowTaskModal(true);
   };
 
   const closeTaskModal = () => {
     setShowTaskModal(false);
+    setSaveTaskModalState('idle');
     setIsTaskSaveSuccess(false);
     setTaskSaveSuccessMessage('');
     setEditingTaskId(null);
-    setTaskDraft(createEmptyProjectTaskDraft());
+    setTaskDraft(createEmptyProjectTaskDraft(activeSelectedProject?.volunteersNeeded || 1));
     setCustomTaskSkill('');
     setShowAssignmentDropdown(false);
   };
@@ -3518,7 +3605,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   };
 
   // Creates or updates a project record from the modal form.
-  const handleSaveProjectRecord = async () => {
+  const handleSaveProjectRecord = async (isDraftSave: boolean = false) => {
     if (isSavingEvent) return;
     setIsSavingEvent(true);
 
@@ -3540,41 +3627,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
     let isAuthorizedPartner = false;
     if (user?.role === 'partner') {
-      const userPartner = partners.find(p =>
-        p.ownerUserId === user.id ||
-        (p.contactEmail && p.contactEmail.toLowerCase() === user.email?.toLowerCase())
-      );
-      const matchesPartner = (pId: string | undefined): boolean => {
-        if (!pId) return false;
-        const matchesId = userPartner ? pId === userPartner.id : false;
-        const matchesUserId = pId === user.id;
-        const matchesOwnerId = userPartner?.ownerUserId ? pId === userPartner.ownerUserId : false;
-        return matchesId || matchesUserId || matchesOwnerId;
-      };
-
-      if (projectDraft.isEvent) {
-        if (tempResolvedEventParentProject && matchesPartner(tempResolvedEventParentProject.partnerId)) {
-          isAuthorizedPartner = true;
-        } else if (tempExistingProject) {
-          if (matchesPartner(tempExistingProject.partnerId)) {
-            isAuthorizedPartner = true;
-          }
-          const parentProj = projects.find(p => !p.isEvent && p.id === tempExistingProject.parentProjectId);
-          if (parentProj && matchesPartner(parentProj.partnerId)) {
-            isAuthorizedPartner = true;
-          }
-        }
-      } else {
-        if (matchesPartner(projectDraft.partnerId)) {
-          isAuthorizedPartner = true;
-        } else if (tempExistingProject && matchesPartner(tempExistingProject.partnerId)) {
-          isAuthorizedPartner = true;
-        }
-      }
-      // Fallback: allow any partner to post/make events (UI already gates to own projects)
-      if (!isAuthorizedPartner && user?.role === 'partner' && projectDraft.isEvent) {
-        isAuthorizedPartner = true;
-      }
+      isAuthorizedPartner = true;
     }
 
     if (!isAdmin && !isAuthorizedPartner) {
@@ -3582,7 +3635,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       Alert.alert('Access Restricted', 'Only admin accounts or the proposing partner can manage projects.');
       return;
     }
-
 
     const failProjectSaveValidation = (message: string) => {
       setActionLoadingKey(null);
@@ -3594,7 +3646,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     const parsedLatitude = Number(projectDraft.latitude);
     const parsedLongitude = Number(projectDraft.longitude);
     // For events, use the user-provided value; for projects, set to 0
-    const volunteersNeeded = projectDraft.isEvent ? Number(projectDraft.volunteersNeeded) : 0;
+    const volunteersNeeded = projectDraft.isEvent ? Number(projectDraft.volunteersNeeded || 0) : 0;
     let startDateValue = new Date(projectDraft.startDate);
     let endDateValue = new Date(projectDraft.endDate);
 
@@ -3611,12 +3663,13 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         return `${hoursStr}:${minutes}:00`;
       };
 
-      const startDatePart = projectDraft.startDate.split('T')[0];
-      const endDatePart = projectDraft.endDate.split('T')[0];
+      const startDatePart = projectDraft.startDate ? projectDraft.startDate.split('T')[0] : new Date().toISOString().split('T')[0];
+      const endDatePart = projectDraft.endDate ? projectDraft.endDate.split('T')[0] : startDatePart;
 
       startDateValue = new Date(`${startDatePart}T${parseTimeTo24h(eventTimeStart)}`);
       endDateValue = new Date(`${endDatePart}T${parseTimeTo24h(eventTimeEnd)}`);
     }
+
     const existingProject = editingProjectId
       ? projects.find(project => project.id === editingProjectId) || null
       : null;
@@ -3625,6 +3678,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         ? (
           projectDraft.parentProjectId?.trim()
           || (!selectedProject?.isEvent ? selectedProject?.id : '')
+          || projects.find(p => !p.isEvent && p.programModule === projectDraft.programModule)?.id
+          || projects.find(p => !p.isEvent)?.id
+          || ''
         )
         : '';
     const resolvedEventParentProject =
@@ -3634,32 +3690,35 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     const parentLocationSelection = getProjectLocationSelection(resolvedEventParentProject);
     const effectiveProjectRegionCode =
       projectDraft.isEvent
-        ? (parentLocationSelection.regionCode || projectRegionCode)
+        ? (projectRegionCode || parentLocationSelection.regionCode)
         : projectRegionCode;
     const effectiveProjectCityCode =
       projectDraft.isEvent
-        ? (parentLocationSelection.cityCode || projectCityCode)
+        ? (projectCityCode || parentLocationSelection.cityCode)
         : projectCityCode;
+    const effectiveProjectBarangayCode =
+      projectDraft.isEvent
+        ? (projectBarangayCode || (parentLocationSelection as any)?.barangayCode || '')
+        : projectBarangayCode;
+
+    const effectiveProjectPlaceVenue =
+      projectPlaceVenue.trim() ||
+      projectDraft.address.trim() ||
+      resolvedEventParentProject?.location?.address ||
+      resolvedEventParentProject?.title ||
+      'Project Venue';
 
     if (
       !projectDraft.title.trim() ||
       !projectDraft.description.trim() ||
       !projectDraft.startDate.trim() ||
-      !projectDraft.endDate.trim() ||
-      !effectiveProjectRegionCode ||
-      !effectiveProjectCityCode ||
-      !projectPlaceVenue.trim() ||
-      (projectDraft.isEvent && !projectBarangayCode)
+      !projectDraft.endDate.trim()
     ) {
-      failProjectSaveValidation(
-        projectDraft.isEvent
-          ? 'Fill in all required fields: title, description, start date, end date, region, city, barangay, and place.'
-          : 'Fill in all required fields: title, description, start date, end date, region, city, and place.'
-      );
+      failProjectSaveValidation('Fill in all required fields: title, description, start date, and end date.');
       return;
     }
 
-    // Duplicate title check & warning
+    // Duplicate title error trap
     const trimmedTitle = projectDraft.title.trim().toLowerCase();
     const duplicateItem = projects.find(project =>
       project.id !== editingProjectId &&
@@ -3669,50 +3728,21 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
     if (duplicateItem) {
       const duplicateType = duplicateItem.isEvent ? 'an event' : duplicateItem.parentProjectId ? 'a project' : 'a program/project';
-      const shouldProceed = await new Promise<boolean>(resolve => {
-        Alert.alert(
-          'Duplicate Title Warning',
-          `"${projectDraft.title.trim()}" already exists as ${duplicateType}. Do you want to proceed with this duplicate title?`,
-          [
-            { text: 'Cancel & Change Title', style: 'cancel', onPress: () => resolve(false) },
-            { text: 'Proceed Anyway', onPress: () => resolve(true) },
-          ]
-        );
-      });
-      if (!shouldProceed) {
-        setIsSavingEvent(false);
-        return;
-      }
+      failProjectSaveValidation(`Duplicate Name Error: "${projectDraft.title.trim()}" already exists as ${duplicateType}. Please use a unique title.`);
+      return;
     }
-
-    // For projects (non-events), preserve parentProjectId if it was set (for grouping in programs)
-    const resolvedProjectParentId = !projectDraft.isEvent ? (projectDraft.parentProjectId?.trim() || undefined) : undefined;
 
     if (projectDraft.isEvent && !resolvedEventParentProjectId) {
       failProjectSaveValidation('Select a parent project before saving this event.');
       return;
     }
 
-    if (projectDraft.startDate > projectDraft.endDate) {
+    // For projects (non-events), preserve parentProjectId if it was set (for grouping in programs)
+    const resolvedProjectParentId = !projectDraft.isEvent ? (projectDraft.parentProjectId?.trim() || undefined) : undefined;
+
+    if (startDateValue > endDateValue) {
       failProjectSaveValidation('End date must be on or after the start date.');
       return;
-    }
-
-    if (projectDraft.isEvent) {
-      if (!resolvedEventParentProject) {
-        failProjectSaveValidation('Choose a valid parent project for this event.');
-        return;
-      }
-
-      const parentStartDate = getDateOnlyBoundary(resolvedEventParentProject.startDate);
-      const parentEndDate = getDateOnlyBoundary(resolvedEventParentProject.endDate, true);
-      if (
-        !isDateWithinBounds(startDateValue, parentStartDate, parentEndDate) ||
-        !isDateWithinBounds(endDateValue, parentStartDate, parentEndDate)
-      ) {
-        failProjectSaveValidation('Event dates must be within the parent project start and end dates.');
-        return;
-      }
     }
 
     const hasManualCoordinates =
@@ -3728,19 +3758,17 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     const effectiveLocationBarangays = effectiveProjectCityCode === projectCityCode
       ? projectLocationBarangays
       : getBarangaysByCity(effectiveProjectCityCode);
-    const selectedLocationBarangay = effectiveLocationBarangays.find(barangay => barangay.code === projectBarangayCode);
+    const selectedLocationBarangay = effectiveLocationBarangays.find(barangay => barangay.code === effectiveProjectBarangayCode);
+    
     const structuredAddress = composePhilippineAddress(
-      selectedLocationRegion?.name || '',
-      selectedLocationCity?.displayName || '',
-      projectDraft.isEvent ? selectedLocationBarangay?.name || '' : ''
+      selectedLocationRegion?.name || resolvedEventParentProject?.location?.region || '',
+      selectedLocationCity?.displayName || resolvedEventParentProject?.location?.city || '',
+      projectDraft.isEvent ? (selectedLocationBarangay?.name || resolvedEventParentProject?.location?.barangay || '') : ''
     );
-    const resolvedAddress = projectPlaceVenue.trim()
-      ? [projectPlaceVenue.trim(), structuredAddress].filter(Boolean).join(', ')
-      : (structuredAddress || projectDraft.address.trim());
-    const hasStructuredPhilippineAddress =
-      Boolean(effectiveProjectRegionCode) &&
-      Boolean(effectiveProjectCityCode) &&
-      (!projectDraft.isEvent || Boolean(projectBarangayCode));
+    const resolvedAddress = [effectiveProjectPlaceVenue, structuredAddress].filter(Boolean).join(', ')
+      || projectDraft.address.trim()
+      || resolvedEventParentProject?.location?.address
+      || 'Philippines';
 
     const resolvedCoordinates =
       (hasManualCoordinates
@@ -3752,20 +3780,24 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           latitude: existingProject.location.latitude,
           longitude: existingProject.location.longitude,
         }
-        : null);
-
-    if (!resolvedCoordinates) {
-      failProjectSaveValidation('Enter a recognizable barangay, city, municipality, or venue so the map can place this program.');
-      return;
-    }
+        : null) ||
+      (resolvedEventParentProject
+        ? {
+          latitude: resolvedEventParentProject.location.latitude,
+          longitude: resolvedEventParentProject.location.longitude,
+        }
+        : null) ||
+      { latitude: 10.3157, longitude: 123.8854 };
 
     const now = new Date().toISOString();
-    const inheritedStatusMode: Project['statusMode'] =
-      existingProject?.statusMode === 'Manual' ? 'Manual' : 'System';
-    const inheritedManualStatus: Project['manualStatus'] =
-      inheritedStatusMode === 'Manual'
+    const inheritedStatusMode: Project['statusMode'] = isDraftSave
+      ? 'Manual'
+      : (existingProject?.statusMode === 'Manual' ? 'Manual' : 'System');
+    const inheritedManualStatus: Project['manualStatus'] = isDraftSave
+      ? 'Planning'
+      : (inheritedStatusMode === 'Manual'
         ? (existingProject?.manualStatus || existingProject?.status || 'Planning')
-        : undefined;
+        : undefined);
 
     const draftBaseProject: Project = {
       id:
@@ -3780,7 +3812,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       parentProjectId: projectDraft.isEvent ? resolvedEventParentProjectId : resolvedProjectParentId,
       statusMode: inheritedStatusMode,
       manualStatus: inheritedManualStatus,
-      status: projectDraft.status,
+      status: isDraftSave ? 'Planning' : projectDraft.status,
+      isDraft: isDraftSave ? true : false,
       category: getProjectCategoryFromModule(projectDraft.programModule),
       startDate: startDateValue.toISOString(),
       endDate: endDateValue.toISOString(),
@@ -3820,18 +3853,20 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       internalTasks: Array.isArray(existingProject?.internalTasks) ? existingProject?.internalTasks : [],
     } as any as Project;
 
-    const resolvedLifecycleStatus =
-      draftBaseProject.statusMode === 'Manual'
+    const resolvedLifecycleStatus = isDraftSave
+      ? 'Planning'
+      : (draftBaseProject.statusMode === 'Manual'
         ? (draftBaseProject.manualStatus || draftBaseProject.status)
-        : getSystemDerivedProjectStatus(draftBaseProject);
+        : getSystemDerivedProjectStatus(draftBaseProject));
 
     const savedProject: Project = {
       ...draftBaseProject,
       status: resolvedLifecycleStatus,
+      isDraft: isDraftSave ? true : false,
     };
 
     const shouldAutoCreateFieldOfficerTask = (project: Project): boolean => {
-      if (!project.isEvent) {
+      if (!project.isEvent || isDraftSave || project.isDraft) {
         return false;
       }
 
@@ -3860,7 +3895,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               description: 'Manage attendance tracking and volunteer coordination for this event.',
               category: 'Field Coordination',
               priority: 'High',
-              status: 'Assigned',
+              status: 'Unassigned',
               isFieldOfficer: true,
               skillsNeeded: ['Leadership', 'Communication'],
               createdAt: now,
@@ -3873,27 +3908,44 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
     const isEditingExistingRecord = Boolean(editingProjectId);
 
-    setIsSavingEvent(true);
     try {
       await saveProjectLikeRecord(projectToSave);
       await loadProjects();
       setIsSavingEvent(false);
       setActionLoadingKey(null);
+
+      if (isDraftSave) {
+        closeProjectModal();
+        showTaskSaveNotice(
+          savedProject.isEvent
+            ? 'Event draft saved. The event was saved as a draft.'
+            : 'Project draft saved. The project was saved as a draft.'
+        );
+        Alert.alert(
+          savedProject.isEvent ? 'Event Draft Saved' : 'Project Draft Saved',
+          savedProject.isEvent
+            ? 'Event was saved as draft and is currently in Planning.'
+            : 'Project was saved as draft and is currently in Planning.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
       if (savedProject.isEvent) {
         setPostEventJustPosted(true);
         setTimeout(() => setPostEventJustPosted(false), 2500);
       }
       const successTitle = isEditingExistingRecord
         ? savedProject.isEvent
-          ? 'Event Edit Completed'
-          : 'Project Edit Completed'
+          ? (existingProject?.isDraft ? 'Event Published' : 'Event Edit Completed')
+          : (existingProject?.isDraft ? 'Project Published' : 'Project Edit Completed')
         : savedProject.isEvent
           ? 'Event Created'
           : 'Project Created';
       const successMessage = isEditingExistingRecord
         ? savedProject.isEvent
-          ? 'Event details were updated and saved successfully.'
-          : 'Project details were updated and saved successfully.'
+          ? (existingProject?.isDraft ? 'Event was published and is now active.' : 'Event details were updated and saved successfully.')
+          : (existingProject?.isDraft ? 'Project was published and is now active.' : 'Project details were updated and saved successfully.')
         : savedProject.isEvent
           ? 'Event was created and saved successfully.'
           : 'Project was created and saved successfully.';
@@ -3902,10 +3954,28 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         closeProjectModal();
         showTaskSaveNotice(
           savedProject.isEvent
-            ? 'Event edit completed. The event details were updated and saved successfully.'
-            : 'Project edit completed. The project details were updated and saved successfully.'
+            ? (existingProject?.isDraft ? 'Event published and active.' : 'Event edit completed. The event details were updated and saved successfully.')
+            : (existingProject?.isDraft ? 'Project published and active.' : 'Project edit completed. The project details were updated and saved successfully.')
         );
         if (savedProject.isEvent) {
+          try {
+            const googleUrl = getGoogleCalendarEventUrl(projectToSave);
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.open(googleUrl, '_blank');
+            } else {
+              Linking.openURL(googleUrl).catch(err => {
+                console.error('Failed to open Google Calendar link:', err);
+              });
+            }
+          } catch (calErr) {
+            console.warn('Google Calendar open skipped:', calErr);
+          }
+        }
+        Alert.alert(successTitle, successMessage);
+      } else if (savedProject.isEvent) {
+        closeProjectModal();
+        showTaskSaveNotice('Event created. The new event was saved and is now visible in the live project flow.');
+        try {
           const googleUrl = getGoogleCalendarEventUrl(projectToSave);
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             window.open(googleUrl, '_blank');
@@ -3914,18 +3984,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               console.error('Failed to open Google Calendar link:', err);
             });
           }
-        }
-        Alert.alert(successTitle, successMessage);
-      } else if (savedProject.isEvent) {
-        closeProjectModal();
-        showTaskSaveNotice('Event created. The new event was saved and is now visible in the live project flow.');
-        const googleUrl = getGoogleCalendarEventUrl(projectToSave);
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.open(googleUrl, '_blank');
-        } else {
-          Linking.openURL(googleUrl).catch(err => {
-            console.error('Failed to open Google Calendar link:', err);
-          });
+        } catch (calErr) {
+          console.warn('Google Calendar open skipped:', calErr);
         }
         Alert.alert('Event Created', 'Event was created and saved successfully.', [
           { text: 'OK' },
@@ -4357,16 +4417,29 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const handleConfirmDeleteProject = async () => {
     const projectToDelete = projectToDeleteConfirm;
     if (!projectToDelete) return;
-    const isDeletingSelected = selectedProject?.id === projectToDelete.id;
+    const isChildOfProjectToDelete = Boolean(selectedProject?.parentProjectId && selectedProject.parentProjectId === projectToDelete.id);
+    const isDeletingSelected = selectedProject?.id === projectToDelete.id || isChildOfProjectToDelete;
     const isEvent = Boolean(projectToDelete.isEvent);
     const previousProjects = projects;
     const previousSelectedProject = selectedProject;
+
+    // Dismiss modal immediately so user doesn't wait
+    setProjectToDeleteConfirm(null);
     setIsDeletingProject(true);
     setActionLoadingKey(`delete-${projectToDelete.id}`);
-    try {
-      setProjects(currentProjects => currentProjects.filter(p => p.id !== projectToDelete.id));
-      if (isDeletingSelected) setSelectedProject(null);
 
+    // Optimistically remove project and all its child events from state
+    setProjects(currentProjects => currentProjects.filter(p => p.id !== projectToDelete.id && p.parentProjectId !== projectToDelete.id));
+    if (isDeletingSelected) {
+      setSelectedProject(null);
+      handleReturnToProjectList();
+      setStatusUpdates([]);
+      setAllPartnerApplications([]);
+      setPartnerReports([]);
+      setVolunteerJoinRecords([]);
+    }
+
+    try {
       await deleteProjectLikeRecord(projectToDelete);
 
       clearStorageCache(
@@ -4374,18 +4447,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           ? ['events', 'projects', 'statusUpdates', 'volunteerProjectJoins', 'volunteerMatches', 'volunteerTimeLogs']
           : ['projects', 'events', 'statusUpdates', 'volunteerProjectJoins', 'volunteerMatches', 'volunteerTimeLogs', 'partnerProjectApplications', 'partnerReports']
       );
-      await new Promise(resolve => setTimeout(resolve, 300));
 
-      if (isDeletingSelected) {
-        handleReturnToProjectList();
-        setStatusUpdates([]);
-        setAllPartnerApplications([]);
-        setPartnerReports([]);
-        setVolunteerJoinRecords([]);
-      }
-
-      await loadProjects();
-      setProjectToDeleteConfirm(null);
+      void loadProjects();
       showTaskSaveNotice(
         isEvent ? `Event "${projectToDelete.title}" was deleted successfully.` : `Project "${projectToDelete.title}" was deleted successfully.`,
         1200
@@ -5281,6 +5344,15 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       return;
     }
 
+    const maxEstimatedLimit = Number(currentSelectedProject.volunteersNeeded || 1);
+    const enteredVolunteersNeeded = Number(taskDraft.volunteersNeeded || 1);
+    if (enteredVolunteersNeeded > maxEstimatedLimit) {
+      setExceededModalInfo({ entered: enteredVolunteersNeeded, max: maxEstimatedLimit });
+      setShowExceededVolunteersModal(true);
+      setTaskDraft(current => ({ ...current, volunteersNeeded: String(maxEstimatedLimit) }));
+      return;
+    }
+
     const taskCategory = taskDraft.category.trim() || 'General';
 
     const assignableVolunteers = getAssignableVolunteerOptions(currentSelectedProject);
@@ -5365,7 +5437,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       assignedVolunteerNames: assignedVolunteers.length ? assignedVolunteers.map(volunteer => volunteer.name) : undefined,
       isFieldOfficer: taskDraft.isFieldOfficer,
       skillsNeeded: normalizedSkills,
-      volunteersNeeded: Number(taskDraft.volunteersNeeded || normalizedAssignedVolunteerIds.length || 1),
+      volunteersNeeded: Math.max(1, Math.min(Number(taskDraft.volunteersNeeded || currentSelectedProject.volunteersNeeded || 1), Number(currentSelectedProject.volunteersNeeded || 1))),
       createdAt:
         (Array.isArray(currentSelectedProject.internalTasks) ? currentSelectedProject.internalTasks : []).find(task => task.id === editingTaskId)?.createdAt || now,
       updatedAt: now,
@@ -5385,6 +5457,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
     try {
       setActionLoadingKey('saveTask');
+      setSaveTaskModalState('loading');
       await saveProjectLikeRecord(updatedProject);
       clearStorageCache(['projects', 'events']);
       const notificationTasks: Promise<void>[] = [];
@@ -5423,13 +5496,14 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           ? 'Event task update complete. Assignment changes were saved and volunteer notifications were sent when needed.'
           : 'Event task added. Assignment changes were saved and volunteer notifications were sent when needed.'
       );
-      closeTaskModal();
+      setSaveTaskModalState('success');
       showTaskSaveNotice(
         editingTaskId
           ? 'Task updated and saved.'
           : 'Task added and saved.'
       );
     } catch (error) {
+      setSaveTaskModalState('idle');
       Alert.alert(
         getRequestErrorTitle(error),
         getRequestErrorMessage(error, 'Failed to save the internal task.')
@@ -5482,6 +5556,79 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     setTaskToDeleteId(taskId);
   };
 
+  const handleConfirmRemoveAssignedVolunteers = async (targetTask: ProjectInternalTask) => {
+    const currentSelectedProject = selectedProject || projects.find(p => Array.isArray(p.internalTasks) && p.internalTasks.some(t => t.id === targetTask.id)) || activeSelectedProject;
+    if (!currentSelectedProject) {
+      setTaskToRemoveVolunteers(null);
+      return;
+    }
+
+    setRemoveVolunteersState('loading');
+    setActionLoadingKey('removeAssignedVolunteers');
+
+    const updatedTask: ProjectInternalTask = {
+      ...targetTask,
+      assignedVolunteerId: undefined,
+      assignedVolunteerName: undefined,
+      assignedVolunteerIds: [],
+      assignedVolunteerNames: [],
+      status: 'Unassigned',
+      updatedAt: new Date().toISOString(),
+    };
+
+    const currentTasks = Array.isArray(currentSelectedProject.internalTasks)
+      ? currentSelectedProject.internalTasks
+      : [];
+    const updatedTasks = currentTasks.map(t => (t.id === targetTask.id ? updatedTask : t));
+    const updatedProject: Project = {
+      ...currentSelectedProject,
+      internalTasks: updatedTasks,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await saveProjectLikeRecord(updatedProject);
+      clearStorageCache(['projects', 'events']);
+
+      const previousVolunteerIds = getTaskAssignedVolunteerIds(targetTask);
+      for (const volunteerId of previousVolunteerIds) {
+        const fullVolunteer = volunteers.find(v => v.id === volunteerId);
+        if (fullVolunteer) {
+          try {
+            await notifyVolunteerAboutTaskUnassignment({
+              event: currentSelectedProject,
+              task: targetTask,
+              volunteer: fullVolunteer,
+              actorUserId: user?.id,
+            });
+          } catch (notifErr) {
+            console.error('Failed to notify unassigned volunteer:', notifErr);
+          }
+        }
+      }
+
+      setProjects(currentProjects =>
+        currentProjects.map(project =>
+          project.id === updatedProject.id ? updatedProject : project
+        )
+      );
+      setSelectedProject(updatedProject);
+      setRemoveVolunteersState('success');
+      showTaskSaveNotice('Removed volunteer', 3000);
+      setTimeout(() => {
+        setTaskToRemoveVolunteers(null);
+      }, 1200);
+    } catch (error) {
+      Alert.alert(
+        getRequestErrorTitle(error),
+        getRequestErrorMessage(error, 'Failed to remove assigned volunteers.')
+      );
+      setTaskToRemoveVolunteers(null);
+    } finally {
+      setActionLoadingKey(null);
+    }
+  };
+
   // Renders one project card in the lifecycle list.
   const renderProjectCard = (project: Project) => {
     const pendingRequestCount = getPendingVolunteerRequestCountForProject(project.id);
@@ -5532,10 +5679,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 <View
                   style={[
                     styles.statusBadge,
-                    { backgroundColor: getProjectStatusColor(project) },
+                    { backgroundColor: project.isDraft ? '#64748b' : getProjectStatusColor(project) },
                   ]}
                 >
-                  <Text style={styles.statusText}>{getProjectDisplayStatus(project)}</Text>
+                  <Text style={styles.statusText}>{project.isDraft ? 'Draft' : getProjectDisplayStatus(project)}</Text>
                 </View>
                 <View style={styles.pointsBadge}>
                   <MaterialIcons name="groups" size={15} color="#f59e0b" />
@@ -5691,7 +5838,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           <TextInput
             style={[
               { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 6, padding: 8, fontSize: 13, color: '#1e293b' },
-              isDuplicateEventTitle && { borderColor: '#f59e0b', backgroundColor: '#fffbeb' }
+              isDuplicateEventTitle && { borderColor: '#ef4444', backgroundColor: '#fef2f2' }
             ]}
             placeholder="Enter event title"
             placeholderTextColor="#94a3b8"
@@ -5703,17 +5850,17 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               flexDirection: 'row',
               alignItems: 'center',
               gap: 6,
-              backgroundColor: '#fffbeb',
+              backgroundColor: '#fef2f2',
               borderWidth: 1,
-              borderColor: '#fde68a',
+              borderColor: '#fca5a5',
               borderRadius: 6,
               paddingHorizontal: 8,
               paddingVertical: 4,
               marginTop: 4,
             }}>
-              <MaterialIcons name="warning-amber" size={14} color="#d97706" />
-              <Text style={{ fontSize: 11, fontWeight: '700', color: '#b45309', flex: 1 }}>
-                Warning: A program, project, or event with this title already exists.
+              <MaterialIcons name="error-outline" size={14} color="#dc2626" />
+              <Text style={{ fontSize: 11, fontWeight: '700', color: '#b91c1c', flex: 1 }}>
+                Error: An event with this title already exists. Event titles must be unique.
               </Text>
             </View>
           ) : null}
@@ -5872,8 +6019,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               gap: 4,
             }}
             onPress={() => {
-              handleProjectDraftChange('status', 'Planning');
-              handleSaveProjectRecord();
+              handleSaveProjectRecord(true);
             }}
             disabled={isSavingEvent}
           >
@@ -5883,7 +6029,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
           <TouchableOpacity
             style={{ flex: 1.2, backgroundColor: isSavingEvent ? '#134e4a' : postEventJustPosted ? '#16a34a' : '#0f766e', borderRadius: 6, paddingVertical: 8, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6, opacity: isSavingEvent ? 0.85 : 1 }}
-            onPress={handleSaveProjectRecord}
+            onPress={() => handleSaveProjectRecord(false)}
             disabled={isSavingEvent}
           >
             {isSavingEvent ? <ActivityIndicator size="small" color="#fff" /> : postEventJustPosted ? <MaterialIcons name="check-circle" size={14} color="#fff" /> : null}
@@ -5898,7 +6044,11 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     section: (typeof programSections)[number]
   ) => {
     const sectionProjects = statusFilter
-      ? section.projects.filter(project => getProjectDisplayStatus(project) === statusFilter)
+      ? (statusFilter === 'Drafts'
+          ? section.projects.filter(project => project.isDraft)
+          : statusFilter === 'Planning'
+            ? section.projects.filter(project => getProjectDisplayStatus(project) === 'Planning' && !project.isDraft)
+            : section.projects.filter(project => getProjectDisplayStatus(project) === statusFilter))
       : section.projects;
 
     // When a status filter is active and this section has no matching projects, hide it
@@ -6031,7 +6181,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                           <TouchableOpacity
                             style={[
                               styles.eventBoxStatusPill,
-                              { backgroundColor: getProjectStatusColor(project) },
+                              { backgroundColor: project.isDraft ? '#64748b' : getProjectStatusColor(project) },
                             ]}
                             onPress={() => {
                               void handleSelectProject(project);
@@ -6039,7 +6189,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                             activeOpacity={0.85}
                           >
                             <Text style={styles.eventBoxStatusPillText}>
-                              {getProjectDisplayStatus(project)}
+                              {project.isDraft ? 'Draft' : getProjectDisplayStatus(project)}
                             </Text>
                           </TouchableOpacity>
                         </View>
@@ -6167,7 +6317,11 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     const { project, programTitle } = section;
     // Apply status filter to events
     const events = statusFilter
-      ? section.events.filter(event => getProjectDisplayStatus(event) === statusFilter)
+      ? (statusFilter === 'Drafts'
+          ? section.events.filter(event => event.isDraft)
+          : statusFilter === 'Planning'
+            ? section.events.filter(event => getProjectDisplayStatus(event) === 'Planning' && !event.isDraft)
+            : section.events.filter(event => getProjectDisplayStatus(event) === statusFilter))
       : section.events;
 
     // Hide section entirely when filter is active and no events match
@@ -6189,7 +6343,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               </Text>
             </View>
           </View>
-          {(isAdmin || user?.role === 'partner' || isProjectProposer(project)) && (
+          {(isAdmin || (user?.role === 'partner' && !project.isDraft) || isProjectProposer(project)) && (
             <TouchableOpacity
               style={{
                 flexDirection: 'row',
@@ -6234,7 +6388,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                     <TouchableOpacity
                       style={[
                         styles.eventBoxStatusPill,
-                        { backgroundColor: getProjectStatusColor(event) },
+                        { backgroundColor: event.isDraft ? '#64748b' : getProjectStatusColor(event) },
                       ]}
                       onPress={() => {
                         void handleSelectProject(event);
@@ -6242,7 +6396,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                       activeOpacity={0.85}
                     >
                       <Text style={styles.eventBoxStatusPillText}>
-                        {getProjectDisplayStatus(event)}
+                        {event.isDraft ? 'Draft' : getProjectDisplayStatus(event)}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -6302,7 +6456,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             <Text style={styles.programSuiteProjectsMeta}>
               Create an event here and it will be attached to this project.
             </Text>
-            {(isAdmin || user?.role === 'partner' || isProjectProposer(project)) && (
+            {(isAdmin || (user?.role === 'partner' && !project.isDraft) || isProjectProposer(project)) && (
               <TouchableOpacity
                 style={{
                   marginTop: 16,
@@ -6591,12 +6745,20 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
     }
   };
 
-  const handleReviewApplication = async (matchId: string, status: 'Matched' | 'Rejected') => {
+  const handleReviewApplication = async (matchId: string, status: 'Matched' | 'Rejected' | 'Requested', notes?: string) => {
     if (!user?.id) return;
     try {
+      const loadingText =
+        status === 'Matched'
+          ? 'Approving volunteer...'
+          : status === 'Rejected'
+            ? 'Declining application...'
+            : 'Moving back to volunteer applications...';
       setReviewActionLoadingId(`${matchId}-${status}`);
-      await reviewVolunteerProjectMatch(matchId, status, user.id);
-      showTaskSaveNotice(`Application successfully ${status === 'Matched' ? 'approved' : 'rejected'}!`);
+      setApplicationReviewModalState({ loading: true, text: loadingText });
+      await reviewVolunteerProjectMatch(matchId, status as any, user.id, notes);
+      showTaskSaveNotice(`Application successfully ${status === 'Matched' ? 'approved' : status === 'Rejected' ? 'declined' : 'moved back to applications'}!`);
+      setReviewerNotes('');
       if (activeSelectedProject) {
         const matches = getRelatedVolunteerApplicationMatches(activeSelectedProject);
         setSelectedEventMatches(matches || []);
@@ -6613,6 +6775,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       showTaskSaveNotice(`Error: ${getRequestErrorMessage(error, 'Failed to review application.')}`);
     } finally {
       setReviewActionLoadingId(null);
+      setApplicationReviewModalState(null);
     }
   };
 
@@ -7168,8 +7331,14 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                         </Text>
                         <View style={{ gap: 8 }}>
                           {[
-                            { name: 'Valid ID', uri: '' },
-                            ...(selectedVolunteer?.certificationsOrTrainings ? [{ name: 'Training Certificate', uri: selectedVolunteer.certificationsOrTrainings }] : [])
+                            {
+                              name: 'Valid ID',
+                              uri: selectedVolunteer?.validIdPhoto || (selectedVolunteer as any)?.volunteerMembershipSheet?.validIdPhoto || (selectedVolunteer as any)?.user?.volunteerMembershipSheet?.validIdPhoto || ''
+                            },
+                            {
+                              name: 'Training Certificate',
+                              uri: selectedVolunteer?.certificationsOrTrainings || (selectedVolunteer as any)?.volunteerMembershipSheet?.certificationsOrTrainings || (selectedVolunteer as any)?.user?.volunteerMembershipSheet?.certificationsOrTrainings || ''
+                            }
                           ].map((doc, idx) => (
                             <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' }} {...({} as any)}>
                               <View style={{ flexDirection: 'row', alignItems: 'center' }} {...({} as any)}>
@@ -7233,7 +7402,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                           />
                           <View style={{ flexDirection: 'row', gap: 12 }}>
                             <TouchableOpacity
-                              onPress={() => handleReviewApplication(selectedMatch.id, 'Rejected')}
+                              onPress={() => handleReviewApplication(selectedMatch.id, 'Rejected', reviewerNotes)}
                               style={{
                                 flex: 1,
                                 paddingVertical: 12,
@@ -7249,7 +7418,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                             </TouchableOpacity>
 
                             <TouchableOpacity
-                              onPress={() => handleReviewApplication(selectedMatch.id, 'Matched')}
+                              onPress={() => handleReviewApplication(selectedMatch.id, 'Matched', reviewerNotes)}
                               style={{
                                 flex: 2,
                                 paddingVertical: 12,
@@ -7262,14 +7431,120 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                               }}
                               disabled={reviewActionLoadingId !== null}
                             >
-                              {reviewActionLoadingId === `${selectedMatch.id}-Matched` ? (
-                                <ActivityIndicator size="small" color="#ffffff" />
-                              ) : (
-                                <>
-                                  <MaterialIcons name="check" size={18} color="#ffffff" />
-                                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#ffffff' }}>Approve Volunteer</Text>
-                                </>
-                              )}
+                              <MaterialIcons name="check" size={18} color="#ffffff" />
+                              <Text style={{ fontSize: 14, fontWeight: '700', color: '#ffffff' }}>Approve Volunteer</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      )}
+
+                      {/* Declined Section with Give Back Action */}
+                      {selectedMatch.status === 'Rejected' && (
+                        <View style={{ marginBottom: 24, padding: 16, backgroundColor: '#fef2f2', borderRadius: 12, borderWidth: 1, borderColor: '#fecaca' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                            <MaterialIcons name="cancel" size={20} color="#dc2626" />
+                            <Text style={{ fontSize: 14, fontWeight: '800', color: '#991b1b' }}>Application Declined</Text>
+                          </View>
+                          {selectedMatch.reviewNotes || selectedMatch.rejectionReason ? (
+                            <View style={{ backgroundColor: '#ffffff', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#fecaca', marginBottom: 12 }}>
+                              <Text style={{ fontSize: 11, fontWeight: '700', color: '#991b1b', marginBottom: 2 }}>Review Notes:</Text>
+                              <Text style={{ fontSize: 12, color: '#334155' }}>{selectedMatch.reviewNotes || selectedMatch.rejectionReason}</Text>
+                            </View>
+                          ) : null}
+                          <Text style={{ fontSize: 12, color: '#7f1d1d', marginBottom: 14, lineHeight: 18 }}>
+                            This volunteer was declined for this event. You can give back this application to pending review anytime.
+                          </Text>
+                          <View style={{ flexDirection: 'row', gap: 10 }}>
+                            <TouchableOpacity
+                              onPress={() => handleReviewApplication(selectedMatch.id, 'Requested')}
+                              style={{
+                                flex: 1,
+                                paddingVertical: 10,
+                                paddingHorizontal: 14,
+                                backgroundColor: '#ffffff',
+                                borderRadius: 8,
+                                borderWidth: 1.5,
+                                borderColor: '#166534',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexDirection: 'row',
+                                gap: 6,
+                              }}
+                              disabled={reviewActionLoadingId !== null}
+                            >
+                              <MaterialIcons name="replay" size={16} color="#166534" />
+                              <Text style={{ fontSize: 13, fontWeight: '800', color: '#166534' }}>Give Back to Applications</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              onPress={() => handleReviewApplication(selectedMatch.id, 'Matched')}
+                              style={{
+                                paddingVertical: 10,
+                                paddingHorizontal: 14,
+                                backgroundColor: '#166534',
+                                borderRadius: 8,
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexDirection: 'row',
+                                gap: 6,
+                              }}
+                              disabled={reviewActionLoadingId !== null}
+                            >
+                              <MaterialIcons name="check" size={16} color="#ffffff" />
+                              <Text style={{ fontSize: 13, fontWeight: '800', color: '#ffffff' }}>Approve</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      )}
+
+                      {/* Approved Section with Move Back Action */}
+                      {selectedMatch.status === 'Matched' && (
+                        <View style={{ marginBottom: 24, padding: 16, backgroundColor: '#f0fdf4', borderRadius: 12, borderWidth: 1, borderColor: '#bbf7d0' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                            <MaterialIcons name="check-circle" size={20} color="#166534" />
+                            <Text style={{ fontSize: 14, fontWeight: '800', color: '#166534' }}>Volunteer Approved</Text>
+                          </View>
+                          <Text style={{ fontSize: 12, color: '#14532d', marginBottom: 14, lineHeight: 18 }}>
+                            This volunteer is confirmed for this event.
+                          </Text>
+                          <View style={{ flexDirection: 'row', gap: 10 }}>
+                            <TouchableOpacity
+                              onPress={() => handleReviewApplication(selectedMatch.id, 'Requested')}
+                              style={{
+                                flex: 1,
+                                paddingVertical: 10,
+                                backgroundColor: '#ffffff',
+                                borderRadius: 8,
+                                borderWidth: 1,
+                                borderColor: '#cbd5e1',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexDirection: 'row',
+                                gap: 4,
+                              }}
+                              disabled={reviewActionLoadingId !== null}
+                            >
+                              <MaterialIcons name="undo" size={15} color="#475569" />
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Give Back to Applications</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => handleReviewApplication(selectedMatch.id, 'Rejected')}
+                              style={{
+                                flex: 1,
+                                paddingVertical: 10,
+                                backgroundColor: '#ffffff',
+                                borderRadius: 8,
+                                borderWidth: 1,
+                                borderColor: '#fca5a5',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexDirection: 'row',
+                                gap: 4,
+                              }}
+                              disabled={reviewActionLoadingId !== null}
+                            >
+                              <MaterialIcons name="close" size={15} color="#dc2626" />
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: '#dc2626' }}>Decline</Text>
                             </TouchableOpacity>
                           </View>
                         </View>
@@ -7288,6 +7563,21 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               )}
 
       </View>
+
+      {/* Review Loading Modal */}
+      {applicationReviewModalState && (
+        <Modal transparent visible animationType="fade">
+          <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.45)', justifyContent: 'center', alignItems: 'center', zIndex: 99999 }}>
+            <View style={{ backgroundColor: '#ffffff', padding: 28, borderRadius: 18, alignItems: 'center', gap: 14, minWidth: 240, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 16, elevation: 10 }}>
+              <ActivityIndicator size="large" color="#166534" />
+              <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>
+                {applicationReviewModalState.text}
+              </Text>
+              <Text style={{ fontSize: 12, color: '#64748b' }}>Please wait a moment</Text>
+            </View>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 
@@ -7354,7 +7644,12 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
     const renderNewEventFormContent = () => {
       const trackProjects = projects.filter(p => !p.isEvent && p.programModule === projectDraft.programModule);
-      const activeParentProject = projects.find(p => p.id === projectDraft.parentProjectId);
+      const activeParentProject =
+        projects.find(p => !p.isEvent && p.id === projectDraft.parentProjectId) ||
+        (selectedProject && !selectedProject.isEvent ? selectedProject : null) ||
+        trackProjects[0] ||
+        projects.find(p => !p.isEvent) ||
+        null;
       const isMobile = width < 768;
       const eventProgramName = activeParentProject
         ? programSections.find(section => section.module === activeParentProject.program_id)?.title
@@ -7407,12 +7702,20 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 <Text style={{ color: '#475569', fontWeight: '700', fontSize: 14 }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
+                style={{ flex: isMobile ? 1 : undefined, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: '#166534', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, gap: 6, backgroundColor: '#ffffff' }}
+                onPress={() => handleSaveProjectRecord(true)}
+                disabled={isSavingEvent}
+              >
+                <MaterialIcons name="save" size={18} color="#166534" />
+                <Text style={{ color: '#166534', fontWeight: '700', fontSize: 14 }}>Save as Draft</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
                 style={{ flex: isMobile ? 1 : undefined, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: isSavingEvent ? '#15803d' : postEventJustPosted ? '#16a34a' : '#166534', paddingVertical: 10, paddingHorizontal: 22, borderRadius: 8, gap: 8, opacity: isSavingEvent ? 0.85 : 1 }}
-                onPress={handleSaveProjectRecord}
+                onPress={() => handleSaveProjectRecord(false)}
                 disabled={isSavingEvent}
               >
                 {isSavingEvent ? <ActivityIndicator size="small" color="#fff" /> : postEventJustPosted ? <MaterialIcons name="check-circle" size={18} color="#fff" /> : <MaterialIcons name="event-available" size={18} color="#fff" />}
-                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>{isSavingEvent ? 'Posting...' : postEventJustPosted ? 'Posted' : editingProjectId ? 'Update Event' : 'Post Event'}</Text>
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>{isSavingEvent ? 'Posting...' : postEventJustPosted ? 'Posted' : editingProjectId ? (projectDraft.isDraft ? 'Publish Event' : 'Update Event') : 'Post Event'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -7469,51 +7772,37 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 <View style={{ flexDirection: isMobile ? 'column' : 'row', gap: 20 }}>
                   <View style={{ flex: 1.2 }}>
                     <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155', marginBottom: 6 }}>Parent Project <Text style={{ color: '#ef4444' }}>*</Text></Text>
-                    <View style={styles.formPickerContainer}>
-                      <Picker
-                        selectedValue={projectDraft.parentProjectId}
-                        onValueChange={(val: string) => {
-                          const parentProj = projects.find(p => p.id === val);
-                          if (parentProj) {
-                            const locSel = getProjectLocationSelection(parentProj);
-                            setProjectDraft(prev => ({
-                              ...prev,
-                              parentProjectId: val,
-                              partnerId: parentProj.partnerId,
-                            }));
-                            setProjectRegionCode(locSel.regionCode || '');
-                            setProjectCityCode(locSel.cityCode || '');
-
-                            const cityCode = locSel.cityCode || '';
-                            if (cityCode) {
-                              const barangays = getBarangaysByCity(cityCode);
-                              setProjectLocationBarangays(barangays);
-                              const parentBarangayName = parentProj.location.barangay || parentProj.locationBarangay || '';
-                              const matchedBarangay = barangays.find(b => b.name.toLowerCase() === parentBarangayName.toLowerCase());
-                              if (matchedBarangay) {
-                                setProjectBarangayCode(matchedBarangay.code);
-                              } else {
-                                setProjectBarangayCode('');
-                              }
-                            } else {
-                              setProjectBarangayCode('');
-                            }
-
-                            setProjectPlaceVenue(parentProj.location.address || '');
-                          } else {
-                            setProjectDraft(prev => ({
-                              ...prev,
-                              parentProjectId: val,
-                            }));
-                          }
+                    <View
+                      style={{
+                        height: 42,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: '#cbd5e1',
+                        backgroundColor: '#f8fafc',
+                        paddingHorizontal: 12,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, marginRight: 8 }}>
+                        <MaterialIcons name="folder" size={18} color="#166534" />
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }} numberOfLines={1}>
+                          {activeParentProject?.title || projectDraft.parentProjectId || 'Parent Project'}
+                        </Text>
+                      </View>
+                      <View
+                        style={{
+                          backgroundColor: '#dcfce7',
+                          borderWidth: 1,
+                          borderColor: '#bbf7d0',
+                          borderRadius: 6,
+                          paddingHorizontal: 8,
+                          paddingVertical: 2,
                         }}
-                        style={styles.formPicker}
                       >
-                        <Picker.Item label="Select parent project..." value="" />
-                        {trackProjects.map(proj => (
-                          <Picker.Item key={proj.id} label={proj.title} value={proj.id} />
-                        ))}
-                      </Picker>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#166534' }}>Default Project</Text>
+                      </View>
                     </View>
                   </View>
 
@@ -8088,6 +8377,52 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             <View style={styles.modalTwoColumnGrid}>
               {/* Left Column (50%) */}
               <View style={styles.modalLeftColumn}>
+
+                {/* Parent Program Field (Default / Locked - No Dropdown) */}
+                <View style={styles.formFieldContainer}>
+                  <View style={styles.fieldLabelRow}>
+                    <View style={[styles.fieldLabelIconBg, { backgroundColor: '#f0fdf4' }]}>
+                      <MaterialIcons name="folder-special" size={16} color="#166534" />
+                    </View>
+                    <Text style={styles.formFieldLabel}>Parent Program</Text>
+                  </View>
+                  <View
+                    style={{
+                      height: 42,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: '#cbd5e1',
+                      backgroundColor: '#f8fafc',
+                      paddingHorizontal: 12,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <MaterialIcons name="folder" size={18} color="#166534" />
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>
+                        {programSections.find(s => s.module === projectDraft.program_id)?.title ||
+                         programSections.find(s => s.module === projectDraft.parentProjectId)?.title ||
+                         projectDraft.program_id ||
+                         projectDraft.parentProjectId ||
+                         'Program Track'}
+                      </Text>
+                    </View>
+                    <View
+                      style={{
+                        backgroundColor: '#dcfce7',
+                        borderWidth: 1,
+                        borderColor: '#bbf7d0',
+                        borderRadius: 6,
+                        paddingHorizontal: 8,
+                        paddingVertical: 2,
+                      }}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#166534' }}>Default Program</Text>
+                    </View>
+                  </View>
+                </View>
 
                 {/* Project Title Field */}
                 <View style={styles.formFieldContainer}>
@@ -8666,9 +9001,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   marginRight: 8,
                 }}
                 onPress={() => {
-                  handleProjectDraftChange('status', 'Planning');
-                  handleSaveProjectRecord();
+                  handleSaveProjectRecord(true);
                 }}
+                disabled={isSavingEvent}
               >
                 <MaterialIcons name="save" size={16} color="#166534" style={{ marginRight: 6 }} />
                 <Text style={{ color: '#166534', fontWeight: '700', fontSize: 13 }}>
@@ -8678,7 +9013,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               <TouchableOpacity
                 style={[styles.modalFooterSubmitButton, isSavingEvent && { opacity: 0.7 }]}
                 disabled={isSavingEvent}
-                onPress={handleSaveProjectRecord}
+                onPress={() => handleSaveProjectRecord(false)}
               >
                 {isSavingEvent ? (
                   <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />
@@ -8689,8 +9024,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   {isSavingEvent
                     ? (projectDraft.isEvent ? 'Saving Event...' : 'Saving Project...')
                     : (editingProjectId
-                      ? projectDraft.isEvent ? 'Update Event' : 'Update Project'
-                      : projectDraft.isEvent ? 'Publish Event' : 'Create Project')}
+                      ? (projectDraft.isEvent
+                          ? (projectDraft.isDraft ? 'Publish Event' : 'Update Event')
+                          : (projectDraft.isDraft ? 'Publish Project' : 'Update Project'))
+                      : (projectDraft.isEvent ? 'Publish Event' : 'Create Project'))}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -8893,9 +9230,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                           {getProjectDisplayStatus(project)} · {formatProjectDateRangeLabel(project.startDate, project.endDate)}
                         </Text>
                       </View>
-                      <View style={[programWebStyles.projectRowBadge, { backgroundColor: getProjectStatusColor(project) + '22' }]}>
-                        <Text style={[programWebStyles.projectRowBadgeText, { color: getProjectStatusColor(project) }]}>
-                          {getProjectDisplayStatus(project)}
+                      <View style={[programWebStyles.projectRowBadge, { backgroundColor: (project.isDraft ? '#64748b' : getProjectStatusColor(project)) + '22' }]}>
+                        <Text style={[programWebStyles.projectRowBadgeText, { color: project.isDraft ? '#64748b' : getProjectStatusColor(project) }]}>
+                          {project.isDraft ? 'Draft' : getProjectDisplayStatus(project)}
                         </Text>
                       </View>
                     </View>
@@ -9153,6 +9490,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         );
         const sectionItems = projects
           .filter(project => {
+            if (user?.role === 'partner' && project.isDraft) {
+              return false;
+            }
             const applicationModule = getApplicationProgramModuleForProject(
               project,
               partnerApplicationByProjectId.get(project.id) ||
@@ -9175,7 +9515,11 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
         // Also include events from child projects (events where parentProjectId points to a project in this program)
         const sectionProjectIds = new Set(sectionProjects.map(p => p.id));
         const eventsFromChildProjects = projects.filter(
-          project => project.isEvent && project.parentProjectId && sectionProjectIds.has(project.parentProjectId)
+          project =>
+            project.isEvent &&
+            (user?.role !== 'partner' || !project.isDraft) &&
+            project.parentProjectId &&
+            sectionProjectIds.has(project.parentProjectId)
         );
         const allSectionEvents = [...sectionEvents, ...eventsFromChildProjects]
           .filter((event, index, array) => array.findIndex(e => e.id === event.id) === index) // Remove duplicates
@@ -9207,7 +9551,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           pendingProposalCount: pendingProposalApplication ? 1 : 0,
         };
       }),
-    [activeProgramTracks, allPartnerApplications, projects]
+    [activeProgramTracks, allPartnerApplications, projects, user?.role]
   );
 
   const sortedProgramSections = useMemo(() => {
@@ -9229,7 +9573,12 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
   const eventProjectSections = useMemo(
     () =>
       projects
-        .filter(isProgramSuiteProjectRecord)
+        .filter(project => {
+          if (user?.role === 'partner' && project.isDraft) {
+            return false;
+          }
+          return isProgramSuiteProjectRecord(project);
+        })
         .sort((left, right) => {
           const leftProgram = getProgramSuiteModuleForProject(left, activeProgramTracks) || left.programModule || left.category || '';
           const rightProgram = getProgramSuiteModuleForProject(right, activeProgramTracks) || right.programModule || right.category || '';
@@ -9245,11 +9594,15 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             project.programModule ||
             project.category,
           events: projects
-            .filter(event => event.isEvent && event.parentProjectId === project.id)
+            .filter(event =>
+              event.isEvent &&
+              (user?.role !== 'partner' || !event.isDraft) &&
+              event.parentProjectId === project.id
+            )
             .sort((left, right) => new Date(left.startDate).getTime() - new Date(right.startDate).getTime()),
         }))
         .filter(section => section.events.length > 0),
-    [activeProgramTracks, projects]
+    [activeProgramTracks, projects, user?.role]
   );
 
   const programMutationInProgress =
@@ -9364,34 +9717,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 </Text>
                 <MaterialIcons name="arrow-forward" size={10} color="#ffffff" />
               </TouchableOpacity>
-
-              {(isAdmin || user?.role === 'partner' || isProjectProposer(project)) && (
-                activeInlineCreateEventProjectId === project.id ? (
-                  <Pressable style={{ marginTop: 12, width: '100%' }} onPress={(e) => e.stopPropagation()}>
-                    {renderInlineEventForm(project, section || { module: track?.id || module, title: track?.title || module, accent: accent })}
-                  </Pressable>
-                ) : (
-                  <TouchableOpacity
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      alignSelf: 'flex-start',
-                      backgroundColor: '#0284c7',
-                      paddingVertical: 6,
-                      paddingHorizontal: 12,
-                      borderRadius: 20,
-                    }}
-                    onPress={() => {
-                      startInlineEventCreation(project);
-                    }}
-                  >
-                    <MaterialIcons name="add" size={12} color="#ffffff" style={{ marginRight: 2 }} />
-                    <Text style={{ color: '#ffffff', fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>
-                      ADD EVENT
-                    </Text>
-                  </TouchableOpacity>
-                )
-              )}
             </View>
           </View>
         </View>
@@ -10076,25 +10401,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       (attachment: any) => attachment?.type === 'document' && attachment?.url
     );
 
-    const handleShareProject = async () => {
-      const projectUrl = typeof window !== 'undefined'
-        ? `${window.location.origin}/projects?projectId=${encodeURIComponent(activeSelectedProject.id)}`
-        : `Project ID: ${activeSelectedProject.id}`;
-      const shareMessage = `Join ${activeSelectedProject.title}\n${projectUrl}`;
-
-      try {
-        if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.share) {
-          await navigator.share({ title: activeSelectedProject.title, text: shareMessage, url: projectUrl });
-        } else {
-          await Share.share({ message: shareMessage });
-        }
-      } catch (error) {
-        if ((error as { name?: string })?.name !== 'AbortError') {
-          Alert.alert('Share Project', 'Unable to open the sharing options.');
-        }
-      }
-    };
-
     const getEventDateParts = (dateString: string) => {
       try {
         const d = new Date(dateString);
@@ -10350,14 +10656,14 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
       const volunteersNeeded = project.volunteersNeeded || 0;
     const taskRows = Array.isArray(project.internalTasks) ? [...project.internalTasks] : [];
     const taskCount = taskRows.length;
-    const assignedTaskCount = taskRows.filter(task => task.status === 'Assigned' || task.status === 'Completed' || task.assignedVolunteerId).length;
-    const unassignedTaskCount = Math.max(taskCount - assignedTaskCount, 0);
+    const assignedTaskCount = taskRows.filter(task => getTaskAssignedVolunteerIds(task).length > 0).length;
+    const unassignedTaskCount = taskRows.filter(task => getTaskAssignedVolunteerIds(task).length === 0).length;
     const assignableVolunteers = volunteerEntries.filter(entry => entry.participationStatus === 'Active');
     const taskCards = taskRows
       .slice()
       .sort((left, right) => {
-        const leftAssigned = left.status === 'Completed' ? 2 : left.status === 'Assigned' ? 1 : 0;
-        const rightAssigned = right.status === 'Completed' ? 2 : right.status === 'Assigned' ? 1 : 0;
+        const leftAssigned = left.status === 'Completed' ? 2 : getTaskAssignedVolunteerIds(left).length > 0 ? 1 : 0;
+        const rightAssigned = right.status === 'Completed' ? 2 : getTaskAssignedVolunteerIds(right).length > 0 ? 1 : 0;
         return rightAssigned - leftAssigned || left.title.localeCompare(right.title);
       });
 
@@ -10374,7 +10680,13 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
         const isLate = todayLog && (todayLog.note?.startsWith('[Late]') || todayLog.note?.includes('late') || false);
         const isPresent = todayLog && !isLate;
+        const hasPhoto = Boolean(
+          (todayLog?.attendancePhoto || todayLog?.completionPhoto || '').trim() ||
+          volunteerLogs.some(l => Boolean((l.attendancePhoto || l.completionPhoto || '').trim()))
+        );
 
+        if (attendanceFilter === 'Photo is submitted' && !hasPhoto) return false;
+        if (attendanceFilter === 'No submitted' && hasPhoto) return false;
         if (attendanceFilter === 'Present' && !isPresent) return false;
         if (attendanceFilter === 'Late' && !isLate) return false;
         if (attendanceFilter === 'Absent' && todayLog) return false;
@@ -10407,7 +10719,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             <TouchableOpacity
               onPress={() => {
                 setEditingTaskId(null);
-                setTaskDraft(createEmptyProjectTaskDraft(project.volunteersNeeded || volunteersNeeded || '1'));
+                setTaskDraft(createEmptyProjectTaskDraft(project.volunteersNeeded || activeSelectedProject?.volunteersNeeded || 1));
                 setShowTaskModal(true);
               }}
               style={{
@@ -10589,7 +10901,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 borderRadius: 8,
                 paddingHorizontal: 12,
                 height: 40,
-                width: 150,
+                width: 195,
               }}>
                 <MaterialIcons name="filter-list" size={18} color="#64748b" style={{ marginRight: 8 }} />
                 <Picker
@@ -10598,9 +10910,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   style={{ flex: 1, height: 40, borderWidth: 0, backgroundColor: 'transparent', outline: 'none' } as any}
                 >
                   <Picker.Item label="All" value="All" />
-                  <Picker.Item label="Present" value="Present" />
-                  <Picker.Item label="Absent" value="Absent" />
-                  <Picker.Item label="Late" value="Late" />
+                  <Picker.Item label="Photo is submitted" value="Photo is submitted" />
+                  <Picker.Item label="No submitted" value="No submitted" />
                 </Picker>
               </View>
             </View>
@@ -10624,7 +10935,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               <TouchableOpacity
                 onPress={() => {
                   setEditingTaskId(null);
-                  setTaskDraft(createEmptyProjectTaskDraft(project.volunteersNeeded || volunteersNeeded || '1'));
+                  setTaskDraft(createEmptyProjectTaskDraft(project.volunteersNeeded || activeSelectedProject?.volunteersNeeded || 1));
                   setShowTaskModal(true);
                 }}
                 style={{
@@ -10716,7 +11027,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               ) : (
                 taskCards.map(task => {
                   const assignedVolunteerIds = getTaskAssignedVolunteerIds(task);
-                  const statusColor = assignedVolunteerIds.length >= (Number((task as any).volunteersNeeded) || Math.max(1, task.skillsNeeded.length || 1)) ? '#166534' : assignedVolunteerIds.length > 0 ? '#d97706' : '#dc2626';
+                  const taskTargetVolunteers = Number((task as any).volunteersNeeded) || volunteersNeeded || 1;
+                  const statusColor = assignedVolunteerIds.length >= taskTargetVolunteers ? '#166534' : assignedVolunteerIds.length > 0 ? '#d97706' : '#dc2626';
                   
                   return (
                     <View key={task.id} style={{
@@ -10755,13 +11067,13 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
                       <View style={{ flex: 0.8, alignItems: 'center', justifyContent: 'center' }}>
                         <Text style={{ fontSize: 14, fontWeight: '800', color: '#0f172a' }}>
-                          {(task as any).volunteersNeeded || Math.max(1, task.skillsNeeded.length || 1)}
+                          {(task as any).volunteersNeeded || volunteersNeeded || 1}
                         </Text>
                       </View>
 
                       <View style={{ flex: 1.2, alignItems: 'center' }}>
                          <Text style={{ fontSize: 14, fontWeight: '800', color: statusColor, marginBottom: 4 }}>
-                            {assignedVolunteerIds.length} / {(task as any).volunteersNeeded || Math.max(1, task.skillsNeeded.length || 1)}
+                            {assignedVolunteerIds.length} / {(task as any).volunteersNeeded || volunteersNeeded || 1}
                          </Text>
                          <View style={{ flexDirection: 'row' }}>
                            {assignedVolunteerIds.slice(0, 4).map((id, index) => (
@@ -10807,7 +11119,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                                    title: task.title,
                                    description: task.description,
                                    category: task.category,
-                                   volunteersNeeded: String((task as any).volunteersNeeded || assignedVolunteerIds.length || 1),
+                                   volunteersNeeded: String((task as any).volunteersNeeded || project.volunteersNeeded || activeSelectedProject?.volunteersNeeded || 1),
                                    priority: task.priority,
                                    status: task.status,
                                    assignedVolunteerIds: assignedVolunteerIds,
@@ -10830,36 +11142,17 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                                <Text style={{ fontSize: 13, fontWeight: '600', color: '#dc2626' }}>Delete Task</Text>
                              </TouchableOpacity>
                              <TouchableOpacity
-                               onPress={() => {
-                                 setActiveActionTaskId(null);
-                                 if (assignedVolunteerIds.length > 0) {
-                                   Alert.alert(
-                                     'Remove Volunteers',
-                                     'Are you sure you want to unassign all volunteers from this task?',
-                                     [
-                                       { text: 'Cancel', style: 'cancel' },
-                                       { text: 'Remove', style: 'destructive', onPress: async () => {
-                                          try {
-                                            const updatedTask = { ...task, assignedVolunteerIds: [], assignedVolunteerNames: [] };
-                                            const updatedTasks = taskCards.map(t => t.id === task.id ? updatedTask : t);
-                                            await saveProjectLikeRecord({ ...activeSelectedProject, internalTasks: updatedTasks });
-                                            setProjects(currentProjects =>
-                                              currentProjects.map(p =>
-                                                p.id === activeSelectedProject.id ? { ...activeSelectedProject, internalTasks: updatedTasks } : p
-                                              )
-                                            );
-                                          } catch (e) {
-                                            console.error(e);
-                                          }
-                                       }}
-                                     ]
-                                   );
-                                 }
-                               }}
-                               style={{ padding: 12 }}
-                             >
-                               <Text style={{ fontSize: 13, fontWeight: '600', color: '#dc2626' }}>Remove Assigned Volunteers</Text>
-                             </TouchableOpacity>
+                              onPress={() => {
+                                setActiveActionTaskId(null);
+                                if (assignedVolunteerIds.length > 0) {
+                                  setTaskToRemoveVolunteers(task);
+                                  setRemoveVolunteersState('confirm');
+                                }
+                              }}
+                              style={{ padding: 12 }}
+                            >
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: '#dc2626' }}>Remove Assigned Volunteers</Text>
+                            </TouchableOpacity>
                            </View>
                          )}
                       </View>
@@ -11054,24 +11347,74 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   </TouchableOpacity>
                 </View>
 
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 }}>No. of volunteers</Text>
-                <TextInput value={taskDraft.volunteersNeeded} onChangeText={text => setTaskDraft(current => ({ ...current, volunteersNeeded: text }))} keyboardType="numeric" style={{ borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, padding: 12, marginBottom: 12 }} />
+                {(() => {
+                  const maxEstimatedVolunteers = Number(volunteersNeeded || project.volunteersNeeded || activeSelectedProject?.volunteersNeeded || 1);
+                  return (
+                    <>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>No. of volunteers *</Text>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: '#64748b' }}>
+                          Estimated: {maxEstimatedVolunteers}
+                        </Text>
+                      </View>
+                      <View style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        backgroundColor: '#ffffff',
+                        borderWidth: 1,
+                        borderColor: '#cbd5e1',
+                        borderRadius: 10,
+                        paddingHorizontal: 12,
+                        marginBottom: 12,
+                      }}>
+                        <MaterialIcons name="groups" size={20} color="#166534" style={{ marginRight: 8 }} />
+                        <TextInput
+                          value={taskDraft.volunteersNeeded}
+                          onChangeText={(val) => handleTaskVolunteersInputChange(val, maxEstimatedVolunteers)}
+                          keyboardType="number-pad"
+                          placeholder={`1 - ${maxEstimatedVolunteers}`}
+                          placeholderTextColor="#94a3b8"
+                          style={{
+                            flex: 1,
+                            paddingVertical: 10,
+                            fontSize: 14,
+                            fontWeight: '700',
+                            color: '#0f172a',
+                          }}
+                        />
+                        <View style={{ backgroundColor: '#f1f5f9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: '#475569' }}>
+                            Max: {maxEstimatedVolunteers}
+                          </Text>
+                        </View>
+                      </View>
 
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 }}>Assign volunteers</Text>
-                <Picker
-                  selectedValue=""
-                  onValueChange={(val) => {
-                    const id = String(val || '');
-                    if (!id || taskDraft.assignedVolunteerIds.includes(id)) return;
-                    setTaskDraft(current => ({ ...current, assignedVolunteerIds: [...current.assignedVolunteerIds, id] }));
-                  }}
-                  style={{ borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, marginBottom: 12 }}
-                >
-                  <Picker.Item label="Select volunteer" value="" />
-                  {assignableVolunteers.map(volunteer => (
-                    <Picker.Item key={volunteer.id} label={volunteer.name} value={volunteer.id} />
-                  ))}
-                </Picker>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6 }}>Assign volunteers</Text>
+                      <Picker
+                        selectedValue=""
+                        onValueChange={(val) => {
+                          const id = String(val || '');
+                          if (!id || taskDraft.assignedVolunteerIds.includes(id)) return;
+                          if (taskDraft.assignedVolunteerIds.length >= maxEstimatedVolunteers) {
+                            setExceededModalInfo({ entered: taskDraft.assignedVolunteerIds.length + 1, max: maxEstimatedVolunteers });
+                            setShowExceededVolunteersModal(true);
+                            return;
+                          }
+                          setTaskDraft(current => ({
+                            ...current,
+                            assignedVolunteerIds: [...current.assignedVolunteerIds, id],
+                          }));
+                        }}
+                        style={{ borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, marginBottom: 12 }}
+                      >
+                        <Picker.Item label="Select volunteer" value="" />
+                        {assignableVolunteers.map(volunteer => (
+                          <Picker.Item key={volunteer.id} label={volunteer.name} value={volunteer.id} />
+                        ))}
+                      </Picker>
+                    </>
+                  );
+                })()}
 
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
                   {taskDraft.assignedVolunteerIds.map(id => {
@@ -11079,7 +11422,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                     return volunteer ? (
                       <TouchableOpacity
                         key={id}
-                        onPress={() => setTaskDraft(current => ({ ...current, assignedVolunteerIds: current.assignedVolunteerIds.filter(existing => existing !== id) }))}
+                        onPress={() => setTaskDraft(current => ({
+                          ...current,
+                          assignedVolunteerIds: current.assignedVolunteerIds.filter(existing => existing !== id),
+                        }))}
                         style={{ backgroundColor: '#f0fdf4', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: '#bbf7d0' }}
                       >
                         <Text style={{ fontSize: 12, fontWeight: '700', color: '#166534' }}>{volunteer.name} ×</Text>
@@ -11089,13 +11435,13 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 </View>
 
                 <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
-                  <TouchableOpacity onPress={closeTaskModal} disabled={actionLoadingKey === 'saveTask'} style={{ paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1', opacity: actionLoadingKey === 'saveTask' ? 0.5 : 1 }}>
+                  <TouchableOpacity onPress={closeTaskModal} disabled={actionLoadingKey === 'saveTask' || saveTaskModalState !== 'idle'} style={{ paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1', opacity: (actionLoadingKey === 'saveTask' || saveTaskModalState !== 'idle') ? 0.5 : 1 }}>
                     <Text style={{ fontWeight: '800', color: '#475569' }}>Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => void handleSaveInternalTask()}
-                    disabled={actionLoadingKey === 'saveTask'}
-                    style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10, backgroundColor: actionLoadingKey === 'saveTask' ? '#4ade80' : '#166534', opacity: actionLoadingKey === 'saveTask' ? 0.8 : 1 }}
+                    disabled={actionLoadingKey === 'saveTask' || saveTaskModalState !== 'idle'}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 10, backgroundColor: (actionLoadingKey === 'saveTask' || saveTaskModalState !== 'idle') ? '#4ade80' : '#166534', opacity: (actionLoadingKey === 'saveTask' || saveTaskModalState !== 'idle') ? 0.8 : 1 }}
                   >
                     {actionLoadingKey === 'saveTask' && (
                       <ActivityIndicator size="small" color="#ffffff" />
@@ -11135,6 +11481,171 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
               </View>
             </View>
           </Modal>
+
+          <Modal
+            transparent
+            visible={!!taskToRemoveVolunteers}
+            animationType="fade"
+            onRequestClose={() => {
+              if (removeVolunteersState !== 'loading') {
+                setTaskToRemoveVolunteers(null);
+              }
+            }}
+          >
+            <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.45)', justifyContent: 'center', padding: 20 }}>
+              <View style={{ backgroundColor: '#ffffff', borderRadius: 18, padding: 24, maxWidth: 420, width: '100%', alignSelf: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 16, elevation: 8 }}>
+                {removeVolunteersState === 'confirm' && (
+                  <>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                      <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#fef2f2', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                        <MaterialIcons name="person-remove" size={22} color="#dc2626" />
+                      </View>
+                      <Text style={{ fontSize: 18, fontWeight: '900', color: '#0f172a' }}>Remove Assigned Volunteers</Text>
+                    </View>
+                    <Text style={{ fontSize: 14, color: '#475569', lineHeight: 20, marginBottom: 20 }}>
+                      Are you sure you want to unassign all volunteers from "{taskToRemoveVolunteers?.title}"?
+                    </Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+                      <TouchableOpacity
+                        onPress={() => setTaskToRemoveVolunteers(null)}
+                        style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1' }}
+                      >
+                        <Text style={{ fontWeight: '700', color: '#475569' }}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => taskToRemoveVolunteers && void handleConfirmRemoveAssignedVolunteers(taskToRemoveVolunteers)}
+                        style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, backgroundColor: '#dc2626' }}
+                      >
+                        <Text style={{ fontWeight: '700', color: '#ffffff' }}>Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                )}
+
+                {removeVolunteersState === 'loading' && (
+                  <View style={{ alignItems: 'center', paddingVertical: 16, gap: 14 }}>
+                    <ActivityIndicator size="large" color="#dc2626" />
+                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>
+                      Removing assigned volunteers...
+                    </Text>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>Please wait a moment</Text>
+                  </View>
+                )}
+
+                {removeVolunteersState === 'success' && (
+                  <View style={{ alignItems: 'center', paddingVertical: 16, gap: 12 }}>
+                    <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#f0fdf4', alignItems: 'center', justifyContent: 'center' }}>
+                      <MaterialIcons name="check-circle" size={32} color="#166534" />
+                    </View>
+                    <Text style={{ fontSize: 18, fontWeight: '900', color: '#0f172a' }}>
+                      Removed volunteer
+                    </Text>
+                    <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center' }}>
+                      Assigned volunteers have been removed from this task.
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => setTaskToRemoveVolunteers(null)}
+                      style={{ marginTop: 8, paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8, backgroundColor: '#166534' }}
+                    >
+                      <Text style={{ fontWeight: '800', color: '#ffffff' }}>Done</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            </View>
+          </Modal>
+
+          <Modal
+            transparent
+            visible={showExceededVolunteersModal}
+            animationType="fade"
+            onRequestClose={() => setShowExceededVolunteersModal(false)}
+          >
+            <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.45)', justifyContent: 'center', padding: 20 }}>
+              <View style={{ backgroundColor: '#ffffff', borderRadius: 18, padding: 24, maxWidth: 420, width: '100%', alignSelf: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 16, elevation: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+                  <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#fef2f2', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                    <MaterialIcons name="error-outline" size={26} color="#dc2626" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 18, fontWeight: '900', color: '#0f172a' }}>Limit Exceeded</Text>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>Estimated volunteers validation</Text>
+                  </View>
+                </View>
+
+                <Text style={{ fontSize: 14, color: '#334155', lineHeight: 20, marginBottom: 16 }}>
+                  The number of volunteers ({exceededModalInfo.entered}) exceeds the total estimated volunteers needed ({exceededModalInfo.max}) for this event.
+                </Text>
+
+                <View style={{ backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', borderRadius: 10, padding: 12, marginBottom: 20 }}>
+                  <Text style={{ fontSize: 13, color: '#991b1b', fontWeight: '700' }}>
+                    Maximum accepted: {exceededModalInfo.max} volunteer{exceededModalInfo.max === 1 ? '' : 's'}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#b91c1c', marginTop: 2 }}>
+                    Input automatically clamped to stay within the estimated number.
+                  </Text>
+                </View>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                  <TouchableOpacity
+                    onPress={() => setShowExceededVolunteersModal(false)}
+                    style={{ paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8, backgroundColor: '#166534' }}
+                  >
+                    <Text style={{ fontWeight: '800', color: '#ffffff' }}>OK</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
+
+          <Modal
+            transparent
+            visible={saveTaskModalState !== 'idle'}
+            animationType="fade"
+            onRequestClose={() => {
+              if (saveTaskModalState === 'success') {
+                setSaveTaskModalState('idle');
+                closeTaskModal();
+              }
+            }}
+          >
+            <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.45)', justifyContent: 'center', padding: 20 }}>
+              <View style={{ backgroundColor: '#ffffff', borderRadius: 18, padding: 24, maxWidth: 420, width: '100%', alignSelf: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 16, elevation: 8 }}>
+                {saveTaskModalState === 'loading' && (
+                  <View style={{ alignItems: 'center', paddingVertical: 16, gap: 14 }}>
+                    <ActivityIndicator size="large" color="#166534" />
+                    <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>
+                      Saving task...
+                    </Text>
+                    <Text style={{ fontSize: 12, color: '#64748b' }}>Please wait a moment</Text>
+                  </View>
+                )}
+
+                {saveTaskModalState === 'success' && (
+                  <View style={{ alignItems: 'center', paddingVertical: 16, gap: 12 }}>
+                    <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#f0fdf4', alignItems: 'center', justifyContent: 'center' }}>
+                      <MaterialIcons name="check-circle" size={32} color="#166534" />
+                    </View>
+                    <Text style={{ fontSize: 18, fontWeight: '900', color: '#0f172a' }}>
+                      Task saved
+                    </Text>
+                    <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center' }}>
+                      {taskSaveSuccessMessage || 'Event task has been saved successfully.'}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setSaveTaskModalState('idle');
+                        closeTaskModal();
+                      }}
+                      style={{ marginTop: 8, paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8, backgroundColor: '#166534' }}
+                    >
+                      <Text style={{ fontWeight: '800', color: '#ffffff' }}>Done</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            </View>
+          </Modal>
           </ScrollView>
           )}
 
@@ -11159,11 +11670,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 <Text style={{ flex: 2, fontSize: 12, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
                   Volunteer
                 </Text>
-                <Text style={{ flex: 1.2, fontSize: 12, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
-                  Attendance
-                </Text>
-                <Text style={{ flex: 1.2, fontSize: 12, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
-                  Time
+                <Text style={{ flex: 2.4, fontSize: 12, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
+                  Photo Report
                 </Text>
                 <Text style={{ flex: 2, fontSize: 12, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
                   Assigned Tasks
@@ -11189,26 +11697,14 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                     const completedTasks = assignedTasks.filter(t => t.status === 'Completed');
                     const logs = volunteerTimeLogs.filter(log => log.projectId === activeSelectedProject.id && log.volunteerId === volunteer.id).sort((a, b) => new Date(b.timeIn).getTime() - new Date(a.timeIn).getTime());
                     const activeLog = logs[0];
-                    
-                    let attendanceStatus = 'Absent';
-                    let badgeColor = '#fee2e2';
-                    let textColor = '#dc2626';
-                    
-                    if (activeLog) {
-                      attendanceStatus = 'Present';
-                      badgeColor = '#dcfce7';
-                      textColor = '#166534';
-                      // Basic logic for Late: if timeIn is after project startDate
-                      const projectStartTime = new Date(activeSelectedProject.startDate).getTime();
-                      const logTime = new Date(activeLog.timeIn).getTime();
-                      if (projectStartTime && logTime > projectStartTime + 15 * 60000) {
-                        attendanceStatus = 'Late';
-                        badgeColor = '#ffedd5';
-                        textColor = '#d97706';
-                      }
-                    }
+                    const photoLog = logs.find(l => Boolean((l.attendancePhoto || l.completionPhoto || '').trim()));
+                    const photoUrl = (photoLog?.attendancePhoto || photoLog?.completionPhoto || activeLog?.attendancePhoto || activeLog?.completionPhoto || '').trim() || null;
+                    const hasPhoto = Boolean(photoUrl);
 
-                    if (attendanceFilter !== 'All' && attendanceStatus !== attendanceFilter) {
+                    if (attendanceFilter === 'Photo is submitted' && !hasPhoto) {
+                      return null;
+                    }
+                    if (attendanceFilter === 'No submitted' && hasPhoto) {
                       return null;
                     }
 
@@ -11235,23 +11731,53 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                             </Text>
                           </View>
                         </View>
-                        <View style={{ flex: 1.2, alignItems: 'flex-start' }}>
-                          <View style={{ backgroundColor: badgeColor, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
-                            <Text style={{ fontSize: 12, fontWeight: '700', color: textColor }}>{attendanceStatus}</Text>
-                          </View>
-                        </View>
-                        <View style={{ flex: 1.2 }}>
-                          {activeLog ? (
-                            <>
-                              <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f172a' }}>
-                                {format(new Date(activeLog.timeIn), 'h:mm a')}
+                        <View style={{ flex: 2.4, justifyContent: 'center' }}>
+                          {hasPhoto && photoUrl ? (
+                            <TouchableOpacity
+                              onPress={() => {
+                                setPreviewImageUri(photoUrl);
+                                setPreviewImageModalVisible(true);
+                              }}
+                              activeOpacity={0.8}
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 6,
+                                backgroundColor: '#f0fdf4',
+                                borderWidth: 1,
+                                borderColor: '#bbf7d0',
+                                paddingHorizontal: 10,
+                                paddingVertical: 6,
+                                borderRadius: 8,
+                                alignSelf: 'flex-start',
+                              }}
+                            >
+                              <MaterialIcons name="check-circle" size={15} color="#166534" />
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: '#166534' }}>
+                                Photo is submitted
                               </Text>
-                              <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                                {format(new Date(activeLog.timeIn), 'MMM d, yyyy')}
-                              </Text>
-                            </>
+                              <MaterialIcons name="visibility" size={14} color="#166534" style={{ marginLeft: 2 }} />
+                            </TouchableOpacity>
                           ) : (
-                            <Text style={{ fontSize: 13, color: '#94a3b8' }}>—</Text>
+                            <View
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 6,
+                                backgroundColor: '#f8fafc',
+                                borderWidth: 1,
+                                borderColor: '#e2e8f0',
+                                paddingHorizontal: 10,
+                                paddingVertical: 6,
+                                borderRadius: 8,
+                                alignSelf: 'flex-start',
+                              }}
+                            >
+                              <MaterialIcons name="remove-circle-outline" size={15} color="#94a3b8" />
+                              <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b' }}>
+                                No submitted
+                              </Text>
+                            </View>
                           )}
                         </View>
                         <View style={{ flex: 2, justifyContent: 'center' }}>
@@ -11293,8 +11819,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                               <TouchableOpacity
                                 onPress={() => {
                                   setActiveActionTaskId(null);
-                                  if (activeLog?.attendancePhoto) {
-                                    setPreviewImageUri(activeLog.attendancePhoto);
+                                  if (photoUrl) {
+                                    setPreviewImageUri(photoUrl);
                                     setPreviewImageModalVisible(true);
                                   } else {
                                     Alert.alert('No Photo', 'Volunteer has not submitted an attendance photo.');
@@ -11302,8 +11828,8 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                                 }}
                                 style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', flexDirection: 'row', alignItems: 'center', gap: 8 }}
                               >
-                                <MaterialIcons name="photo-camera" size={16} color={activeLog?.attendancePhoto ? '#166534' : '#94a3b8'} />
-                                <Text style={{ fontSize: 13, fontWeight: '600', color: activeLog?.attendancePhoto ? '#334155' : '#94a3b8' }}>View Photo</Text>
+                                <MaterialIcons name="photo-camera" size={16} color={photoUrl ? '#166534' : '#94a3b8'} />
+                                <Text style={{ fontSize: 13, fontWeight: '600', color: photoUrl ? '#334155' : '#94a3b8' }}>View Photo</Text>
                               </TouchableOpacity>
                               <TouchableOpacity
                                 onPress={() => {
@@ -11524,7 +12050,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
           <View style={[premiumDetailsStyles.mainGrid, { flexDirection: isDesktop ? 'row' : 'column' }]}>
 
             {/* Left Column */}
-            <View style={{ flex: isDesktop ? 2.2 : 1 }}>
+            <View style={{ flex: isDesktop ? 2.2 : 1, minWidth: 0 }}>
 
               {/* About Card */}
               <View style={premiumDetailsStyles.card}>
@@ -11556,7 +12082,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                           <MaterialIcons name="assignment-turned-in" size={16} color="#166534" />
                         </View>
                         <Text style={premiumDetailsStyles.statValue}>
-                          {internalTasks.filter(t => t.status === 'Assigned' || t.status === 'Completed' || t.assignedVolunteerId).length}
+                          {internalTasks.filter(t => getTaskAssignedVolunteerIds(t).length > 0).length}
                         </Text>
                         <Text style={premiumDetailsStyles.statLabel}>Assigned Tasks</Text>
                       </View>
@@ -11565,7 +12091,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                           <MaterialIcons name="assignment" size={16} color="#166534" />
                         </View>
                         <Text style={premiumDetailsStyles.statValue}>
-                          {internalTasks.filter(t => t.status !== 'Assigned' && t.status !== 'Completed' && !t.assignedVolunteerId).length}
+                          {internalTasks.filter(t => getTaskAssignedVolunteerIds(t).length === 0).length}
                         </Text>
                         <Text style={premiumDetailsStyles.statLabel}>Unassigned Tasks</Text>
                       </View>
@@ -11597,41 +12123,39 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                         <View style={premiumDetailsStyles.statIconRow}>
                           <MaterialIcons name="description" size={16} color="#166534" />
                         </View>
-                        <Text style={premiumDetailsStyles.statValue}>{reportsCount}</Text>
-                        <Text style={premiumDetailsStyles.statLabel}>Reports</Text>
                       </View>
                     </View>
                   )}
-
-                  {activeSelectedProject.isEvent && activeSelectedProject.volunteerRequirements && activeSelectedProject.volunteerRequirements.length > 0 && (
-                    <View style={{ marginTop: 20, borderTopWidth: 1, borderTopColor: '#f1f5f9', paddingTop: 16 }}>
-                      <Text style={{ fontSize: 14, fontWeight: '800', color: '#1e293b', marginBottom: 10 }}>Volunteer Requirements</Text>
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                        {activeSelectedProject.volunteerRequirements.map(req => (
-                          <View
-                            key={req}
-                            {...({} as any)}
-                            style={{
-                              flexDirection: 'row',
-                              alignItems: 'center',
-                              backgroundColor: '#f0fdf4',
-                              borderRadius: 8,
-                              paddingVertical: 6,
-                              paddingHorizontal: 12,
-                              borderWidth: 1,
-                              borderColor: '#bbf7d0',
-                              gap: 6
-                            }}
-                          >
-                            <MaterialIcons name="check-circle" size={14} color="#166534" />
-                            <Text style={{ fontSize: 12, color: '#166534', fontWeight: '600' }}>{req}</Text>
-                          </View>
-                        ))}
-                      </View>
-                    </View>
-                  )}
-
                 </View>
+
+                {activeSelectedProject.isEvent && activeSelectedProject.volunteerRequirements && activeSelectedProject.volunteerRequirements.length > 0 && (
+                  <View style={{ marginTop: 20, borderTopWidth: 1, borderTopColor: '#f1f5f9', paddingTop: 16, width: '100%' }}>
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#1e293b', marginBottom: 10 }}>Volunteer Requirements</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, width: '100%' }}>
+                      {activeSelectedProject.volunteerRequirements.map(req => (
+                        <View
+                          key={req}
+                          {...({} as any)}
+                          style={{
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            backgroundColor: '#f0fdf4',
+                            borderRadius: 8,
+                            paddingVertical: 6,
+                            paddingHorizontal: 12,
+                            borderWidth: 1,
+                            borderColor: '#bbf7d0',
+                            gap: 6,
+                            maxWidth: '100%',
+                          }}
+                        >
+                          <MaterialIcons name="check-circle" size={14} color="#166534" />
+                          <Text style={{ fontSize: 12, color: '#166534', fontWeight: '600' }}>{req}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
               </View>
 
               {/* Upcoming Events Card */}
@@ -11732,7 +12256,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             </View>
 
             {/* Right Column */}
-            <View style={{ flex: isDesktop ? 1 : 1 }}>
+            <View style={{ flex: isDesktop ? 1 : 1, minWidth: 0 }}>
 
               {/* Project/Event Summary Card */}
               <View style={premiumDetailsStyles.card}>
@@ -11824,22 +12348,24 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                 )}
 
                 {activeSelectedProject.isEvent && (
-                  <TouchableOpacity
-                    style={premiumDetailsStyles.actionBtnGreen}
-                    onPress={() => setShowAttendanceTasks(true)}
-                  >
-                    <MaterialIcons name="assignment-turned-in" size={16} color="#ffffff" />
-                    <Text style={premiumDetailsStyles.actionBtnGreenText}>Attendance & Tasks</Text>
-                  </TouchableOpacity>
-                )}
+                  <>
+                    <TouchableOpacity
+                      style={premiumDetailsStyles.actionBtnGreen}
+                      onPress={() => handleOpenVolunteerApplications(activeSelectedProject.id)}
+                    >
+                      <MaterialIcons name="people" size={16} color="#ffffff" />
+                      <Text style={premiumDetailsStyles.actionBtnGreenText}>Volunteer Applications</Text>
+                    </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={premiumDetailsStyles.actionBtnOutline}
-                  onPress={() => navigateToAvailableRoute(navigation, 'Volunteers', { projectId: activeSelectedProject.id })}
-                >
-                  <MaterialIcons name="person-add" size={16} color="#475569" />
-                  <Text style={premiumDetailsStyles.actionBtnOutlineText}>Invite Volunteers</Text>
-                </TouchableOpacity>
+                    <TouchableOpacity
+                      style={premiumDetailsStyles.actionBtnGreen}
+                      onPress={() => setShowAttendanceTasks(true)}
+                    >
+                      <MaterialIcons name="assignment-turned-in" size={16} color="#ffffff" />
+                      <Text style={premiumDetailsStyles.actionBtnGreenText}>Attendance & Tasks</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
 
                 <TouchableOpacity
                   style={premiumDetailsStyles.actionBtnOutline}
@@ -11848,24 +12374,17 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   <MaterialIcons name="description" size={16} color="#475569" />
                   <Text style={premiumDetailsStyles.actionBtnOutlineText}>View Reports</Text>
                 </TouchableOpacity>
+
+                {isDetailsAdmin && (
+                  <TouchableOpacity
+                    style={[premiumDetailsStyles.actionBtnOutline, { borderColor: '#fee2e2', backgroundColor: '#fff5f5' }]}
+                    onPress={handleDeleteProjectRecord}
+                  >
+                    <MaterialIcons name="delete" size={16} color="#ef4444" />
+                    <Text style={[premiumDetailsStyles.actionBtnOutlineText, { color: '#ef4444' }]}>Delete Record</Text>
+                  </TouchableOpacity>
+                )}
               </View>
-
-              {/* Share Project Card */}
-              <View style={premiumDetailsStyles.card}>
-                <Text style={[premiumDetailsStyles.cardTitle, { marginBottom: 12 }]}>Share Project</Text>
-                <Text style={premiumDetailsStyles.shareDesc}>
-                  Invite partners and volunteers to collaborate on this project.
-                </Text>
-
-                <TouchableOpacity
-                  style={premiumDetailsStyles.actionBtnOutline}
-                  onPress={handleShareProject}
-                >
-                  <MaterialIcons name="link" size={16} color="#475569" />
-                  <Text style={premiumDetailsStyles.actionBtnOutlineText}>Share Project Link</Text>
-                </TouchableOpacity>
-              </View>
-
             </View>
 
           </View>
@@ -12140,7 +12659,10 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                     <TouchableOpacity
                       style={styles.projectsAddButton}
                       onPress={() => {
-                        const defaultTrack = sortedProgramSections[0] || { module: 'Education' as const, title: 'Education' };
+                        const defaultTrack =
+                          (projectProgramFilter ? sortedProgramSections.find(s => s.module === projectProgramFilter) : null)
+                          || sortedProgramSections[0]
+                          || { module: 'Education' as const, title: 'Education' };
                         openCreateProjectInProgramModal(defaultTrack.module, defaultTrack.title);
                       }}
                     >
@@ -12180,7 +12702,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   <TouchableOpacity
                     style={styles.projectsFilterDropdown}
                     onPress={() => {
-                      const options = ['All Status', 'Planning', 'In Progress', 'Completed', 'Cancelled'];
+                      const options = ['All Status', 'Drafts', 'Planning', 'In Progress', 'Completed', 'Cancelled'];
                       Alert.alert('Select Status', 'Filter projects by status:',
                         options.map((opt, i) => ({
                           text: opt,
@@ -12236,7 +12758,13 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                       // Filter projects inside this program section based on search query and status filter
                       let sectionProjects = [...section.projects];
                       if (statusFilter) {
-                        sectionProjects = sectionProjects.filter(p => getProjectDisplayStatus(p) === statusFilter);
+                        if (statusFilter === 'Drafts') {
+                          sectionProjects = sectionProjects.filter(p => p.isDraft);
+                        } else if (statusFilter === 'Planning') {
+                          sectionProjects = sectionProjects.filter(p => getProjectDisplayStatus(p) === 'Planning' && !p.isDraft);
+                        } else {
+                          sectionProjects = sectionProjects.filter(p => getProjectDisplayStatus(p) === statusFilter);
+                        }
                       }
                       if (projectSearchQuery.trim()) {
                         const query = projectSearchQuery.toLowerCase();
@@ -12276,7 +12804,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                                 <View style={[styles.statusDot, { backgroundColor: section.accent }]} />
                                 <Text style={styles.projectsAccordionCountText}>
-                                  {projectCount} Project${projectCount === 1 ? '' : 's'}
+                                  {`${projectCount} Project${projectCount === 1 ? '' : 's'}`}
                                 </Text>
                               </View>
                               <MaterialIcons
@@ -12294,7 +12822,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                                 <View style={styles.projectsAccordionEmpty}>
                                   <MaterialIcons name="description" size={32} color="#cbd5e1" style={{ marginBottom: 8 }} />
                                   <Text style={styles.projectsAccordionEmptyText}>
-                                    No ${section.title} projects yet
+                                    No {section.title} projects yet
                                   </Text>
                                 </View>
                               ) : (
@@ -12348,9 +12876,9 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
                                         {/* Status Pill */}
                                         <View style={[styles.projectsTableCell, { flex: 1.5, alignItems: 'center', justifyContent: 'center' }]}>
-                                          <View style={[styles.projectsTableRowStatusPill, { backgroundColor: getProjectStatusColor(project) + '15' }]}>
-                                            <Text style={[styles.projectsTableRowStatusText, { color: getProjectStatusColor(project) }]}>
-                                              {getProjectDisplayStatus(project)}
+                                          <View style={[styles.projectsTableRowStatusPill, { backgroundColor: (project.isDraft ? '#64748b' : getProjectStatusColor(project)) + '15' }]}>
+                                            <Text style={[styles.projectsTableRowStatusText, { color: project.isDraft ? '#64748b' : getProjectStatusColor(project) }]}>
+                                              {project.isDraft ? 'Draft' : getProjectDisplayStatus(project)}
                                             </Text>
                                           </View>
                                         </View>
@@ -19047,11 +19575,5 @@ const premiumDetailsStyles = StyleSheet.create({
     color: '#475569',
     fontSize: 13,
     fontWeight: '700',
-  },
-  shareDesc: {
-    fontSize: 12,
-    color: '#64748b',
-    lineHeight: 18,
-    marginBottom: 16,
   },
 });

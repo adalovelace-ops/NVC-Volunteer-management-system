@@ -278,7 +278,7 @@ function buildPartnerProjectSummaries(
 
   return projects
     .filter(project => {
-      if (project.isEvent) return false;
+      if (project.isEvent || project.isDraft) return false;
       // Match by direct project ID (normal case after approval)
       if (approvedProjectIds.has(project.id)) return true;
       // Match by programModule (fallback when cache has stale program: IDs)
@@ -550,14 +550,12 @@ export default function ReportsScreen({ navigation, route }: any) {
         user.role === 'admin' || user.role === 'partner'
           ? getAllPartnerReports()
           : getImpactHubReportsByUser(user.id),
-        user.role === 'admin' || user.role === 'partner' ? getAllVolunteerTimeLogs() : Promise.resolve(null),
-        user.role === 'admin' || user.role === 'partner' ? getAllVolunteerProjectJoinRecords() : Promise.resolve(null),
+        getAllVolunteerTimeLogs(),
+        getAllVolunteerProjectJoinRecords(),
       ]);
 
-      if (user.role === 'partner' || user.role === 'admin') {
-        setVolunteerTimeLogs(allTimeLogs || []);
-        setVolunteerJoinRecords(allJoinRecords || []);
-      }
+      setVolunteerTimeLogs(allTimeLogs || []);
+      setVolunteerJoinRecords(allJoinRecords || []);
 
       setReports(
         rawReports
@@ -937,9 +935,13 @@ export default function ReportsScreen({ navigation, route }: any) {
             (report.submittedBy === user?.id || (report as any).partnerUserId === user?.id)
         );
       }
-      return reports.filter(report => report.submittedBy === user?.id && report.submitterRole === 'volunteer');
+      return reports.filter(
+        report =>
+          (report.submittedBy === user?.id || (volunteerProfileId && report.submittedBy === volunteerProfileId)) &&
+          (report.submitterRole === 'volunteer' || !report.submitterRole)
+      );
     },
-    [reports, user?.id, user?.role]
+    [reports, user?.id, user?.role, volunteerProfileId]
   );
 
   const volunteerEventProjects = useMemo(() => {

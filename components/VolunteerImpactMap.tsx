@@ -256,6 +256,7 @@ type VolunteerImpactMapProps = {
   subtitle?: string;
   initialMapStyleKey?: MapStylePresetKey;
   dashboardVariant?: boolean;
+  isPersonal?: boolean;
   volunteerAccounts?: MapAccountOption[];
   partnerAccounts?: MapAccountOption[];
   onVolunteerPress?: (volunteerId: string) => void;
@@ -353,6 +354,7 @@ export default function VolunteerImpactMap({
   title = 'Personal Impact Map',
   subtitle = 'Pinned places where you completed volunteer work.',
   initialMapStyleKey = 'volunteer-view',
+  isPersonal,
   volunteerAccounts,
   partnerAccounts,
   onVolunteerPress,
@@ -421,7 +423,12 @@ export default function VolunteerImpactMap({
       : null,
     [selectedMapStyleKey, selectedVolunteerId, selectedPartnerId, volunteerOptions, partnerOptions]
   );
+  const isPersonalView = isPersonal || title === 'Personal Impact Map';
   const displayProjects = useMemo(() => {
+    if (isPersonalView) {
+      return mappedProjects;
+    }
+
     if (selectedMapStyleKey === 'admin-overview') {
       return mappedProjects;
     }
@@ -443,7 +450,7 @@ export default function VolunteerImpactMap({
     }
 
     return mappedProjects;
-  }, [selectedMapStyleKey, hasVolunteerScope, hasPartnerScope, selectedVolunteerId, selectedPartnerId, volunteerOptions, partnerOptions, mappedProjects, mappedEvents]);
+  }, [isPersonalView, selectedMapStyleKey, hasVolunteerScope, hasPartnerScope, selectedVolunteerId, selectedPartnerId, volunteerOptions, partnerOptions, mappedProjects, mappedEvents]);
   const hasAnyMapData =
     mappedProjects.length > 0 || volunteerOptions.length > 0 || partnerOptions.length > 0;
 
@@ -468,7 +475,7 @@ export default function VolunteerImpactMap({
     return null;
   }
 
-  const showAccountPicker = selectedMapStyleKey !== 'admin-overview' && currentAccountOptions.length > 0;
+  const showAccountPicker = !isPersonalView && selectedMapStyleKey !== 'admin-overview' && currentAccountOptions.length > 1;
   const selectedAccountLabel = getAccountPickerLabel(selectedMapStyleKey, selectedAccountOption);
   const accountPickerTitle = getAccountPickerTitle(selectedMapStyleKey);
   const accountIconName = getAccountIconName(selectedMapStyleKey);
@@ -525,22 +532,24 @@ export default function VolunteerImpactMap({
             </TouchableOpacity>
           ) : null}
 
-          <TouchableOpacity
-            style={[
-              styles.controlButton,
-              {
-                backgroundColor: selectedMapStyle.chipBg,
-                borderColor: selectedMapStyle.chipBorder,
-              },
-            ]}
-            onPress={() => setShowMapStyleMenu(true)}
-          >
-            <MaterialIcons name="tune" size={18} color={selectedMapStyle.accentColor} />
-            <Text style={[styles.controlButtonText, { color: selectedMapStyle.accentColor }]}>
-              {selectedMapStyle.label}
-            </Text>
-            <MaterialIcons name="keyboard-arrow-down" size={22} color={selectedMapStyle.accentColor} />
-          </TouchableOpacity>
+          {!isPersonalView ? (
+            <TouchableOpacity
+              style={[
+                styles.controlButton,
+                {
+                  backgroundColor: selectedMapStyle.chipBg,
+                  borderColor: selectedMapStyle.chipBorder,
+                },
+              ]}
+              onPress={() => setShowMapStyleMenu(true)}
+            >
+              <MaterialIcons name="tune" size={18} color={selectedMapStyle.accentColor} />
+              <Text style={[styles.controlButtonText, { color: selectedMapStyle.accentColor }]}>
+                {selectedMapStyle.label}
+              </Text>
+              <MaterialIcons name="keyboard-arrow-down" size={22} color={selectedMapStyle.accentColor} />
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
 
@@ -585,11 +594,51 @@ export default function VolunteerImpactMap({
 
       {selectedProject ? (
         <View style={styles.detailCard}>
-          <Text style={styles.detailTitle}>{selectedProject.title}</Text>
-          <Text style={styles.detailMeta}>
-            {`${selectedProject.isEvent ? 'Event' : 'Project'} | ${getProjectDisplayStatus(selectedProject)}`}
-          </Text>
-          <Text style={styles.detailAddress}>{selectedProject.location.address}</Text>
+          <View style={styles.detailCardHeader}>
+            <View style={{ flex: 1 }}>
+              <View style={styles.detailTagRow}>
+                <View style={[styles.detailTypeTag, selectedProject.isEvent ? styles.detailTypeTagEvent : styles.detailTypeTagProject]}>
+                  <Text style={styles.detailTypeTagText}>{selectedProject.isEvent ? 'EVENT' : 'PROJECT'}</Text>
+                </View>
+                <View style={styles.detailCategoryTag}>
+                  <Text style={styles.detailCategoryTagText}>{selectedProject.category || 'Volunteer Work'}</Text>
+                </View>
+                <View style={styles.detailStatusTag}>
+                  <Text style={styles.detailStatusTagText}>{getProjectDisplayStatus(selectedProject)}</Text>
+                </View>
+              </View>
+              <Text style={styles.detailTitle}>{selectedProject.title}</Text>
+            </View>
+          </View>
+
+          <View style={styles.detailInfoGrid}>
+            <View style={styles.detailInfoItem}>
+              <MaterialIcons name="place" size={16} color="#166534" />
+              <Text style={styles.detailAddress} numberOfLines={1}>
+                {selectedProject.location.address || selectedProject.locationCity || 'Negros Occidental'}
+              </Text>
+            </View>
+            {selectedProject.startDate ? (
+              <View style={styles.detailInfoItem}>
+                <MaterialIcons name="event" size={16} color="#166534" />
+                <Text style={styles.detailDateText}>
+                  {selectedProject.startDate}{selectedProject.endDate ? ` - ${selectedProject.endDate}` : ''}
+                </Text>
+              </View>
+            ) : null}
+            <View style={styles.detailInfoItem}>
+              <MaterialIcons name="group" size={16} color="#166534" />
+              <Text style={styles.detailVolunteersText}>
+                {selectedProject.volunteers?.length || 0} volunteer{(selectedProject.volunteers?.length || 0) === 1 ? '' : 's'} joined
+              </Text>
+            </View>
+          </View>
+
+          {selectedProject.description ? (
+            <Text style={styles.detailDescription} numberOfLines={2}>
+              {selectedProject.description}
+            </Text>
+          ) : null}
         </View>
       ) : null}
 
@@ -851,29 +900,105 @@ const styles = StyleSheet.create({
   },
   detailCard: {
     marginTop: 12,
-    backgroundColor: '#f8fafc',
-    borderRadius: 14,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderColor: '#d8e8db',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
-  detailTitle: {
-    fontSize: 14,
+  detailCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  detailTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  detailTypeTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  detailTypeTagEvent: {
+    backgroundColor: '#dcfce7',
+  },
+  detailTypeTagProject: {
+    backgroundColor: '#e0f2fe',
+  },
+  detailTypeTagText: {
+    fontSize: 10,
     fontWeight: '800',
-    color: '#0f172a',
+    color: '#166534',
   },
-  detailMeta: {
-    marginTop: 4,
-    fontSize: 12,
+  detailCategoryTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: '#f1f5f9',
+  },
+  detailCategoryTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  detailStatusTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  detailStatusTagText: {
+    fontSize: 10,
     fontWeight: '700',
     color: '#166534',
   },
+  detailTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  detailInfoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginVertical: 8,
+  },
+  detailInfoItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   detailAddress: {
-    marginTop: 6,
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 12,
+    color: '#334155',
+  },
+  detailDateText: {
+    fontSize: 12,
     color: '#475569',
+    fontWeight: '600',
+  },
+  detailVolunteersText: {
+    fontSize: 12,
+    color: '#166534',
+    fontWeight: '600',
+  },
+  detailDescription: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#64748b',
   },
   menuBackdrop: {
     flex: 1,

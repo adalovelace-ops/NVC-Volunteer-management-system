@@ -118,6 +118,7 @@ export default function PartnerProjectsScreen({ route, navigation }: any) {
       projects
         .filter(project =>
           !project.isEvent &&
+          !project.isDraft &&
           approvedProjectIds.has(project.id) &&
           // Exclude top-level program records (they have no parentProjectId and no proposal-id prefix)
           (Boolean(project.parentProjectId) || String(project.id || '').startsWith('project-proposal-'))
@@ -134,7 +135,7 @@ export default function PartnerProjectsScreen({ route, navigation }: any) {
     () =>
       trackedProjects.map(project => {
         const linkedEvents = projects
-          .filter(event => event.isEvent && event.parentProjectId === project.id)
+          .filter(event => event.isEvent && !event.isDraft && event.parentProjectId === project.id)
           .sort(
             (left, right) =>
               new Date(left.startDate).getTime() - new Date(right.startDate).getTime()

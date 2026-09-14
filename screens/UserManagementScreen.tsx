@@ -1082,15 +1082,15 @@ export default function UserManagementScreen() {
                       ) : null}
                       <View style={styles.reviewDetailRow}>
                         <Text style={styles.reviewDetailLabel}>Certifications / Trainings</Text>
-                        {isImageMediaUri(volunteerInfo.certificationsOrTrainings) ? (
+                        {volunteerInfo.certificationsOrTrainings ? (
                           <Text 
-                            style={[styles.reviewDetailValue, { color: '#16a34a', textDecorationLine: 'underline' }]} 
+                            style={[styles.reviewDetailValue, { color: '#16a34a', textDecorationLine: 'underline', cursor: 'pointer' as any }]} 
                             onPress={() => openAttachmentUri(volunteerInfo.certificationsOrTrainings!)}
                           >
                             {getAttachmentLabel(volunteerInfo.certificationsOrTrainings)}
                           </Text>
                         ) : (
-                          <Text style={styles.reviewDetailValue}>{volunteerInfo.certificationsOrTrainings || '-'}</Text>
+                          <Text style={styles.reviewDetailValue}>-</Text>
                         )}
                       </View>
                       {volunteerInfo.hobbiesAndInterests ? (

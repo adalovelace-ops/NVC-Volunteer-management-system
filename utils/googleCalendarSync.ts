@@ -73,7 +73,8 @@ export type CalendarSyncEmailPayload = {
   subject?: string;
 };
 
-export const GOOGLE_CALENDAR_WEB_URL = 'https://calendar.google.com/calendar/u/0/r';
+export const GOOGLE_CALENDAR_WEB_URL = 'https://calendar.google.com/calendar/embed?src=nvc4090%40gmail.com&ctz=UTC';
+export const GOOGLE_CALENDAR_EMBED_URL = 'https://calendar.google.com/calendar/embed?src=nvc4090%40gmail.com&ctz=UTC';
 
 // ─── OAuth Hook Config ────────────────────────────────────────────────────────
 

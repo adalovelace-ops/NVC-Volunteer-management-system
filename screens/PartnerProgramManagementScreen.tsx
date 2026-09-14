@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import ModernTheme from '../utils/modernTheme';
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   Image,
   Modal,
@@ -163,12 +164,13 @@ export default function PartnerProgramManagementScreen() {
   const partnerProjectsAndEvents = useMemo(() => {
     if (!partner) return [];
     return allProjects.filter(project => {
+      if (project.isDraft) return false;
       if (project.partnerId === partner.id) {
         return true;
       }
       if (project.isEvent && project.parentProjectId) {
         const parent = allProjects.find(p => p.id === project.parentProjectId);
-        return parent?.partnerId === partner.id;
+        return parent?.partnerId === partner.id && !parent.isDraft;
       }
       return false;
     });
@@ -179,6 +181,7 @@ export default function PartnerProgramManagementScreen() {
     return allProjects
       .filter(project => {
         if (project.isEvent) return false;
+        if (project.isDraft) return false;
         const normId = String(project.id || '').trim().toLowerCase();
         if (TOP_LEVEL_WRAPPER_IDS.has(normId)) return false;
         return true;
@@ -212,6 +215,10 @@ export default function PartnerProgramManagementScreen() {
   }, [availableProjects, selectedCategoryTab, searchQuery]);
 
   const handleOpenProposal = (project: Project) => {
+    if (project.isDraft) {
+      Alert.alert('Not Available', 'Draft projects are not available for partner proposals.');
+      return;
+    }
     const module = getProgramModule(project) || 'Nutrition';
     setDetailModalProject(null);
     navigation.navigate('Messages', {

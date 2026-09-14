@@ -155,7 +155,7 @@ export default function ProjectTimelineCalendarCard({
 
   // Google Calendar Integration states
   const [calendarSettings, setCalendarSettings] = useState({
-    calendarId: 'en.philippines#holiday@group.v.calendar.google.com',
+    calendarId: 'nvc4090@gmail.com',
     apiKey: process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '',
   });
   const [googleEvents, setGoogleEvents] = useState<any[]>([]);
@@ -171,12 +171,14 @@ export default function ProjectTimelineCalendarCard({
       try {
         const storedId = await AsyncStorage.getItem('gcal_id');
         const storedKey = await AsyncStorage.getItem('gcal_key');
-        if (storedId || storedKey) {
-          setCalendarSettings({
-            calendarId: storedId || 'en.philippines#holiday@group.v.calendar.google.com',
-            apiKey: storedKey || process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '',
-          });
-        }
+        const effectiveId =
+          !storedId || storedId === 'en.philippines#holiday@group.v.calendar.google.com'
+            ? 'nvc4090@gmail.com'
+            : storedId;
+        setCalendarSettings({
+          calendarId: effectiveId,
+          apiKey: storedKey || process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '',
+        });
       } catch (err) {
         console.error('Failed to load Google Calendar settings:', err);
       }

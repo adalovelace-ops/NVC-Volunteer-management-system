@@ -29,6 +29,7 @@ import {
 } from '../models/storage';
 import { Project, Volunteer, VolunteerProjectMatch, VolunteerProjectJoinRecord, AdminPlanningCalendar, AdminPlanningItem } from '../models/types';
 import { getRequestErrorMessage } from '../utils/requestErrors';
+import { openAddGoogleCalendarEvent } from '../utils/calendarSync';
 import { format } from 'date-fns';
 
 type SortOption = 'date' | 'priority' | 'title';
@@ -222,7 +223,10 @@ export default function VolunteerEventsScreen() {
       try {
         const storedId = await AsyncStorage.getItem('gcal_id');
         const storedKey = await AsyncStorage.getItem('gcal_key');
-        const calendarId = storedId || 'en.philippines#holiday@group.v.calendar.google.com';
+        const calendarId =
+          !storedId || storedId === 'en.philippines#holiday@group.v.calendar.google.com'
+            ? 'nvc4090@gmail.com'
+            : storedId;
         const apiKey = storedKey || process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '';
         
         if (apiKey) {
@@ -295,7 +299,7 @@ export default function VolunteerEventsScreen() {
     const match = volunteerMatches.find(m => m.projectId === event.id);
     
     if (match?.status === 'Requested') return { label: 'Pending', color: '#C97F1F', joinable: false };
-    if (match?.status === 'Rejected') return { label: 'Rejected', color: '#B0432B', joinable: false };
+    if (match?.status === 'Rejected') return { label: 'Declined', color: '#B0432B', joinable: false };
     if (match?.status === 'Matched' || isJoined) return { label: 'Joined', color: '#3F7A54', joinable: false };
     if (match?.status === 'Completed') return { label: 'Completed', color: '#5B564C', joinable: false };
     
@@ -353,19 +357,17 @@ export default function VolunteerEventsScreen() {
     }
   };
 
-  // Filter and sort computation
+  // Filter and sort computation (only real database events, exclude orphaned/deleted parent events)
   const filteredEvents = useMemo(() => {
-    const standardEvents = records.filter(p => p.isEvent);
-    const standardEventIds = new Set(standardEvents.map(e => e.id));
-    const manualEventsMapped = planningItems
-      .filter(item => !item.linkedProjectId || !standardEventIds.has(item.linkedProjectId))
-      .map(item => convertPlanningItemToProjectEvent(item, planningCalendars));
+    const validParentProjectIds = new Set(records.map(p => p.id));
+    const standardEvents = records.filter(
+      p => p.isEvent &&
+           !p.isDraft &&
+           p.status !== 'Cancelled' &&
+           (!p.parentProjectId || validParentProjectIds.has(p.parentProjectId))
+    );
 
-    const googleEventsMapped = googleEvents
-      .filter(item => !standardEventIds.has(`gcal-${item.id}`))
-      .map(item => convertGoogleEventToProjectEvent(item));
-
-    let result = [...standardEvents, ...manualEventsMapped, ...googleEventsMapped];
+    let result = [...standardEvents];
 
     // Search query filter
     if (searchQuery.trim().length > 0) {
@@ -399,7 +401,7 @@ export default function VolunteerEventsScreen() {
     });
 
     return result;
-  }, [records, planningItems, planningCalendars, googleEvents, searchQuery, filterCategory, sortBy]);
+  }, [records, searchQuery, filterCategory, sortBy]);
 
   const displayEvents = useMemo(() => {
     if (activeTab === 'applications') {
@@ -414,8 +416,14 @@ export default function VolunteerEventsScreen() {
   }, [filteredEvents, activeTab, volunteerMatches, volunteerProfile, user]);
 
   const applicationCount = useMemo(() => {
-    return volunteerMatches.filter(m => m.status === 'Requested' || m.status === 'Matched').length;
-  }, [volunteerMatches]);
+    // Only count applications for events that currently exist and are not deleted
+    return filteredEvents.filter(e => {
+      const isJoined = (e.joinedUserIds || []).includes(user?.id || '') ||
+        (volunteerProfile && e.volunteers ? e.volunteers.includes(volunteerProfile.id) : false);
+      const match = volunteerMatches.find(m => m.projectId === e.id);
+      return isJoined || match?.status === 'Requested' || match?.status === 'Matched';
+    }).length;
+  }, [filteredEvents, volunteerMatches, volunteerProfile, user]);
 
   const getCategoryBgColor = (cat: string) => {
     switch (cat) {
@@ -539,8 +547,32 @@ export default function VolunteerEventsScreen() {
               )}
             </TouchableOpacity>
           ) : (
-            <View style={[styles.joinBtn, { backgroundColor: '#f1f3f4', borderWidth: 0 }]}>
-              <Text style={[styles.joinBtnText, { color: '#70757a' }]}>{status.label === 'Joined' ? 'Joined' : status.label}</Text>
+            <View style={{ flexDirection: 'row', gap: 6 }}>
+              <View style={[styles.joinBtn, { flex: 1, backgroundColor: status.label === 'Joined' ? '#e6f4ea' : '#f1f3f4', borderWidth: 0 }]}>
+                <Text style={[styles.joinBtnText, { color: status.label === 'Joined' ? '#137333' : '#70757a' }]}>{status.label === 'Joined' ? 'Approved' : status.label}</Text>
+              </View>
+              {status.label === 'Joined' ? (
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#166534',
+                    paddingHorizontal: 12,
+                    borderRadius: 8,
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                  onPress={() => {
+                    void openAddGoogleCalendarEvent({
+                      title: item.title,
+                      details: item.description,
+                      location: item.locationVenue || item.location?.address || '',
+                      startDate: item.startDate,
+                      endDate: item.endDate,
+                    });
+                  }}
+                >
+                  <MaterialIcons name="event" size={16} color="#ffffff" />
+                </TouchableOpacity>
+              ) : null}
             </View>
           )}
         </View>

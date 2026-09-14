@@ -415,15 +415,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  brandMark: {
-    width: 34,
-    height: 34,
-    borderRadius: 9,
-    backgroundColor: '#1F3A2E',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 8,
-  },
   brandName: {
     fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
     fontWeight: '700',

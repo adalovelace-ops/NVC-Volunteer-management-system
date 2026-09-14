@@ -662,6 +662,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
         const module = getProgramModule(project);
         return (
           !project.isEvent &&
+          !project.isDraft &&
           !project.parentProjectId &&
           !id.startsWith('project-proposal-') &&
           !title.includes('proposal') &&
@@ -760,6 +761,8 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
       projects.filter(project => {
 
+        if (project.isDraft) return false;
+
         const application = applicationByProjectId.get(project.id);
 
         return application?.status === 'Approved';
@@ -790,7 +793,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
   const activeProjects = useMemo(
 
-    () => projects.filter(project => getDisplayProjectStatus(project) !== 'Cancelled'),
+    () => projects.filter(project => !project.isDraft && getDisplayProjectStatus(project) !== 'Cancelled'),
 
     [projects]
 

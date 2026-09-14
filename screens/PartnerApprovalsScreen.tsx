@@ -23,6 +23,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import InlineLoadError from '../components/InlineLoadError';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
+import { openAttachmentUri } from '../utils/media';
 
 export default function PartnerApprovalsScreen({ navigation }: any) {
   const { user, isAdmin } = useAuth();
@@ -188,6 +189,42 @@ export default function PartnerApprovalsScreen({ navigation }: any) {
             <Text style={styles.cardValue}>{format(new Date(partner.validatedAt), 'MMM d, yyyy h:mm a')}</Text>
           </>
         )}
+
+        <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
+          <Text style={[styles.cardLabel, { marginBottom: 6, fontWeight: '700' }]}>Documents:</Text>
+          <View style={{ gap: 6 }}>
+            {[
+              { name: 'Valid ID', uri: partner.validIdPhoto || '' },
+              ...(partner.registrationDocuments && partner.registrationDocuments.length > 0
+                ? partner.registrationDocuments.map((docUri, idx) => ({ name: `Registration Document ${idx + 1}`, uri: docUri }))
+                : [{ name: 'Registration Documents', uri: '' }])
+            ].map((doc, idx) => (
+              <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                  <MaterialIcons name="attachment" size={16} color="#64748b" style={{ marginRight: 6 }} />
+                  <Text style={{ fontSize: 13, color: '#334155' }}>{doc.name}</Text>
+                </View>
+                {doc.uri ? (
+                  <TouchableOpacity
+                    onPress={async () => {
+                      try {
+                        await openAttachmentUri(doc.uri);
+                      } catch (error: any) {
+                        Alert.alert('Document View Failed', error?.message || 'Unable to open document.');
+                      }
+                    }}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 3, paddingHorizontal: 8, backgroundColor: '#f0fdf4', borderRadius: 6, borderWidth: 1, borderColor: '#bbf7d0' }}
+                  >
+                    <MaterialIcons name="visibility" size={14} color="#166534" />
+                    <Text style={{ fontSize: 11, color: '#166534', fontWeight: '700' }}>View</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={{ fontSize: 12, color: '#94a3b8' }}>Missing</Text>
+                )}
+              </View>
+            ))}
+          </View>
+        </View>
       </View>
 
       {partner.status === 'Pending' && (

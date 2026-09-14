@@ -10,6 +10,7 @@ import {
   TextInput,
   Linking,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
@@ -373,6 +374,8 @@ export default function DashboardScreen({ navigation }: any) {
     latestTimeOutProjectId: undefined as string | undefined,
   });
   const [recentUpdates, setRecentUpdates] = useState<any[]>([]);
+  const [allActivityUpdates, setAllActivityUpdates] = useState<any[]>([]);
+  const [showAllActivityModal, setShowAllActivityModal] = useState(false);
   const [projectsData, setProjectsData] = useState<Project[]>([]);
   const [partnersData, setPartnersData] = useState<Partner[]>([]);
   const [partnerApplicationsData, setPartnerApplicationsData] = useState<PartnerProjectApplication[]>([]);
@@ -459,6 +462,7 @@ export default function DashboardScreen({ navigation }: any) {
         .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
       setRecentUpdates(allUpdates.slice(0, 6));
+      setAllActivityUpdates(allUpdates);
 
       // Compute workflow stats from already-loaded data — no extra network calls needed.
       const sortedTimeLogs = [...(volunteerTimeLogs || [])].sort(
@@ -734,7 +738,7 @@ export default function DashboardScreen({ navigation }: any) {
 
   // Google Calendar Integration states
   const [calendarSettings, setCalendarSettings] = useState({
-    calendarId: 'en.philippines#holiday@group.v.calendar.google.com',
+    calendarId: 'nvc4090@gmail.com',
     apiKey: process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '',
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -753,12 +757,14 @@ export default function DashboardScreen({ navigation }: any) {
       try {
         const storedId = await AsyncStorage.getItem('gcal_id');
         const storedKey = await AsyncStorage.getItem('gcal_key');
-        if (storedId || storedKey) {
-          setCalendarSettings({
-            calendarId: storedId || 'en.philippines#holiday@group.v.calendar.google.com',
-            apiKey: storedKey || process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '',
-          });
-        }
+        const effectiveId =
+          !storedId || storedId === 'en.philippines#holiday@group.v.calendar.google.com'
+            ? 'nvc4090@gmail.com'
+            : storedId;
+        setCalendarSettings({
+          calendarId: effectiveId,
+          apiKey: storedKey || process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '',
+        });
       } catch (err) {
         console.error('Failed to load Google Calendar settings:', err);
       }
@@ -1217,14 +1223,30 @@ export default function DashboardScreen({ navigation }: any) {
         <View style={styles.row3Card}>
           <View style={styles.row3Header}>
             <Text style={styles.row3Title}>Recent Activity</Text>
-            <MaterialIcons name="info-outline" size={16} color="#64748b" />
+            <TouchableOpacity
+              onPress={() => setShowAllActivityModal(true)}
+              style={styles.viewAllActivityBtn}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.viewAllActivityText}>View all</Text>
+              <MaterialIcons name="chevron-right" size={14} color="#166534" />
+            </TouchableOpacity>
           </View>
           <ScrollView style={styles.row3Scroll} showsVerticalScrollIndicator={false}>
             {recentUpdates.length > 0 ? (
               recentUpdates.slice(0, 4).map((update, index) => (
-                <View key={update.id || index} style={styles.activityItem}>
+                <TouchableOpacity
+                  key={update.id || index}
+                  style={styles.activityItem}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    if (update.projectId && navigation) {
+                      navigation.navigate('Projects', { projectId: update.projectId });
+                    }
+                  }}
+                >
                   <View style={styles.activityIcon}>
-                    <MaterialIcons name="update" size={16} color="#64748b" />
+                    <MaterialIcons name="update" size={16} color="#166534" />
                   </View>
                   <View style={styles.activityCopy}>
                     <Text style={styles.activityText} numberOfLines={2}>
@@ -1233,7 +1255,8 @@ export default function DashboardScreen({ navigation }: any) {
                     </Text>
                     <Text style={styles.activityTime}>{formatShortDate(update.updatedAt)}</Text>
                   </View>
-                </View>
+                  <MaterialIcons name="chevron-right" size={14} color="#94a3b8" />
+                </TouchableOpacity>
               ))
             ) : (
               <Text style={styles.emptyCardText}>No recent activity</Text>
@@ -1453,6 +1476,75 @@ export default function DashboardScreen({ navigation }: any) {
             </View>
           </TouchableOpacity>
         </View>
+
+      {/* All Activity Modal */}
+      <Modal
+        visible={showAllActivityModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowAllActivityModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.allActivityModalBox}>
+            <View style={styles.modalHeaderRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={styles.allActivityHeaderIconWrap}>
+                  <MaterialIcons name="history" size={20} color="#166534" />
+                </View>
+                <View>
+                  <Text style={styles.modalHeaderTitle}>All Recent Activity</Text>
+                  <Text style={styles.modalHeaderSub}>{allActivityUpdates.length} total activity update{allActivityUpdates.length === 1 ? '' : 's'}</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowAllActivityModal(false)}
+                style={styles.modalCloseButton}
+              >
+                <MaterialIcons name="close" size={20} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.allActivityModalScroll} showsVerticalScrollIndicator={true}>
+              {allActivityUpdates.length > 0 ? (
+                allActivityUpdates.map((update, idx) => (
+                  <TouchableOpacity
+                    key={update.id || idx}
+                    style={styles.allActivityModalItem}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      setShowAllActivityModal(false);
+                      if (update.projectId && navigation) {
+                        navigation.navigate('Projects', { projectId: update.projectId });
+                      }
+                    }}
+                  >
+                    <View style={styles.allActivityItemIcon}>
+                      <MaterialIcons name="update" size={18} color="#166534" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.allActivityItemProject} numberOfLines={1}>
+                        {update.projectName || 'Project'}
+                      </Text>
+                      <Text style={styles.allActivityItemDesc} numberOfLines={2}>
+                        {update.description || 'Status updated'}
+                      </Text>
+                      <Text style={styles.allActivityItemTime}>
+                        {formatShortDate(update.updatedAt)}
+                      </Text>
+                    </View>
+                    <MaterialIcons name="chevron-right" size={18} color="#94a3b8" />
+                  </TouchableOpacity>
+                ))
+              ) : (
+                <View style={{ padding: 32, alignItems: 'center' }}>
+                  <MaterialIcons name="hourglass-empty" size={32} color="#cbd5e1" />
+                  <Text style={styles.emptyCardText}>No activity updates recorded</Text>
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* Footer */}
       <View style={styles.footerContainer}>
@@ -2087,6 +2179,114 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#94a3b8',
     fontWeight: '600',
+  },
+  viewAllActivityBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: '#f0fdf4',
+  },
+  viewAllActivityText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    zIndex: 9999,
+  },
+  allActivityModalBox: {
+    width: '100%',
+    maxWidth: 560,
+    maxHeight: '80%',
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 25,
+    elevation: 20,
+    overflow: 'hidden',
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  allActivityHeaderIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#f0fdf4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  modalHeaderSub: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  modalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f8fafc',
+  },
+  allActivityModalScroll: {
+    padding: 16,
+  },
+  allActivityModalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  allActivityItemIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#f0fdf4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  allActivityItemProject: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  allActivityItemDesc: {
+    fontSize: 12,
+    color: '#475569',
+    marginTop: 2,
+  },
+  allActivityItemTime: {
+    fontSize: 10,
+    color: '#94a3b8',
+    marginTop: 4,
   },
 });
 

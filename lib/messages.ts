@@ -169,7 +169,7 @@ export async function saveMessage(message: Message): Promise<void> {
   await saveLocalDirectMessage(message);
 
   const ref = doc(db(), DM_COLLECTION, message.id);
-  const savePromise = setDoc(ref, {
+  const payload: any = {
     senderId: message.senderId,
     recipientId: message.recipientId,
     projectId: message.projectId ?? null,
@@ -177,7 +177,14 @@ export async function saveMessage(message: Message): Promise<void> {
     timestamp: message.timestamp,
     read: message.read,
     attachments: message.attachments ?? [],
-  });
+  };
+  if (message.deleted !== undefined) payload.deleted = message.deleted;
+  if (message.edited !== undefined) payload.edited = message.edited;
+  if (message.replyToId !== undefined) payload.replyToId = message.replyToId;
+  if (message.replyToContent !== undefined) payload.replyToContent = message.replyToContent;
+  if (message.replyToSenderName !== undefined) payload.replyToSenderName = message.replyToSenderName;
+
+  const savePromise = setDoc(ref, payload, { merge: true });
   // 4s timeout so UI never hangs indefinitely if Firestore network is slow/blocked
   await Promise.race([
     savePromise,
@@ -191,26 +198,68 @@ export async function markMessageAsRead(messageId: string): Promise<void> {
 }
 
 export async function updateMessageContent(messageId: string, content: string): Promise<void> {
+  // Update local storage
+  const list = await getLocalDirectMessages();
+  const idx = list.findIndex(m => m.id === messageId);
+  if (idx > -1) {
+    list[idx] = { ...list[idx], content, edited: true };
+    await AsyncStorage.setItem(LOCAL_DM_KEY, JSON.stringify(list));
+  }
   const ref = doc(db(), DM_COLLECTION, messageId);
-  await updateDoc(ref, { content });
+  await updateDoc(ref, { content, edited: true });
 }
 
 export async function updateProjectGroupMessageContent(
   messageId: string,
   content: string,
 ): Promise<void> {
+  // Update local storage
+  const raw = await AsyncStorage.getItem(LOCAL_PROJECT_MSG_KEY);
+  if (raw) {
+    const list = JSON.parse(raw);
+    const idx = Array.isArray(list) ? list.findIndex((m: any) => m.id === messageId) : -1;
+    if (idx > -1) {
+      list[idx] = { ...list[idx], content, edited: true };
+      await AsyncStorage.setItem(LOCAL_PROJECT_MSG_KEY, JSON.stringify(list));
+    }
+  }
   const ref = doc(db(), PROJECT_MSG_COLLECTION, messageId);
-  await updateDoc(ref, { content });
+  await updateDoc(ref, { content, edited: true });
 }
 
 export async function deleteMessage(messageId: string): Promise<void> {
+  // Update local storage
+  const list = await getLocalDirectMessages();
+  const idx = list.findIndex(m => m.id === messageId);
+  if (idx > -1) {
+    list[idx] = { ...list[idx], deleted: true, content: 'This message was deleted' };
+    await AsyncStorage.setItem(LOCAL_DM_KEY, JSON.stringify(list));
+  }
   const ref = doc(db(), DM_COLLECTION, messageId);
-  await deleteDoc(ref);
+  try {
+    await updateDoc(ref, { deleted: true, content: 'This message was deleted' });
+  } catch {
+    await deleteDoc(ref).catch(() => {});
+  }
 }
 
 export async function deleteProjectGroupMessage(messageId: string): Promise<void> {
+  // Update local storage
+  const raw = await AsyncStorage.getItem(LOCAL_PROJECT_MSG_KEY);
+  if (raw) {
+    const list = JSON.parse(raw);
+    const idx = Array.isArray(list) ? list.findIndex((m: any) => m.id === messageId) : -1;
+    if (idx > -1) {
+      list[idx] = { ...list[idx], deleted: true, content: 'This message was deleted' };
+      await AsyncStorage.setItem(LOCAL_PROJECT_MSG_KEY, JSON.stringify(list));
+    }
+  }
   const ref = doc(db(), PROJECT_MSG_COLLECTION, messageId);
-  await deleteDoc(ref);
+  try {
+    await updateDoc(ref, { deleted: true, content: 'This message was deleted' });
+  } catch {
+    await deleteDoc(ref).catch(() => {});
+  }
 }
 
 export async function getProjectGroupMessages(
@@ -251,7 +300,7 @@ export async function saveProjectGroupMessage(message: ProjectGroupMessage): Pro
   await saveLocalProjectMessage(message);
 
   const ref = doc(db(), PROJECT_MSG_COLLECTION, message.id);
-  const savePromise = setDoc(ref, {
+  const payload: any = {
     projectId: message.projectId,
     senderId: message.senderId,
     content: message.content,
@@ -263,7 +312,14 @@ export async function saveProjectGroupMessage(message: ProjectGroupMessage): Pro
     responseAction: message.responseAction ?? null,
     responseToTitle: message.responseToTitle ?? null,
     attachments: message.attachments ?? [],
-  });
+  };
+  if (message.deleted !== undefined) payload.deleted = message.deleted;
+  if (message.edited !== undefined) payload.edited = message.edited;
+  if (message.replyToId !== undefined) payload.replyToId = message.replyToId;
+  if (message.replyToContent !== undefined) payload.replyToContent = message.replyToContent;
+  if (message.replyToSenderName !== undefined) payload.replyToSenderName = message.replyToSenderName;
+
+  const savePromise = setDoc(ref, payload, { merge: true });
   await Promise.race([
     savePromise,
     new Promise((resolve) => setTimeout(resolve, 4000)),

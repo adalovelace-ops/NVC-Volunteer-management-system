@@ -1,37 +1,22 @@
 import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 
 import {
-
   Alert,
-
   KeyboardAvoidingView,
-
   Modal,
-
   Platform,
-
   ScrollView,
-
   StyleSheet,
-
   Text,
-
   TextInput,
-
   TouchableOpacity,
-
   View,
-
   useWindowDimensions,
-
   Image,
-
   ActivityIndicator,
-
   Linking,
-
   Animated,
-
+  Clipboard,
 } from 'react-native';
 
 import { MaterialIcons, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
@@ -45,27 +30,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 
 import {
-
   composePhilippineAddress,
-
   getCitiesByRegion,
-
   PHCityMunicipality,
-
   PHRegions,
-
 } from '../utils/philippineAddressData';
 
 import ProposalMessageTemplate from '../components/ProposalMessageTemplate';
 
 import {
-
   deleteProjectGroupChat,
-
   deleteMessage,
-
   deleteProjectGroupMessage,
-
+  editMessage,
+  editProjectGroupMessage,
   getAllPartnerProjectApplications,
 
   getAllUsers,
@@ -124,7 +102,7 @@ import {
 
 import { navigateToAvailableRoute } from '../utils/navigation';
 
-import { isImageMediaUri, pickDocumentFromDevice, pickImageFromDevice } from '../utils/media';
+import { isImageMediaUri, openAttachmentUri, pickDocumentFromDevice, pickImageFromDevice } from '../utils/media';
 
 import { getRequestErrorMessage } from '../utils/requestErrors';
 
@@ -335,52 +313,76 @@ function getProposalReviewCardKey(message: ChatMessage): string | null {
   try {
     const data = JSON.parse(message.content.replace(PROPOSAL_PREFIX, ''));
     const status = String(data.status || '').trim();
-    const applicationId = String(data.applicationId || data.application?.id || '').trim();
-    const reviewedAt = String(data.reviewedAt || '').trim();
-    const reviewedBy = String(data.reviewedBy || '').trim();
-    if (!applicationId || !reviewedAt || !reviewedBy || !['Approved', 'Rejected'].includes(status)) {
-      return null;
+    const applicationId = String(data.applicationId || data.application?.id || data.id || '').trim();
+    const reviewedAt = String(data.reviewedAt || data.approvedAt || '').trim();
+    const reviewedBy = String(data.reviewedBy || data.approvedById || '').trim();
+
+    // Review decision card (Approved / Rejected)
+    if (applicationId && ['Approved', 'Rejected'].includes(status)) {
+      return `review:${applicationId}:${status}`;
     }
 
-    return [applicationId, status, reviewedAt, reviewedBy, message.senderId].join(':');
+    // Explicit proposal application card
+    if (applicationId) {
+      return `proposal:${applicationId}`;
+    }
+
+    // Optimistic proposal card before server assigns applicationId
+    const title = String(data.proposedTitle || data.title || '').trim();
+    const proposer = String(data.proposedById || message.senderId || '').trim();
+    if (title && proposer) {
+      return `proposal-draft:${proposer}:${title}`;
+    }
+
+    return null;
   } catch (_) {
     return null;
   }
 }
 
 function dedupeProposalReviewCards(messagesToDedupe: ChatMessage[]): ChatMessage[] {
-  const seenReviewCards = new Set<string>();
-  return messagesToDedupe.filter(message => {
-    const reviewCardKey = getProposalReviewCardKey(message);
-    if (!reviewCardKey) {
-      return true;
+  const seenCards = new Map<string, ChatMessage>();
+  const nonCardMessages: ChatMessage[] = [];
+
+  for (const message of messagesToDedupe) {
+    const key = getProposalReviewCardKey(message);
+    if (!key) {
+      nonCardMessages.push(message);
+      continue;
     }
 
-    if (seenReviewCards.has(reviewCardKey)) {
-      return false;
+    const existing = seenCards.get(key);
+    if (!existing) {
+      seenCards.set(key, message);
+    } else {
+      // If existing is temp optimistic (prop-temp-...) and incoming is persisted server message, upgrade to server message
+      const existingIsTemp = existing.id.startsWith('prop-temp-');
+      const currentIsTemp = message.id.startsWith('prop-temp-');
+      if (existingIsTemp && !currentIsTemp) {
+        seenCards.set(key, message);
+      } else if (!existingIsTemp && currentIsTemp) {
+        // Keep existing server message
+      } else {
+        // Keep the message with newer timestamp
+        if (new Date(message.timestamp).getTime() >= new Date(existing.timestamp).getTime()) {
+          seenCards.set(key, message);
+        }
+      }
     }
+  }
 
-    seenReviewCards.add(reviewCardKey);
-    return true;
-  });
+  return [...nonCardMessages, ...Array.from(seenCards.values())].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
 }
 
-
-
 function upsertChatMessage(current: ChatMessage[], incoming: ChatMessage): ChatMessage[] {
-
   const byId = new Map(current.map(message => [message.id, message]));
-
   byId.set(incoming.id, incoming);
-
   const result = dedupeProposalReviewCards(Array.from(byId.values()));
-
   return result.sort(
-
     (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime()
-
   );
-
 }
 
 
@@ -583,6 +585,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const directMessagesRef = useRef<ChatMessage[]>([]);
   const [isMessagesLoading, setIsMessagesLoading] = useState(false);
   const loadMessagesInFlightRef = useRef(false);
 
@@ -631,6 +634,23 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   const [showMembersModal, setShowMembersModal] = useState(false);
 
   const [conversationMenuAction, setConversationMenuAction] = useState<string | null>(null);
+
+  // Message 3-dots action menu, edit, and reply states
+  const [activeMessageMenu, setActiveMessageMenu] = useState<{
+    message: ChatMessage;
+    isOwn: boolean;
+    isProjectMsg: boolean;
+  } | null>(null);
+  const [editingMessage, setEditingMessage] = useState<{
+    id: string;
+    content: string;
+    isProjectMsg: boolean;
+  } | null>(null);
+  const [replyingToMessage, setReplyingToMessage] = useState<{
+    id: string;
+    senderName: string;
+    content: string;
+  } | null>(null);
 
   // Inline draft proposal card state (shown inside the message thread, not a separate screen)
   const [inlineDraftProposal, setInlineDraftProposal] = useState<ProposalFormState | null>(null);
@@ -807,7 +827,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       // Extract active programs present in system
       const loadedProjects: Project[] = Array.isArray(snapshot.projects) ? snapshot.projects : [];
       const loadedPrograms = loadedProjects
-        .filter(p => !p.isEvent && !p.parentProjectId)
+        .filter(p => !p.isEvent && !p.parentProjectId && !p.isDraft)
         .map(p => {
           let mod: AdvocacyFocus = 'Nutrition';
           const text = `${p.programModule || ''} ${p.id || ''} ${p.title || ''} ${p.category || ''}`.toLowerCase();
@@ -851,7 +871,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
           .filter(project => {
 
-            if (!project?.isEvent || project.groupChatDisabled) {
+            if (!project?.isEvent || project.groupChatDisabled || project.isDraft) {
 
               return false;
 
@@ -1124,20 +1144,42 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         
         const deduped = dedupeProposalReviewCards(chat);
 
+        const idMap = new Map<string, ChatMessage>();
+        [...directMessagesRef.current, ...deduped].forEach(m => {
+          if (m && m.id) idMap.set(m.id, m);
+        });
+        directMessagesRef.current = Array.from(idMap.values());
+
+        const serverIds = new Set(deduped.map(m => m.id));
         setMessages(prev => {
-          if (prev.length !== deduped.length) return deduped;
+          // Never drop recent optimistic/in-flight messages sent by current user or sent to current user (system cards)
+          // AND never drop proposal cards
+          const pendingRecent = prev.filter(
+            m => !serverIds.has(m.id) &&
+                 (
+                   (typeof m.content === 'string' && m.content.startsWith(PROPOSAL_PREFIX)) ||
+                   (Date.now() - new Date(m.timestamp).getTime() < 60000 &&
+                    (('recipientId' in m ? (m.senderId === user.id || m.recipientId === user.id) : m.senderId === user.id)))
+                 )
+          );
+          const next = pendingRecent.length > 0
+            ? dedupeProposalReviewCards([...deduped, ...pendingRecent]).sort(
+                (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+              )
+            : deduped;
+
+          if (prev.length !== next.length) return next;
           const isIdentical = prev.every((m, idx) => {
-            const d = deduped[idx];
+            const d = next[idx];
             return d && m.id === d.id && m.content === d.content && m.read === d.read;
           });
-          return isIdentical ? prev : deduped;
+          return isIdentical ? prev : next;
         });
 
         const unread = chat.filter(m => !m.read && m.recipientId === user.id);
 
         if (unread.length > 0) {
           await Promise.all(unread.map(m => markMessageAsRead(m.id)));
-          void loadData();
         }
 
       } else if (selectedProjectChat) {
@@ -1149,13 +1191,35 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         
         const deduped = dedupeProposalReviewCards(chat);
 
+        // Maintain in-memory ref for zero-latency instant rendering on project chat switch
+        const idMap = new Map<string, ChatMessage>();
+        [...directMessagesRef.current, ...deduped].forEach(m => {
+          if (m && m.id) idMap.set(m.id, m);
+        });
+        directMessagesRef.current = Array.from(idMap.values());
+
+        const groupServerIds = new Set(deduped.map(m => m.id));
         setMessages(prev => {
-          if (prev.length !== deduped.length) return deduped;
+          // Never drop recent optimistic/in-flight messages sent by current user or proposal cards
+          const pendingRecent = prev.filter(
+            m => !groupServerIds.has(m.id) &&
+                 (
+                   (typeof m.content === 'string' && m.content.startsWith(PROPOSAL_PREFIX)) ||
+                   (Date.now() - new Date(m.timestamp).getTime() < 60000 && m.senderId === user.id)
+                 )
+          );
+          const next = pendingRecent.length > 0
+            ? dedupeProposalReviewCards([...deduped, ...pendingRecent]).sort(
+                (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+              )
+            : deduped;
+
+          if (prev.length !== next.length) return next;
           const isIdentical = prev.every((m, idx) => {
-            const d = deduped[idx];
+            const d = next[idx];
             return d && m.id === d.id && m.content === d.content && m.read === d.read;
           });
-          return isIdentical ? prev : deduped;
+          return isIdentical ? prev : next;
         });
 
       }
@@ -1258,45 +1322,28 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
         if (isActiveConversation) {
-
           setMessages(current => upsertChatMessage(current, incoming));
+          directMessagesRef.current = upsertChatMessage(directMessagesRef.current, incoming);
 
           if (!incoming.read && incoming.recipientId === user.id) {
-
             void markMessageAsRead(incoming.id).then(() => {
-
               void loadData();
-
             });
-
           }
-
         } else {
-
           void loadData();
-
         }
-
         return;
-
       }
 
-
-
       if (event.type === 'project-group-message.changed') {
-
         const incoming = event.message;
-
         const activeProjectChat = selectedProjectChatRef.current;
 
-
-
         if (activeProjectChat?.project.id === incoming.projectId) {
-
           setMessages(current => upsertChatMessage(current, incoming));
-
+          directMessagesRef.current = upsertChatMessage(directMessagesRef.current, incoming);
         }
-
       }
 
     });
@@ -1316,18 +1363,54 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   }, [user?.id, selectedUser?.id]);
 
   useEffect(() => {
-    // Immediately clear messages when switching conversation to prevent showing wrong person's messages
-    setMessages([]);
+    // STEP 1: Paint immediately from in-memory ref (0ms perceived load, no blank-screen flash)
+    if (selectedUser && user?.id) {
+      const inMemory = directMessagesRef.current.filter(
+        m => ('senderId' in m && 'recipientId' in m) &&
+             ((m.senderId === user.id && m.recipientId === selectedUser.id) ||
+              (m.senderId === selectedUser.id && m.recipientId === user.id))
+      );
+      if (inMemory.length > 0) {
+        setMessages(inMemory);
+      } else {
+        setMessages(curr => {
+          const currentForThisUser = curr.filter(
+            m => ('senderId' in m && 'recipientId' in m) &&
+                 ((m.senderId === user.id && m.recipientId === selectedUser.id) ||
+                  (m.senderId === selectedUser.id && m.recipientId === user.id))
+          );
+          return currentForThisUser.length > 0 ? currentForThisUser : [];
+        });
+      }
+    } else if (selectedProjectChat) {
+      const inMemory = directMessagesRef.current.filter(
+        m => 'projectId' in m && (m as any).projectId === selectedProjectChat.project.id
+      );
+      if (inMemory.length > 0) {
+        setMessages(inMemory);
+      } else {
+        setMessages(curr => {
+          const currentForThisProject = curr.filter(
+            m => 'projectId' in m && (m as any).projectId === selectedProjectChat.project.id
+          );
+          return currentForThisProject.length > 0 ? currentForThisProject : [];
+        });
+      }
+    } else {
+      setMessages([]);
+    }
+
+    // STEP 2: Background refresh (hits client TTL cache or backend index)
     if (view === 'detail' && (selectedUser || selectedProjectChat)) {
       void loadMessages(true);
 
       const timer = setInterval(() => {
         void loadMessages(false);
-      }, 2000);
+      }, 3000);
 
       return () => clearInterval(timer);
     }
-  }, [selectedUser?.id, selectedProjectChat?.project?.id, view]);
+  }, [selectedUser?.id, selectedProjectChat?.project?.id, view, user?.id]);
 
 
 
@@ -1352,31 +1435,20 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
   useEffect(() => {
-
-    if (selectedUser && !allUsers.some(candidate => candidate.id === selectedUser.id)) {
-
+    if (selectedUser && allUsers.length > 0 && !allUsers.some(candidate => candidate.id === selectedUser.id)) {
+      if (selectedUser.role === 'admin' || (selectedUser as any).isAdmin) return;
       setSelectedUser(null);
-
     }
-
   }, [allUsers, selectedUser]);
 
-
-
   useEffect(() => {
-
     if (
-
       selectedProjectChat &&
-
+      projectChats.length > 0 &&
       !projectChats.some(candidate => candidate.project.id === selectedProjectChat.project.id)
-
     ) {
-
       setSelectedProjectChat(null);
-
     }
-
   }, [projectChats, selectedProjectChat]);
 
 
@@ -1534,29 +1606,66 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   const handleSubmitInlineProposal = async () => {
     if (!user || !inlineDraftProposal) return;
     setIsSubmittingInlineDraft(true);
+
+    const draftCopy = { ...inlineDraftProposal };
+    const draftModule = inlineDraftModule;
+    const draftProjectId = inlineDraftProjectId;
+    const draftDoc = inlineDraftDocAttachment;
+
+    const attachments: { url: string; type: 'image' | 'document'; description?: string }[] = [];
+    if (draftCopy.photoAttachment) {
+      attachments.push({ url: draftCopy.photoAttachment, type: 'image', description: 'Proposal Photo' });
+    }
+    if (draftDoc) {
+      attachments.push({ url: draftDoc, type: 'document', description: 'Proposal Document' });
+    }
+
+    // Step 1: Optimistically render proposal card message immediately in the thread
+    const tempProposalId = `prop-temp-${Date.now()}`;
+    const proposalCardData = {
+      ...draftCopy,
+      proposedVolunteersNeeded: Number(draftCopy.proposedVolunteersNeeded) || 0,
+      requestedProgramModule: (draftModule as AdvocacyFocus) || 'Nutrition',
+      targetProjectId: draftProjectId !== 'new' ? draftProjectId : undefined,
+      status: 'Pending',
+      proposedById: user.id,
+      proposedByName: user.name,
+      timestamp: new Date().toISOString(),
+      attachments,
+    };
+    const targetRecipientId = selectedUser?.id || '';
+    if (targetRecipientId) {
+      const optimisticMsg: Message = {
+        id: tempProposalId,
+        senderId: user.id,
+        recipientId: targetRecipientId,
+        content: `${PROPOSAL_PREFIX}${JSON.stringify(proposalCardData)}`,
+        timestamp: new Date().toISOString(),
+        read: false,
+      };
+      setMessages(curr => upsertChatMessage(curr, optimisticMsg));
+      directMessagesRef.current = upsertChatMessage(directMessagesRef.current, optimisticMsg);
+    }
+
+    // Step 2: Clear inline composer so card seamlessly replaces it with zero flicker
+    setInlineDraftProposal(null);
+    setInlineDraftDocAttachment('');
+
     try {
-      const attachments: { url: string; type: 'image' | 'document'; description?: string }[] = [];
-      if (inlineDraftProposal.photoAttachment) {
-        attachments.push({ url: inlineDraftProposal.photoAttachment, type: 'image', description: 'Proposal Photo' });
-      }
-      if (inlineDraftDocAttachment) {
-        attachments.push({ url: inlineDraftDocAttachment, type: 'document', description: 'Proposal Document' });
-      }
-      const isResubmission = inlineDraftProposal?.communityNeed?.includes('[Revised]') || false;
-      await submitPartnerProgramProposal(inlineDraftProjectId || 'new', user, {
-        programModule: (inlineDraftModule as AdvocacyFocus) || 'Nutrition',
+      const isResubmission = draftCopy?.communityNeed?.includes('[Revised]') || false;
+      await submitPartnerProgramProposal(draftProjectId || 'new', user, {
+        programModule: (draftModule as AdvocacyFocus) || 'Nutrition',
         proposalDetails: {
-          ...inlineDraftProposal,
-          proposedVolunteersNeeded: Number(inlineDraftProposal.proposedVolunteersNeeded) || 0,
-          requestedProgramModule: (inlineDraftModule as AdvocacyFocus) || 'Nutrition',
-          targetProjectId: inlineDraftProjectId !== 'new' ? inlineDraftProjectId : undefined,
+          ...draftCopy,
+          proposedVolunteersNeeded: Number(draftCopy.proposedVolunteersNeeded) || 0,
+          requestedProgramModule: (draftModule as AdvocacyFocus) || 'Nutrition',
+          targetProjectId: draftProjectId !== 'new' ? draftProjectId : undefined,
           isResubmission: true,
           attachments,
         } as any,
       });
-      setInlineDraftProposal(null);
-      setInlineDraftDocAttachment('');
       Alert.alert('Submitted', 'Your revised proposal has been submitted for review.');
+      void loadMessages();
       void loadData();
     } catch (e) {
       Alert.alert('Error', 'Failed to submit proposal. Please check your connection.');
@@ -1608,20 +1717,21 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         const reviewed = await reviewPartnerProjectApplication(app.id, 'Approved', user.id);
         
         // Update local message status
-        setMessages(current =>
+        const updateAppStatus = (current: ChatMessage[]) =>
           current.map(msg => {
             if (typeof msg.content === 'string' && msg.content.startsWith(PROPOSAL_PREFIX)) {
               try {
                 const msgApp = JSON.parse(msg.content.replace(PROPOSAL_PREFIX, ''));
-                if (msgApp.id === app.id || msg.id === app.id) {
+                if (msgApp.id === app.id || msg.id === app.id || msgApp.applicationId === app.id) {
                   const updatedApp = { ...msgApp, status: 'Approved' };
                   return { ...msg, content: PROPOSAL_PREFIX + JSON.stringify(updatedApp) };
                 }
               } catch (_) {}
             }
             return msg;
-          })
-        );
+          });
+        setMessages(updateAppStatus);
+        directMessagesRef.current = updateAppStatus(directMessagesRef.current);
 
         setReviewNotice({
           title: 'Proposal approved',
@@ -1631,6 +1741,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         });
 
         Alert.alert('Approved', 'Proposal approved! New project has been created.');
+        void loadMessages();
         void loadData();
       } catch (e: any) {
         Alert.alert('Error', e?.message || 'Failed to approve proposal.');
@@ -1666,6 +1777,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         },
       });
       Alert.alert('Submitted', 'Your proposal has been submitted for review.');
+      void loadMessages();
       void loadData();
     } catch (e: any) {
       Alert.alert('Error', e?.message || 'Failed to submit proposal. Please check your connection.');
@@ -1712,18 +1824,22 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     };
 
-
-
     try {
 
       if (selectedUser) {
         const fullMsg: Message = { ...msg, recipientId: selectedUser.id, read: false };
         setMessages(curr => upsertChatMessage(curr, fullMsg));
+        directMessagesRef.current = upsertChatMessage(directMessagesRef.current, fullMsg);
         await saveMessage(fullMsg);
+        void loadMessages();
+        void loadData();
       } else if (selectedProjectChat) {
         const fullMsg: ProjectGroupMessage = { ...msg, projectId: selectedProjectChat.project.id, kind: 'scope-proposal' as any };
         setMessages(curr => upsertChatMessage(curr, fullMsg));
+        directMessagesRef.current = upsertChatMessage(directMessagesRef.current, fullMsg);
         await saveProjectGroupMessage(fullMsg);
+        void loadMessages();
+        void loadData();
       }
 
     } catch (e) {
@@ -1740,43 +1856,32 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   };
 
-
-
   const handleApproveProposal = async (msgId: string, currentData: any) => {
 
-    if (user?.role !== 'admin') return;
-
-
-
-    const updatedData = { ...currentData, status: 'Approved', approvedBy: user.id, approvedAt: new Date().toISOString() };
-
-    const updatedContent = `${PROPOSAL_PREFIX}${JSON.stringify(updatedData)}`;
-
-
-
+    if (!user) return;
     try {
-
-      // In a real app, we'd update the specific message. Here we send an "Approval" message or update local state.
-
-      // For this demo, let's send a final approved card.
+      const updatedProposal = {
+        ...currentData,
+        status: 'Approved',
+        approvedById: user.id,
+        approvedByName: user.name,
+        approvedAt: new Date().toISOString(),
+      };
+      const updatedContent = `${PROPOSAL_PREFIX}${JSON.stringify(updatedProposal)}`;
 
       const msg = {
-
         id: `appr-${Date.now()}`,
-
         senderId: user.id,
-
         content: updatedContent,
-
         timestamp: new Date().toISOString(),
-
       };
 
-
-
       setMessages(curr => upsertChatMessage(curr, msg as any));
+      directMessagesRef.current = upsertChatMessage(directMessagesRef.current, msg as any);
       if (selectedUser) {
         await saveMessage({ ...msg, recipientId: selectedUser.id, read: false });
+        void loadMessages();
+        void loadData();
       }
 
       Alert.alert('Approved', 'The proposal has been officially approved.');
@@ -2204,22 +2309,27 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   const handleDeleteMessage = (messageId: string, isProjectMsg: boolean) => {
     if (!messageId) return;
-    Alert.alert('Delete message?', 'This will delete the message for everyone.', [
+    Alert.alert('Delete message?', 'This message will be deleted for everyone.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          const previous = messages;
-          setMessages(curr => curr.filter(m => m.id !== messageId));
+          setActiveMessageMenu(null);
+          // Optimistically mark as deleted with "This message was deleted"
+          setMessages(curr =>
+            curr.map(m => (m.id === messageId ? { ...m, deleted: true, content: 'This message was deleted' } : m))
+          );
+          directMessagesRef.current = directMessagesRef.current.map(m =>
+            m.id === messageId ? { ...m, deleted: true, content: 'This message was deleted' } : m
+          );
           try {
             if (isProjectMsg) {
-              await deleteProjectGroupMessage(messageId);
+              await deleteProjectGroupMessage(messageId, selectedProjectChat?.project.id);
             } else {
-              await deleteMessage(messageId);
+              await deleteMessage(messageId, user?.id, selectedUser?.id);
             }
           } catch (e) {
-            setMessages(previous);
             Alert.alert('Failed to delete', getRequestErrorMessage(e, 'Could not delete message.'));
           }
         },
@@ -2227,10 +2337,30 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
     ]);
   };
 
+  const handleStartReply = (message: ChatMessage) => {
+    const isOwn = message.senderId === user?.id;
+    const senderName = isOwn ? 'You' : (allUsers.find(u => u.id === message.senderId)?.name || selectedUser?.name || 'User');
+    setReplyingToMessage({
+      id: message.id,
+      senderName,
+      content: message.content,
+    });
+    setEditingMessage(null);
+    setActiveMessageMenu(null);
+  };
 
+  const handleStartEdit = (message: ChatMessage, isProjectMsg: boolean) => {
+    setEditingMessage({
+      id: message.id,
+      content: message.content,
+      isProjectMsg,
+    });
+    setMessageText(message.content);
+    setReplyingToMessage(null);
+    setActiveMessageMenu(null);
+  };
 
   const handleSendMessage = async () => {
-
     const trimmedMessage = messageText.trim();
 
     if (!user || (!trimmedMessage && pendingAttachments.length === 0) || isSending) return;
@@ -2239,89 +2369,98 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       return;
     }
 
+    // Handle Edit Mode submission
+    if (editingMessage) {
+      const editId = editingMessage.id;
+      const isProjectMsg = editingMessage.isProjectMsg;
+      setEditingMessage(null);
+      setMessageText('');
+      setMessages(curr =>
+        curr.map(m => (m.id === editId ? { ...m, content: trimmedMessage, edited: true } : m))
+      );
+      directMessagesRef.current = directMessagesRef.current.map(m =>
+        m.id === editId ? { ...m, content: trimmedMessage, edited: true } : m
+      );
+      try {
+        if (isProjectMsg) {
+          await editProjectGroupMessage(editId, trimmedMessage, selectedProjectChat?.project.id);
+        } else {
+          await editMessage(editId, trimmedMessage, user.id, selectedUser?.id);
+        }
+      } catch (err) {
+        Alert.alert('Edit failed', getRequestErrorMessage(err, 'Failed to update message.'));
+      }
+      return;
+    }
+
     setIsSending(true);
     setShowEmojiPicker(false);
 
+    const replyContext = replyingToMessage ? {
+      replyToId: replyingToMessage.id,
+      replyToContent: replyingToMessage.content,
+      replyToSenderName: replyingToMessage.senderName,
+    } : {};
+
     const msg = {
-
       id: `msg-${Date.now()}`,
-
       senderId: user.id,
-
       content: trimmedMessage || 'Attachment',
-
       timestamp: new Date().toISOString(),
-
       attachments: pendingAttachments,
-
+      ...replyContext,
     };
+
+    setReplyingToMessage(null);
 
     // Keep copies for optimistic update so we can revert on hard failure
     const optimisticText = trimmedMessage;
     const optimisticAttachments = [...pendingAttachments];
 
     try {
-
       if (selectedUser) {
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
         void setTypingStatus(user.id, selectedUser.id, false);
         const fullMsg: Message = { ...msg, recipientId: selectedUser.id, read: false };
-        // Optimistic UI — shows instantly even if Firestore is slow/disabled
+        // Optimistic UI — shows instantly and updates in-memory ref
         setMessages(curr => upsertChatMessage(curr, fullMsg));
+        directMessagesRef.current = upsertChatMessage(directMessagesRef.current, fullMsg);
         setMessageText('');
         setPendingAttachments([]);
         setIsSending(false);
-        // Firestore save — non-blocking; keep message locally on failure
         try {
-          await Promise.race([
-            saveMessage(fullMsg),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Save timeout')), 8000)),
-          ]);
-          // Refresh messages and conversation lists immediately after sending
+          await saveMessage(fullMsg);
           void loadMessages();
-          void loadData();
+          setConversations(curr =>
+            curr.map(c => (c.user.id === selectedUser.id ? { ...c, lastMessage: fullMsg } : c))
+          );
         } catch (saveErr: any) {
-          const code = String(saveErr?.code || saveErr?.message || '');
-          // If Firestore is disabled (PERMISSION_DENIED) we keep the optimistic message and warn
-          console.warn('[Chat] saveMessage failed (kept locally):', code, saveErr);
-          // Don't revert — message stays visible; optionally could store locally
+          console.warn('[Chat] saveMessage failed (kept locally):', saveErr);
         }
         return;
       } else if (selectedProjectChat) {
-
         const fullMsg: ProjectGroupMessage = { ...msg, projectId: selectedProjectChat.project.id, kind: 'message' };
-
         setMessages(curr => upsertChatMessage(curr, fullMsg));
+        directMessagesRef.current = upsertChatMessage(directMessagesRef.current, fullMsg);
         setMessageText('');
         setPendingAttachments([]);
         setIsSending(false);
         try {
-          await Promise.race([
-            saveProjectGroupMessage(fullMsg),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Save timeout')), 8000)),
-          ]);
-          // Refresh project messages and conversation lists immediately after sending
+          await saveProjectGroupMessage(fullMsg);
           void loadMessages();
-          void loadData();
         } catch (saveErr: any) {
           console.warn('[Chat] saveProjectGroupMessage failed (kept locally):', saveErr);
         }
         return;
       }
-
     } catch (e) {
-
       const errorMsg = e instanceof Error ? e.message : 'Failed to send message';
       // Revert optimistic on hard error before save
       setMessageText(optimisticText);
       Alert.alert('Error', `Failed to send message: ${errorMsg}`);
-
     } finally {
-
       setIsSending(false);
-
     }
-
   };
 
 
@@ -2443,12 +2582,12 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         )
       );
       
-      setMessages(current =>
+      const updateReviewedMsgs = (current: ChatMessage[]) =>
         current.map(msg => {
           if (typeof msg.content === 'string' && msg.content.startsWith(PROPOSAL_PREFIX)) {
             try {
               const msgApp = JSON.parse(msg.content.replace(PROPOSAL_PREFIX, ''));
-              if (msgApp.id === reviewedApplication.id) {
+              if (msgApp.id === reviewedApplication.id || msgApp.applicationId === reviewedApplication.id || msg.id === reviewedApplication.id) {
                 const updatedApp = { ...msgApp, status: reviewedApplication.status };
                 return { ...msg, content: PROPOSAL_PREFIX + JSON.stringify(updatedApp) };
               }
@@ -2456,8 +2595,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
             }
           }
           return msg;
-        })
-      );
+        });
+      setMessages(updateReviewedMsgs);
+      directMessagesRef.current = updateReviewedMsgs(directMessagesRef.current);
 
       setReviewNotice(
         status === 'Approved'
@@ -4013,7 +4153,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                           );
                         }}
                         onOpenAttachment={(url) => {
-                          void Linking.openURL(url).catch(() => Alert.alert('Attachment', 'Unable to open this attachment on this device.'));
+                          void openAttachmentUri(url).catch(() => Alert.alert('Attachment', 'Unable to open this attachment on this device.'));
                         }}
                       />
                     </TouchableOpacity>
@@ -4138,111 +4278,119 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
               }
 
               const messageAttachments = m.attachments || [];
+              const isDeleted = Boolean(m.deleted || m.content === 'This message was deleted');
+              const isEdited = Boolean(m.edited);
+              const senderName = isOwn ? 'You' : (allUsers.find(u => u.id === m.senderId)?.name || selectedUser?.name || 'User');
 
               return (
                 <View key={`msg-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther]}>
-                  <TouchableOpacity
-                    style={[styles.bubble, isOwn ? styles.bubbleOwn : styles.bubbleOther]}
-                    onLongPress={() => isOwn && handleDeleteMessage(m.id, !!selectedProjectChat)}
-                    activeOpacity={0.85}
-                    delayLongPress={500}
-                  >
-                    {m.content ? (
-                      <Text style={[styles.bubbleText, isOwn && styles.bubbleTextOwn]}>{m.content}</Text>
-                    ) : null}
+                  {/* Sender Name in Group Chat */}
+                  {selectedProjectChat && !isOwn && (
+                    <Text style={styles.groupMessageSenderName}>{senderName}</Text>
+                  )}
 
-                    {messageAttachments.length > 0 ? (
+                  <View style={[styles.messageBubbleContainer, isOwn ? styles.messageBubbleContainerOwn : styles.messageBubbleContainerOther]}>
+                    <TouchableOpacity
+                      style={[
+                        styles.bubble,
+                        isOwn ? styles.bubbleOwn : styles.bubbleOther,
+                        isDeleted && styles.bubbleDeleted,
+                      ]}
+                      onLongPress={() => setActiveMessageMenu({ message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
+                      activeOpacity={0.88}
+                      delayLongPress={400}
+                    >
+                      {/* Quoted Reply Preview */}
+                      {Boolean(m.replyToContent) && !isDeleted && (
+                        <View style={[styles.replyQuoteBox, isOwn ? styles.replyQuoteBoxOwn : styles.replyQuoteBoxOther]}>
+                          <View style={[styles.replyQuoteBar, isOwn ? styles.replyQuoteBarOwn : styles.replyQuoteBarOther]} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.replyQuoteSender, isOwn && styles.replyQuoteSenderOwn]} numberOfLines={1}>
+                              {m.replyToSenderName || 'User'}
+                            </Text>
+                            <Text style={[styles.replyQuoteContent, isOwn && styles.replyQuoteContentOwn]} numberOfLines={1}>
+                              {m.replyToContent}
+                            </Text>
+                          </View>
+                        </View>
+                      )}
 
-                      <View style={styles.messageAttachmentList}>
+                      {/* Content */}
+                      {isDeleted ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <MaterialIcons name="block" size={14} color="#94a3b8" />
+                          <Text style={[styles.bubbleTextDeleted, isOwn && styles.bubbleTextDeletedOwn]}>
+                            This message was deleted
+                          </Text>
+                        </View>
+                      ) : m.content ? (
+                        <Text style={[styles.bubbleText, isOwn && styles.bubbleTextOwn]}>{m.content}</Text>
+                      ) : null}
 
-                        {messageAttachments.map((attachmentUri, attachmentIndex) => {
+                      {/* Attachments */}
+                      {!isDeleted && messageAttachments.length > 0 ? (
+                        <View style={styles.messageAttachmentList}>
+                          {messageAttachments.map((attachmentUri, attachmentIndex) => {
+                            const attachmentName = getAttachmentName(attachmentUri, attachmentIndex);
+                            const isImageAttachment = isImageMediaUri(attachmentUri);
 
-                          const attachmentName = getAttachmentName(attachmentUri, attachmentIndex);
-
-                          const isImageAttachment = isImageMediaUri(attachmentUri);
-
-
-
-                          return (
-
-                            <TouchableOpacity
-
-                              key={`${m.id}-attachment-${attachmentIndex}`}
-
-                              style={[
-
-                                styles.messageAttachmentCard,
-
-                                isOwn && styles.messageAttachmentCardOwn,
-
-                              ]}
-
-                              onPress={() => {
-
-                                void Linking.openURL(attachmentUri).catch(() => {
-
-                                  Alert.alert('Attachment', 'Unable to open this attachment on this device.');
-
-                                });
-
-                              }}
-
-                              activeOpacity={0.85}
-
-                            >
-
-                              {isImageAttachment ? (
-
-                                <Image source={{ uri: attachmentUri }} style={styles.messageAttachmentImage} />
-
-                              ) : (
-
-                                <View style={[styles.messageAttachmentFileIcon, isOwn && styles.messageAttachmentFileIconOwn]}>
-
-                                  <MaterialIcons name="insert-drive-file" size={22} color={isOwn ? '#dcfce7' : '#166534'} />
-
-                                </View>
-
-                              )}
-
-                              <Text
-
+                            return (
+                              <TouchableOpacity
+                                key={`${m.id}-attachment-${attachmentIndex}`}
                                 style={[
-
-                                  styles.messageAttachmentName,
-
-                                  isOwn && styles.messageAttachmentNameOwn,
-
+                                  styles.messageAttachmentCard,
+                                  isOwn && styles.messageAttachmentCardOwn,
                                 ]}
-
-                                numberOfLines={1}
-
+                                onPress={() => {
+                                  void openAttachmentUri(attachmentUri).catch(() => {
+                                    Alert.alert('Attachment', 'Unable to open this attachment on this device.');
+                                  });
+                                }}
+                                activeOpacity={0.85}
                               >
+                                {isImageAttachment ? (
+                                  <Image source={{ uri: attachmentUri }} style={styles.messageAttachmentImage} />
+                                ) : (
+                                  <View style={[styles.messageAttachmentFileIcon, isOwn && styles.messageAttachmentFileIconOwn]}>
+                                    <MaterialIcons name="insert-drive-file" size={22} color={isOwn ? '#dcfce7' : '#166534'} />
+                                  </View>
+                                )}
+                                <Text
+                                  style={[
+                                    styles.messageAttachmentName,
+                                    isOwn && styles.messageAttachmentNameOwn,
+                                  ]}
+                                  numberOfLines={1}
+                                >
+                                  {attachmentName}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      ) : null}
+                    </TouchableOpacity>
 
-                                {attachmentName}
+                    {/* Three dots action button */}
+                    <TouchableOpacity
+                      style={[styles.messageMenuTrigger, isOwn ? styles.messageMenuTriggerOwn : styles.messageMenuTriggerOther]}
+                      onPress={() => setActiveMessageMenu({ message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
+                      activeOpacity={0.7}
+                    >
+                      <MaterialIcons name="more-vert" size={16} color="#94a3b8" />
+                    </TouchableOpacity>
+                  </View>
 
-                              </Text>
-
-                            </TouchableOpacity>
-
-                          );
-
-                        })}
-
-                      </View>
-
-                    ) : null}
-
-                  </TouchableOpacity>
-
-                  <Text style={styles.messageTime}>
-
-                    {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-
-                  </Text>
-
+                  {/* Timestamp & Edited Indicator */}
+                  <View style={[styles.messageTimeRow, isOwn ? styles.messageTimeRowOwn : styles.messageTimeRowOther]}>
+                    {isEdited && !isDeleted && (
+                      <Text style={styles.messageEditedLabel}>(edited)</Text>
+                    )}
+                    <Text style={styles.messageTime}>
+                      {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                  </View>
                 </View>
-
               );
 
               });
@@ -4648,6 +4796,51 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
             </View>
           ) : null}
 
+          {/* Editing Message Banner */}
+          {editingMessage ? (
+            <View style={styles.composerBanner}>
+              <View style={styles.composerBannerIconWrap}>
+                <MaterialIcons name="edit" size={16} color="#0284c7" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.composerBannerTitle, { color: '#0284c7' }]}>Editing message</Text>
+                <Text style={styles.composerBannerSnippet} numberOfLines={1}>
+                  {editingMessage.content}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  setEditingMessage(null);
+                  setMessageText('');
+                }}
+                style={styles.composerBannerCloseBtn}
+              >
+                <MaterialIcons name="close" size={18} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          {/* Replying To Message Banner */}
+          {replyingToMessage ? (
+            <View style={styles.composerBanner}>
+              <View style={styles.composerBannerIconWrap}>
+                <MaterialIcons name="reply" size={16} color="#166534" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.composerBannerTitle}>Replying to {replyingToMessage.senderName}</Text>
+                <Text style={styles.composerBannerSnippet} numberOfLines={1}>
+                  {replyingToMessage.content}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setReplyingToMessage(null)}
+                style={styles.composerBannerCloseBtn}
+              >
+                <MaterialIcons name="close" size={18} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
           <View style={styles.composer}>
 
             <TouchableOpacity
@@ -4668,7 +4861,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
               <TextInput
                 style={styles.composerInput}
-                placeholder={(isPartner && selectedUser?.role === 'admin') || (user?.role === 'admin' && selectedUser) ? 'Type a message or use /plan to insert a tool...' : 'Type a message...'}
+                placeholder={editingMessage ? 'Edit your message...' : (isPartner && selectedUser?.role === 'admin') || (user?.role === 'admin' && selectedUser) ? 'Type a message or use /plan to insert a tool...' : 'Type a message...'}
                 value={messageText}
                 onChangeText={(t) => {
                   setMessageText(t);
@@ -4752,6 +4945,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                 styles.sendBtn,
 
                 (!messageText.trim() && pendingAttachments.length === 0) && styles.sendBtnDisabled,
+                Boolean(editingMessage) && { backgroundColor: '#0284c7' }
 
               ]}
 
@@ -4765,6 +4959,10 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                 <ActivityIndicator size="small" color="#fff" />
 
+              ) : editingMessage ? (
+
+                <MaterialIcons name="check" size={20} color="#fff" />
+
               ) : (
 
                 <Ionicons name="send" size={20} color="#fff" />
@@ -4776,6 +4974,93 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
           </View>
 
         </KeyboardAvoidingView>
+
+        {/* Message Actions Modal (3-dots menu) */}
+        <Modal
+          visible={activeMessageMenu !== null}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setActiveMessageMenu(null)}
+        >
+          <TouchableOpacity
+            style={styles.messageActionModalBackdrop}
+            activeOpacity={1}
+            onPress={() => setActiveMessageMenu(null)}
+          >
+            <View style={styles.messageActionModalCard}>
+              <View style={styles.messageActionModalHeader}>
+                <Text style={styles.messageActionModalTitle}>Message Options</Text>
+                <TouchableOpacity onPress={() => setActiveMessageMenu(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <MaterialIcons name="close" size={20} color="#64748b" />
+                </TouchableOpacity>
+              </View>
+
+              {activeMessageMenu && (() => {
+                const msg = activeMessageMenu.message;
+                const isOwn = activeMessageMenu.isOwn;
+                const isProjectMsg = activeMessageMenu.isProjectMsg;
+                const isDeleted = Boolean(msg.deleted || msg.content === 'This message was deleted');
+                const isProposal = typeof msg.content === 'string' && msg.content.startsWith(PROPOSAL_PREFIX);
+
+                return (
+                  <View style={styles.messageActionOptionsList}>
+                    {/* Reply */}
+                    {!isDeleted && (
+                      <TouchableOpacity
+                        style={styles.messageActionOptionItem}
+                        onPress={() => handleStartReply(msg)}
+                        activeOpacity={0.75}
+                      >
+                        <MaterialIcons name="reply" size={20} color="#166534" />
+                        <Text style={styles.messageActionOptionText}>Reply</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {/* Edit (for sender if not deleted and not proposal) */}
+                    {isOwn && !isDeleted && !isProposal && (
+                      <TouchableOpacity
+                        style={styles.messageActionOptionItem}
+                        onPress={() => handleStartEdit(msg, isProjectMsg)}
+                        activeOpacity={0.75}
+                      >
+                        <MaterialIcons name="edit" size={20} color="#0284c7" />
+                        <Text style={styles.messageActionOptionText}>Edit Message</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {/* Copy Text */}
+                    {!isDeleted && msg.content ? (
+                      <TouchableOpacity
+                        style={styles.messageActionOptionItem}
+                        onPress={() => {
+                          Clipboard.setString(msg.content);
+                          setActiveMessageMenu(null);
+                          Alert.alert('Copied', 'Message text copied to clipboard.');
+                        }}
+                        activeOpacity={0.75}
+                      >
+                        <MaterialIcons name="content-copy" size={20} color="#475569" />
+                        <Text style={styles.messageActionOptionText}>Copy Text</Text>
+                      </TouchableOpacity>
+                    ) : null}
+
+                    {/* Delete (available for everyone) */}
+                    <TouchableOpacity
+                      style={[styles.messageActionOptionItem, styles.messageActionOptionDanger]}
+                      onPress={() => handleDeleteMessage(msg.id, isProjectMsg)}
+                      activeOpacity={0.75}
+                    >
+                      <MaterialIcons name="delete-outline" size={20} color="#dc2626" />
+                      <Text style={[styles.messageActionOptionText, { color: '#dc2626', fontWeight: '700' }]}>
+                        Delete Message
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })()}
+            </View>
+          </TouchableOpacity>
+        </Modal>
 
       </View>
 
@@ -8392,6 +8677,225 @@ const inlineStyles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     letterSpacing: 0.2,
+  },
+  groupMessageSenderName: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0f766e',
+    marginBottom: 2,
+    marginLeft: 8,
+  },
+  messageBubbleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    maxWidth: '82%',
+  },
+  messageBubbleContainerOwn: {
+    flexDirection: 'row-reverse',
+    alignSelf: 'flex-end',
+  },
+  messageBubbleContainerOther: {
+    flexDirection: 'row',
+    alignSelf: 'flex-start',
+  },
+  bubbleDeleted: {
+    backgroundColor: '#f1f5f9',
+    borderColor: '#e2e8f0',
+    borderWidth: 1,
+  },
+  bubbleTextDeleted: {
+    fontSize: 13,
+    color: '#94a3b8',
+    fontStyle: 'italic',
+  },
+  bubbleTextDeletedOwn: {
+    color: '#94a3b8',
+  },
+  messageMenuTrigger: {
+    padding: 6,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    opacity: 0.6,
+  },
+  messageMenuTriggerOwn: {
+    marginRight: 2,
+  },
+  messageMenuTriggerOther: {
+    marginLeft: 2,
+  },
+  messageTimeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
+    paddingHorizontal: 4,
+  },
+  messageTimeRowOwn: {
+    alignSelf: 'flex-end',
+  },
+  messageTimeRowOther: {
+    alignSelf: 'flex-start',
+  },
+  messageEditedLabel: {
+    fontSize: 10,
+    color: '#94a3b8',
+    fontStyle: 'italic',
+  },
+  replyQuoteBox: {
+    flexDirection: 'row',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 6,
+    gap: 8,
+    overflow: 'hidden',
+  },
+  replyQuoteBoxOwn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  replyQuoteBoxOther: {
+    backgroundColor: '#e2e8f0',
+  },
+  replyQuoteBar: {
+    width: 3,
+    backgroundColor: '#166534',
+    borderRadius: 2,
+  },
+  replyQuoteBarOwn: {
+    backgroundColor: '#ffffff',
+  },
+  replyQuoteBarOther: {
+    backgroundColor: '#166534',
+  },
+  replyQuoteSender: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#166534',
+    marginBottom: 1,
+  },
+  replyQuoteSenderOwn: {
+    color: '#ffffff',
+  },
+  replyQuoteContent: {
+    fontSize: 12,
+    color: '#475569',
+  },
+  replyQuoteContentOwn: {
+    color: '#f0fdf4',
+  },
+  composerBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0fdf4',
+    borderTopWidth: 1,
+    borderTopColor: '#bbf7d0',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    gap: 10,
+  },
+  composerBannerIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#dcfce7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  composerBannerTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  composerBannerSnippet: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 1,
+  },
+  composerBannerCloseBtn: {
+    padding: 4,
+  },
+  messageActionModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  messageActionModalCard: {
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 16,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  messageActionModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    marginBottom: 8,
+  },
+  messageActionModalTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  messageActionOptionsList: {
+    gap: 4,
+  },
+  messageActionOptionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+  messageActionOptionDanger: {
+    backgroundColor: '#fef2f2',
+    marginTop: 4,
+  },
+  messageActionOptionText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  loadingModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingModalContent: {
+    backgroundColor: '#ffffff',
+    padding: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    gap: 12,
+  },
+  loadingModalText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1e293b',
+  },
+  memberAvatarInitial: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  memberRole: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '500',
   },
 });
 

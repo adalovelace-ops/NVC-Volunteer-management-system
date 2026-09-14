@@ -23,6 +23,7 @@ import type {
 import type { Project, VolunteerTimeLog, VolunteerProjectJoinRecord, Volunteer } from '../models/types';
 import { buildTextPdf, downloadPdfFile } from '../utils/pdfDownload';
 import { getAttachmentUris, isImageMediaUri } from '../utils/media';
+import { exportVolunteerReportPdf, buildVolunteerReportData } from '../utils/volunteerReportTemplate';
 
 function initialsPartner(name: string) {
   const parts = (name || 'U').trim().split(/\s+/).filter(Boolean);
@@ -124,19 +125,80 @@ export function VolunteerReportsDashboard({
   volunteers = [],
 }: VolunteerReportsDashboardProps) {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const { user: authUser } = useAuth() as any;
 
-  const visibleReports = useMemo(
-    () => reports.filter(report => report.status !== 'Rejected'),
-    [reports]
-  );
+  // Unify formal submitted reports and photo uploads into visible event reports
+  const visibleReports = useMemo(() => {
+    const directReports = reports.filter(report => report.status !== 'Rejected');
+    const projectById = new Map(projects.map(p => [p.id, p]));
+    const volunteerById = new Map(volunteers.map(v => [v.id, v]));
+    const volunteerByUserId = new Map(volunteers.map(v => [v.userId, v]));
+    const currentUserVolunteer = volunteers.find(vol => vol.userId === authUser?.id || vol.id === authUser?.id);
+    const myVolunteerId = currentUserVolunteer?.id || authUser?.id;
+
+    const knownMediaUris = new Set<string>();
+    directReports.forEach(r => {
+      if (r.mediaFile) knownMediaUris.add(r.mediaFile);
+      (r.attachments || []).forEach(a => {
+        const uri = typeof a === 'string' ? a : a.url;
+        if (uri) knownMediaUris.add(uri);
+      });
+    });
+
+    const photoReports: SubmittedReport[] = [];
+    volunteerTimeLogs.forEach(log => {
+      const photo = (log as any).attendancePhoto || (log as any).completionPhoto;
+      if (!photo || !isImageMediaUri(photo)) return;
+      if (knownMediaUris.has(photo)) return;
+      knownMediaUris.add(photo);
+
+      const vDetails = volunteerById.get((log as any).volunteerId) || volunteerByUserId.get((log as any).volunteerId);
+      const isMine = !authUser?.id || (log as any).volunteerId === authUser?.id || (log as any).volunteerId === myVolunteerId || vDetails?.userId === authUser?.id || vDetails?.id === myVolunteerId;
+      
+      if (!isAdminView && !isMine) return;
+
+      const project = log.projectId ? projectById.get(log.projectId) : undefined;
+      const volunteerName = vDetails?.name || (log as any).volunteerName || 'Volunteer';
+      const eventTitle = project?.title || 'Volunteer Event';
+      const isCompletion = Boolean((log as any).completionPhoto);
+      const photoKindLabel = isCompletion ? 'Completion Photo' : 'Attendance Photo';
+      const dateStr = log.timeIn ? new Date(log.timeIn).toISOString() : new Date().toISOString();
+
+      photoReports.push({
+        id: `timelog-photo-${log.id}`,
+        submittedBy: (log as any).volunteerId || '',
+        submitterName: volunteerName,
+        submitterRole: 'volunteer',
+        reportType: isCompletion ? 'completion_photo' : 'attendance_photo',
+        title: `${eventTitle} - ${photoKindLabel}`,
+        description: `${photoKindLabel} submitted by ${volunteerName} for ${eventTitle}.`,
+        projectId: log.projectId,
+        projectTitle: eventTitle,
+        projectKind: 'event',
+        category: project?.category,
+        metrics: {
+          volunteerHours: log.totalHours || (log.timeOut && log.timeIn ? Math.max(0.5, Math.round(((new Date(log.timeOut).getTime() - new Date(log.timeIn).getTime()) / 3600000) * 10) / 10) : 1),
+        },
+        attachments: [{ id: `att-${log.id}`, url: photo, name: `${photoKindLabel}.jpg`, type: 'image' }],
+        mediaFile: photo,
+        status: (log as any).status === 'Approved' ? 'Approved' : 'Submitted',
+        submittedAt: dateStr,
+      });
+    });
+
+    return [...directReports, ...photoReports].sort(
+      (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+    );
+  }, [reports, volunteerTimeLogs, projects, volunteers, authUser?.id, isAdminView]);
+
   const eventCount = useMemo(
     () => new Set(visibleReports.map(report => report.projectId).filter(Boolean)).size,
     [visibleReports]
   );
   const stats = useMemo(() => {
-    const submitted = visibleReports.filter(r => r.status === 'Submitted').length;
+    const submitted = visibleReports.filter(r => r.status === 'Submitted' || r.status === 'Approved').length;
     const volunteerEventJoins = visibleReports.reduce(
-      (sum, r) => sum + (r.metrics.volunteerEventJoins ?? r.metrics.volunteerHours ?? 0),
+      (sum, r) => sum + (r.metrics?.volunteerEventJoins ?? r.metrics?.volunteerHours ?? 0),
       0
     );
     const linkedProjects = new Set(visibleReports.map(report => report.projectId).filter(Boolean)).size;
@@ -144,7 +206,6 @@ export function VolunteerReportsDashboard({
     return { submitted, volunteerEventJoins, linkedProjects };
   }, [visibleReports]);
 
-  const { user: authUser } = useAuth() as any;
   const realVolunteerName = (volunteerJoinRecords[0] as any)?.volunteerName || visibleReports[0]?.submitterName || authUser?.name || 'My Volunteer Account';
   const realEventJoins = new Set([...volunteerJoinRecords.map(r => (r as any).projectId), ...volunteerTimeLogs.map(l => (l as any).projectId).filter(Boolean)]).size;
   const realReportsSubmitted = visibleReports.length;
@@ -179,27 +240,34 @@ export function VolunteerReportsDashboard({
       ...visibleReports.map(report => report.projectId).filter((id): id is string => Boolean(id)),
     ]);
 
+    const volunteerById = new Map(volunteers.map(v => [v.id, v]));
+    const volunteerByUserId = new Map(volunteers.map(v => [v.userId, v]));
+
     return projects
       .filter(project => project.isEvent && (isAdminView || eventIds.has(project.id)))
       .map(event => {
         const eventReports = visibleReports.filter(report => report.projectId === event.id);
-        const eventLogs = volunteerTimeLogs.filter(log => log.projectId === event.id && isImageMediaUri(log.attendancePhoto || ''));
+        const eventLogs = volunteerTimeLogs.filter(
+          log => log.projectId === event.id && (isImageMediaUri(log.attendancePhoto || '') || isImageMediaUri(log.completionPhoto || ''))
+        );
         
         const photoObjects: { uri: string; date: string; submittedBy: string; reportId?: string }[] = [];
         
-         eventReports.forEach(report => {
-            const uris = getAttachmentUris([report.mediaFile || '', ...(report.attachments || [])]).filter(isImageMediaUri);
-            uris.forEach(uri => {
-               if (!photoObjects.some(p => p.uri === uri)) {
-                  photoObjects.push({ uri, date: new Date(report.submittedAt).toLocaleDateString(), submittedBy: 'Me', reportId: report.id });
-               }
-            });
-         });
+        eventReports.forEach(report => {
+          const uris = getAttachmentUris([report.mediaFile || '', ...(report.attachments || [])]).filter(isImageMediaUri);
+          uris.forEach(uri => {
+            if (!photoObjects.some(p => p.uri === uri)) {
+              photoObjects.push({ uri, date: new Date(report.submittedAt).toLocaleDateString(), submittedBy: report.submitterName || 'Me', reportId: report.id });
+            }
+          });
+        });
 
         eventLogs.forEach(log => {
-           if (log.attendancePhoto && !photoObjects.some(p => p.uri === log.attendancePhoto)) {
-              photoObjects.push({ uri: log.attendancePhoto, date: new Date(log.timeIn).toLocaleDateString(), submittedBy: 'Me (Attendance)' });
-           }
+          const pUri = log.attendancePhoto || log.completionPhoto;
+          if (pUri && !photoObjects.some(p => p.uri === pUri)) {
+            const vDetails = volunteerById.get((log as any).volunteerId) || volunteerByUserId.get((log as any).volunteerId);
+            photoObjects.push({ uri: pUri, date: new Date(log.timeIn).toLocaleDateString(), submittedBy: vDetails?.name || (log as any).volunteerName || 'Me (Attendance)' });
+          }
         });
 
         return {
@@ -209,7 +277,7 @@ export function VolunteerReportsDashboard({
         };
       })
       .sort((left, right) => new Date(right.event.startDate || '').getTime() - new Date(left.event.startDate || '').getTime());
-  }, [projects, volunteerJoinRecords, volunteerTimeLogs, visibleReports]);
+  }, [projects, volunteerJoinRecords, volunteerTimeLogs, visibleReports, isAdminView, volunteers]);
 
   const selectedEvent = useMemo(() => eventFolders.find(f => f.event.id === selectedEventId)?.event || null, [eventFolders, selectedEventId]);
 
@@ -223,79 +291,99 @@ export function VolunteerReportsDashboard({
     volunteerTimeLogs.filter(log => (log as any).projectId === eventId).forEach(log => {
       const photo = (log as any).attendancePhoto || (log as any).completionPhoto;
       if (!photo || !isImageMediaUri(photo)) return;
-      const join = volunteerJoinRecords.find(r => r.projectId === eventId && ((r as any).volunteerId === (log as any).volunteerId || (r as any).volunteerUserId === (log as any).volunteerId));
-      const name = (join as any)?.volunteerName || 'Volunteer';
-      const key = (log as any).volunteerId || name;
       
       const vDetails = volunteerById.get((log as any).volunteerId) || volunteerByUserId.get((log as any).volunteerId);
+      const join = volunteerJoinRecords.find(r => r.projectId === eventId && ((r as any).volunteerId === (log as any).volunteerId || (r as any).volunteerUserId === (log as any).volunteerId || (vDetails && ((r as any).volunteerId === vDetails.id || (r as any).volunteerUserId === vDetails.userId))));
+      const name = vDetails?.name || (join as any)?.volunteerName || (log as any).volunteerName || 'Volunteer';
+      const key = vDetails?.id || vDetails?.userId || (log as any).volunteerId || name;
       const avatarUri = vDetails?.validIdPhoto || (vDetails as any)?.avatarUri || undefined;
-      const volunteerName = vDetails?.name || name;
       
-      if (!map.has(key)) map.set(key, { key, name: volunteerName, submittedDate: new Date((log as any).timeIn || '').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), photos: [], avatarUri });
+      if (!map.has(key)) map.set(key, { key, name, submittedDate: new Date((log as any).timeIn || '').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), photos: [], avatarUri });
       const entry = map.get(key)!;
       if (!entry.photos.includes(photo)) entry.photos.push(photo);
     });
+
     visibleReports.filter(r => r.projectId === eventId).forEach(rep => {
       const uris = getAttachmentUris([rep.mediaFile || '', ...(rep.attachments || [])]).filter(isImageMediaUri);
-      const key = rep.submittedBy || rep.submitterName || `rep-${rep.id}`;
-      
       const vDetails = volunteerById.get(rep.submittedBy) || volunteerByUserId.get(rep.submittedBy);
+      const name = vDetails?.name || rep.submitterName || 'Volunteer';
+      const key = vDetails?.id || vDetails?.userId || rep.submittedBy || name;
       const avatarUri = vDetails?.validIdPhoto || (vDetails as any)?.avatarUri || undefined;
-      const volunteerName = vDetails?.name || rep.submitterName || 'Volunteer';
       
-      if (!map.has(key)) map.set(key, { key, name: volunteerName, submittedDate: new Date(rep.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), photos: [], avatarUri });
+      if (!map.has(key)) map.set(key, { key, name, submittedDate: new Date(rep.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), photos: [], avatarUri });
       const entry = map.get(key)!;
       uris.forEach(uri => { if (!entry.photos.includes(uri)) entry.photos.push(uri); });
     });
+
     // Include join records even without photo so volunteer still appears
     volunteerJoinRecords.filter(r => r.projectId === eventId).forEach(rec => {
-      const key = (rec as any).volunteerId || (rec as any).volunteerUserId || (rec as any).volunteerName;
-      
       const vDetails = volunteerById.get((rec as any).volunteerId) || volunteerByUserId.get((rec as any).volunteerId) || volunteerById.get((rec as any).volunteerUserId) || volunteerByUserId.get((rec as any).volunteerUserId);
+      const name = vDetails?.name || (rec as any).volunteerName || 'Volunteer';
+      const key = vDetails?.id || vDetails?.userId || (rec as any).volunteerId || (rec as any).volunteerUserId || name;
       const avatarUri = vDetails?.validIdPhoto || (vDetails as any)?.avatarUri || undefined;
-      const volunteerName = vDetails?.name || (rec as any).volunteerName || 'Volunteer';
       
-      if (!map.has(key)) map.set(key, { key, name: volunteerName, submittedDate: new Date((rec as any).joinedAt || '').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), photos: [], avatarUri });
+      if (!map.has(key)) map.set(key, { key, name, submittedDate: new Date((rec as any).joinedAt || '').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), photos: [], avatarUri });
     });
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [selectedEventId, volunteerTimeLogs, volunteerJoinRecords, visibleReports, volunteers]);
 
-  const renderReportItem = ({ item }: { item: SubmittedReport }) => (
-    <TouchableOpacity
-      style={styles.reportItem}
-      onPress={() => onViewReport(item)}
-      activeOpacity={0.7}
-    >
-      <View style={styles.reportItemLeft}>
+  const renderReportItem = ({ item }: { item: SubmittedReport }) => {
+    const hasPhoto = Boolean(item.mediaFile && isImageMediaUri(item.mediaFile));
+    return (
+      <TouchableOpacity
+        style={styles.reportItem}
+        onPress={() => onViewReport(item)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.reportItemLeft}>
+          <View
+            style={[
+              styles.statusIndicator,
+              item.status === 'Approved' && styles.statusIndicatorApproved,
+              item.status === 'Submitted' && styles.statusIndicatorSubmitted,
+              item.status === 'Rejected' && styles.statusIndicatorRejected,
+            ]}
+          />
+          {hasPhoto ? (
+            <Image
+              source={{ uri: item.mediaFile }}
+              style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#e2e8f0' }}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#f0fdf4', alignItems: 'center', justifyContent: 'center' }}>
+              <MaterialIcons name={getReportIcon(item.reportType)} size={20} color="#166534" />
+            </View>
+          )}
+          <View style={styles.reportItemContent}>
+            <Text style={styles.reportItemTitle} numberOfLines={1}>{item.title}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+              <Text style={styles.reportItemType}>{formatReportType(item.reportType)}</Text>
+              {hasPhoto && (
+                <View style={{ backgroundColor: '#e0f2fe', paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 4 }}>
+                  <Text style={{ fontSize: 9, fontWeight: '700', color: '#0369a1', letterSpacing: 0.3 }}>PHOTO</Text>
+                </View>
+              )}
+            </View>
+            {item.projectTitle ? (
+              <Text style={styles.reportItemDate}>{item.projectTitle}</Text>
+            ) : null}
+            <Text style={styles.reportItemDate}>{new Date(item.submittedAt).toLocaleDateString()}</Text>
+          </View>
+        </View>
         <View
           style={[
-            styles.statusIndicator,
-            item.status === 'Approved' && styles.statusIndicatorApproved,
-            item.status === 'Submitted' && styles.statusIndicatorSubmitted,
-            item.status === 'Rejected' && styles.statusIndicatorRejected,
+            styles.reportStatusBadge,
+            item.status === 'Approved' && styles.badgeApproved,
+            item.status === 'Submitted' && styles.badgeSubmitted,
+            item.status === 'Rejected' && styles.badgeRejected,
           ]}
-        />
-        <View style={styles.reportItemContent}>
-          <Text style={styles.reportItemTitle}>{item.title}</Text>
-          <Text style={styles.reportItemType}>{formatReportType(item.reportType)}</Text>
-          {item.projectTitle ? (
-            <Text style={styles.reportItemDate}>{item.projectTitle}</Text>
-          ) : null}
-          <Text style={styles.reportItemDate}>{new Date(item.submittedAt).toLocaleDateString()}</Text>
+        >
+          <Text style={styles.badgeText}>{item.status}</Text>
         </View>
-      </View>
-      <View
-        style={[
-          styles.reportStatusBadge,
-          item.status === 'Approved' && styles.badgeApproved,
-          item.status === 'Submitted' && styles.badgeSubmitted,
-          item.status === 'Rejected' && styles.badgeRejected,
-        ]}
-      >
-        <Text style={styles.badgeText}>{item.status}</Text>
-      </View>
-    </TouchableOpacity>
-  );
+      </TouchableOpacity>
+    );
+  };
 
   if (loading) {
     return (
@@ -373,7 +461,7 @@ export function VolunteerReportsDashboard({
             {eventFolders.map(folder => {
               const isSelected = selectedEventId === folder.event.id;
               const updated = folder.event.startDate ? new Date(folder.event.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Aug 14, 2026';
-              const totalSubmitted = folder.reports.length + folder.photos.length;
+              const totalSubmitted = Math.max(folder.reports.length, folder.photos.length);
               return (
                 <TouchableOpacity
                   key={folder.event.id}
@@ -522,9 +610,9 @@ export function VolunteerReportsDashboard({
             />
           ) : (
             <View style={styles.emptyState}>
-              <MaterialIcons name="description" size={32} color="#cbd5e1" />
-              <Text style={styles.emptyTitle}>No reports</Text>
-              <Text style={styles.emptyText}>You haven't submitted any reports yet.</Text>
+              <MaterialIcons name="photo-camera" size={32} color="#cbd5e1" />
+              <Text style={styles.emptyTitle}>No reports or photos</Text>
+              <Text style={styles.emptyText}>Upload attendance photos or submit a report to see them here.</Text>
             </View>
           )}
         </View>
@@ -680,8 +768,27 @@ export function PartnerReportsDashboard({
   const submittedOn = activeReport?.submittedAt
     ? new Date(activeReport.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     : '—';
-  const submittedByName = activeReport?.submitterName || (user?.role === 'partner' ? user.name : '—');
-  const submittedByRole = activeReport ? 'Program Coordinator' : (user?.role === 'partner' ? 'Program Coordinator' : '—');
+  const userRoleTitle =
+    user?.role === 'admin'
+      ? 'Administrator'
+      : user?.role === 'partner'
+      ? 'Program Coordinator'
+      : user?.role === 'volunteer'
+      ? 'Volunteer'
+      : user?.role
+      ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
+      : 'Program Coordinator';
+
+  const submittedByName =
+    (activeReport?.submitterName && activeReport.submitterName !== 'Program Coordinator' && activeReport.submitterName !== '—')
+      ? activeReport.submitterName
+      : (user?.name || user?.email || '—');
+
+  const submittedByRole =
+    (activeReport?.submitterRole && activeReport.submitterRole !== '—')
+      ? activeReport.submitterRole
+      : userRoleTitle;
+
   const submitterInitials =
     submittedByName && submittedByName !== '—'
       ? submittedByName
@@ -769,116 +876,133 @@ export function PartnerReportsDashboard({
     return `conic-gradient(${parts.join(', ')})`;
   }, [sectorData]);
 
-  // Automated Generated Report Documents for the Quarter
-  const generatedDocuments = useMemo(
-    () => [
-      {
-        id: `doc-${currentQuarter.key}-1`,
-        title: `${currentQuarter.label} Quarterly Report.pdf`,
-        size: hasQuarterReport ? '2.4 MB' : '0 KB',
-        type: 'pdf',
-        url: activeReport?.mediaFile || '',
-      },
-      {
-        id: `doc-${currentQuarter.key}-2`,
-        title: `Financial Summary ${currentQuarter.label}.xlsx`,
-        size: hasQuarterReport ? '1.1 MB' : '0 KB',
-        type: 'excel',
-        url: '',
-      },
-      {
-        id: `doc-${currentQuarter.key}-3`,
-        title: `M&E Summary ${currentQuarter.label}.pdf`,
-        size: hasQuarterReport ? '1.6 MB' : '0 KB',
-        type: 'pdf',
-        url: '',
-      },
-    ],
-    [currentQuarter, activeReport, hasQuarterReport]
-  );
+  // Real Report Documents for the Quarter (empty if no real files uploaded)
+  const generatedDocuments = useMemo(() => {
+    const list: Array<{
+      id: string;
+      title: string;
+      size: string;
+      type: 'pdf' | 'excel' | 'doc';
+      isVolunteerReport: boolean;
+      url: string;
+    }> = [];
 
-  // Volunteer photos
+    quarterReports.forEach(report => {
+      if (report.mediaFile && !isImageMediaUri(report.mediaFile)) {
+        const isPdf = report.mediaFile.toLowerCase().endsWith('.pdf');
+        const isExcel = report.mediaFile.toLowerCase().endsWith('.xls') || report.mediaFile.toLowerCase().endsWith('.xlsx');
+        list.push({
+          id: `doc-${report.id}`,
+          title: report.title || `${report.reportType || 'Report'}.pdf`,
+          size: 'Document',
+          type: isPdf ? 'pdf' : isExcel ? 'excel' : 'doc',
+          isVolunteerReport: false,
+          url: report.mediaFile,
+        });
+      }
+
+      (report.attachments || []).forEach((att: any, idx) => {
+        const url = typeof att === 'string' ? att : att?.url;
+        const name = (typeof att === 'object' && att?.name) ? att.name : `${report.title || 'Attachment'} ${idx + 1}`;
+        if (url && !isImageMediaUri(url)) {
+          const isPdf = url.toLowerCase().endsWith('.pdf') || name.toLowerCase().endsWith('.pdf');
+          const isExcel = url.toLowerCase().endsWith('.xls') || url.toLowerCase().endsWith('.xlsx') || name.toLowerCase().endsWith('.xls') || name.toLowerCase().endsWith('.xlsx');
+          list.push({
+            id: `att-${report.id}-${idx}`,
+            title: name,
+            size: (typeof att === 'object' && att?.size) ? att.size : 'Document',
+            type: isPdf ? 'pdf' : isExcel ? 'excel' : 'doc',
+            isVolunteerReport: false,
+            url,
+          });
+        }
+      });
+    });
+
+    return list;
+  }, [quarterReports]);
+
+  // Volunteer photos for the selected quarter
   const volunteerPhotos = useMemo(() => {
     const list: Array<{ id: string; uri: string; date: string; name: string; photosCount: number }> = [];
     const volunteerById = new Map(volunteers.map(v => [v.id, v]));
     const volunteerByUserId = new Map(volunteers.map(v => [v.userId, v]));
+    const seenUris = new Set<string>();
 
     volunteerTimeLogs.forEach(log => {
       const photo = (log as any).attendancePhoto || (log as any).completionPhoto;
-      if (!photo || !isImageMediaUri(photo)) return;
+      if (!photo || !isImageMediaUri(photo) || seenUris.has(photo)) return;
+      seenUris.add(photo);
+
       const v = volunteerById.get((log as any).volunteerId) || volunteerByUserId.get((log as any).volunteerId);
-      const name = v?.name || (log as any).volunteerName || 'Maria Santos';
+      const name = v?.name || (log as any).volunteerName || 'Volunteer';
       const date = log.timeIn
         ? new Date(log.timeIn).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-        : 'Aug 14, 2026';
+        : currentQuarter.label;
       list.push({
         id: log.id,
         uri: photo,
         date,
         name,
-        photosCount: 4,
+        photosCount: 1,
       });
     });
 
-    reports.forEach(r => {
-      if (r.attachments && r.attachments.length > 0) {
-        r.attachments.forEach((att, idx) => {
-          if (att.type === 'image' && att.url) {
-            list.push({
-              id: `${r.id}-${idx}`,
-              uri: att.url,
-              date: new Date(r.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-              name: r.submitterName || 'Volunteer',
-              photosCount: r.attachments?.length || 1,
-            });
-          }
+    quarterReports.forEach(r => {
+      const uris = getAttachmentUris([r.mediaFile || '', ...(r.attachments || [])]).filter(isImageMediaUri);
+      uris.forEach((uri, idx) => {
+        if (seenUris.has(uri)) return;
+        seenUris.add(uri);
+        list.push({
+          id: `${r.id}-${idx}`,
+          uri,
+          date: new Date(r.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          name: r.submitterName || 'Volunteer',
+          photosCount: uris.length,
         });
-      }
+      });
     });
 
-    const fallbackPhotos = [
-      {
-        id: 'fb-1',
-        uri: 'https://images.unsplash.com/photo-1593113598332-cd288d649433?w=500&auto=format&fit=crop&q=80',
-        date: 'Aug 14, 2026',
-        name: 'Maria Santos',
-        photosCount: 4,
-      },
-      {
-        id: 'fb-2',
-        uri: 'https://images.unsplash.com/photo-1488521787991-ed7bbaae773c?w=500&auto=format&fit=crop&q=80',
-        date: 'Aug 14, 2026',
-        name: 'John Dela Cruz',
-        photosCount: 6,
-      },
-      {
-        id: 'fb-3',
-        uri: 'https://images.unsplash.com/photo-1542810634-71277d95dcbb?w=500&auto=format&fit=crop&q=80',
-        date: 'Aug 14, 2026',
-        name: 'Ana Reyes',
-        photosCount: 3,
-      },
-      {
-        id: 'fb-4',
-        uri: 'https://images.unsplash.com/photo-1509099836639-18ba1795216d?w=500&auto=format&fit=crop&q=80',
-        date: 'Aug 15, 2026',
-        name: 'Ricky Villanueva',
-        photosCount: 5,
-      },
-      {
-        id: 'fb-5',
-        uri: 'https://images.unsplash.com/photo-1577896851231-70ef18881754?w=500&auto=format&fit=crop&q=80',
-        date: 'Aug 16, 2026',
-        name: 'Jessa Bautista',
-        photosCount: 4,
-      },
-    ];
+    return list;
+  }, [volunteerTimeLogs, quarterReports, volunteers, currentQuarter]);
 
-    if (list.length === 0) return fallbackPhotos;
-    return [...list, ...fallbackPhotos].slice(0, 8);
-  }, [volunteerTimeLogs, reports, volunteers]);
+  const handleExportVolunteerPdf = async () => {
+    try {
+      const accountUserName = user?.name || user?.email || 'Administrator';
+      const data = buildVolunteerReportData({
+        quarterLabel: currentQuarter.label,
+        periodRange: currentQuarter.periodLabel,
+        partnerOrg: orgName && orgName !== '—' ? orgName : 'Negrense Volunteers for Change Foundation',
+        programName: programTitle && programTitle !== '—' ? programTitle : 'NVC Volunteer Mobilization Program',
+        dateSubmitted: submittedOn && submittedOn !== '—' ? submittedOn : undefined,
+        submittedBy: (submittedByName && submittedByName !== '—' && submittedByName !== 'Program Coordinator')
+          ? submittedByName
+          : accountUserName,
+        position: (submittedByRole && submittedByRole !== '—') ? submittedByRole : userRoleTitle,
+        volunteers,
+        projects,
+        timeLogs: volunteerTimeLogs,
+        joinRecords: volunteerJoinRecords,
+      });
+      await exportVolunteerReportPdf(data, `Volunteer_List_Report_${currentQuarter.label.replace(/\s+/g, '_')}.pdf`);
+    } catch (err: any) {
+      Alert.alert('Export Failed', err?.message || 'Unable to generate volunteer report PDF.');
+    }
+  };
 
-  const handleDownloadReport = () => {
+  const handleDownloadDoc = async (doc: any) => {
+    if (doc.url) {
+      Linking.openURL(doc.url).catch(() => Alert.alert('Unable to open report file'));
+      return;
+    }
+    if (doc.isVolunteerReport || doc.type === 'pdf') {
+      await handleExportVolunteerPdf();
+    } else {
+      Alert.alert('Report Download', `Downloading ${doc.title}...`);
+    }
+  };
+
+  const handleDownloadReport = async () => {
     if (activeReport) {
       const url = activeReport.mediaFile || activeReport.attachments?.[0]?.url;
       if (url) {
@@ -886,15 +1010,7 @@ export function PartnerReportsDashboard({
         return;
       }
     }
-    if (activeSummary) {
-      const title = `${activeSummary.project.title} Quarterly Report`;
-      void downloadPdfFile(
-        `Quarterly-Report-${currentQuarter.key}-${new Date().toISOString().slice(0, 10)}.pdf`,
-        buildTextPdf(title, buildProjectSummaryContent(activeSummary))
-      );
-    } else {
-      Alert.alert('Report Download', `Downloading Quarterly Report - ${currentQuarter.label} (PDF)...`);
-    }
+    await handleExportVolunteerPdf();
   };
 
   if (loading) {
@@ -1265,7 +1381,7 @@ export function PartnerReportsDashboard({
           </View>
 
           {/* Card 5: Volunteers Involved */}
-          <View
+          <TouchableOpacity
             style={{
               flex: 1,
               minWidth: 180,
@@ -1276,27 +1392,35 @@ export function PartnerReportsDashboard({
               padding: 16,
               gap: 8,
             }}
+            activeOpacity={0.8}
+            onPress={() => void handleExportVolunteerPdf()}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <View
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 18,
-                  backgroundColor: '#DCFCE7',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <MaterialIcons name="groups" size={20} color="#16A34A" />
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: '#DCFCE7',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <MaterialIcons name="groups" size={20} color="#16A34A" />
+                </View>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Volunteers Involved</Text>
               </View>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Volunteers Involved</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#eef7f0', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+                <MaterialIcons name="picture-as-pdf" size={13} color="#166534" />
+                <Text style={{ fontSize: 10, fontWeight: '700', color: '#166534' }}>PDF</Text>
+              </View>
             </View>
             <Text style={{ fontSize: 28, fontWeight: '900', color: '#0f172a' }}>{volunteersCount}</Text>
             <Text style={{ fontSize: 11, fontWeight: '700', color: volunteerTrend === '—' ? '#64748b' : '#16A34A' }}>
               {volunteerTrend}
             </Text>
-          </View>
+          </TouchableOpacity>
         </View>
 
         {/* 4. Middle Section: Report Documents */}
@@ -1318,76 +1442,84 @@ export function PartnerReportsDashboard({
           >
             <View style={{ gap: 14 }}>
               <Text style={{ fontSize: 15, fontWeight: '800', color: '#0f172a' }}>Report Documents</Text>
-              <View style={{ gap: 10 }}>
-                {generatedDocuments.map(doc => (
-                  <View
-                    key={doc.id}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      paddingVertical: 4,
-                    }}
-                  >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
-                      <View
-                        style={{
-                          width: 32,
-                          height: 32,
-                          borderRadius: 6,
-                          backgroundColor: doc.type === 'pdf' ? '#FEE2E2' : '#DCFCE7',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          borderWidth: 1,
-                          borderColor: doc.type === 'pdf' ? '#FECACA' : '#BBF7D0',
-                        }}
-                      >
-                        <Text
+              {generatedDocuments.length === 0 ? (
+                <View style={{ paddingVertical: 24, alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                  <MaterialIcons name="insert-drive-file" size={32} color="#cbd5e1" />
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#94a3b8' }}>
+                    No report documents for this quarter
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ gap: 10 }}>
+                  {generatedDocuments.map(doc => (
+                    <View
+                      key={doc.id}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        paddingVertical: 4,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+                        <View
                           style={{
-                            fontSize: 10,
-                            fontWeight: '900',
-                            color: doc.type === 'pdf' ? '#DC2626' : '#16A34A',
+                            width: 32,
+                            height: 32,
+                            borderRadius: 6,
+                            backgroundColor: doc.type === 'pdf' ? '#FEE2E2' : '#DCFCE7',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            borderWidth: 1,
+                            borderColor: doc.type === 'pdf' ? '#FECACA' : '#BBF7D0',
                           }}
                         >
-                          {doc.type === 'pdf' ? 'Abc' : 'Xl'}
-                        </Text>
+                          <Text
+                            style={{
+                              fontSize: 10,
+                              fontWeight: '900',
+                              color: doc.type === 'pdf' ? '#DC2626' : '#16A34A',
+                            }}
+                          >
+                            {doc.type === 'pdf' ? 'Abc' : 'Xl'}
+                          </Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }} numberOfLines={1}>
+                            {doc.title}
+                          </Text>
+                          <Text style={{ fontSize: 11, color: '#64748b' }}>{doc.size}</Text>
+                        </View>
                       </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }} numberOfLines={1}>
-                          {doc.title}
-                        </Text>
-                        <Text style={{ fontSize: 11, color: '#64748b' }}>{doc.size}</Text>
-                      </View>
+                      <TouchableOpacity
+                        onPress={() => void handleDownloadDoc(doc)}
+                        activeOpacity={0.7}
+                        style={{ padding: 4 }}
+                      >
+                        <MaterialIcons name="file-download" size={20} color="#64748b" />
+                      </TouchableOpacity>
                     </View>
-                    <TouchableOpacity
-                      onPress={() => {
-                        if (doc.url) Linking.openURL(doc.url).catch(() => Alert.alert('Unable to open document'));
-                        else handleDownloadReport();
-                      }}
-                      activeOpacity={0.7}
-                      style={{ padding: 4 }}
-                    >
-                      <MaterialIcons name="file-download" size={20} color="#64748b" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
+                  ))}
+                </View>
+              )}
             </View>
-            <TouchableOpacity
-              style={{
-                alignSelf: 'flex-start',
-                backgroundColor: '#F1F5F9',
-                paddingHorizontal: 14,
-                paddingVertical: 8,
-                borderRadius: 8,
-                borderWidth: 1,
-                borderColor: '#E2E8F0',
-              }}
-              activeOpacity={0.7}
-              onPress={() => setShowAllDocsModal(true)}
-            >
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155' }}>View All Documents</Text>
-            </TouchableOpacity>
+            {generatedDocuments.length > 0 && (
+              <TouchableOpacity
+                style={{
+                  alignSelf: 'flex-start',
+                  backgroundColor: '#F1F5F9',
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: '#E2E8F0',
+                }}
+                activeOpacity={0.7}
+                onPress={() => setShowAllDocsModal(true)}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#334155' }}>View All Documents</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -1404,85 +1536,96 @@ export function PartnerReportsDashboard({
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <Text style={{ fontSize: 15, fontWeight: '800', color: '#0f172a' }}>Photos from Volunteers Report</Text>
-            <TouchableOpacity
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 6,
-                backgroundColor: '#ffffff',
-                borderWidth: 1,
-                borderColor: '#cbd5e1',
-                borderRadius: 8,
-                paddingHorizontal: 12,
-                paddingVertical: 6,
-              }}
-              activeOpacity={0.7}
-              onPress={() => setShowAllPhotosModal(true)}
-            >
-              <MaterialIcons name="photo-camera" size={15} color="#475569" />
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>
-                View All Photos ({volunteerPhotos.length * 4 + 4})
-              </Text>
-            </TouchableOpacity>
+            {volunteerPhotos.length > 0 && (
+              <TouchableOpacity
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                  backgroundColor: '#ffffff',
+                  borderWidth: 1,
+                  borderColor: '#cbd5e1',
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                }}
+                activeOpacity={0.7}
+                onPress={() => setShowAllPhotosModal(true)}
+              >
+                <MaterialIcons name="photo-camera" size={15} color="#475569" />
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>
+                  View All Photos ({volunteerPhotos.length})
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Photos Cards Row */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12 }}>
-            {volunteerPhotos.slice(0, 5).map((item, idx) => (
-              <TouchableOpacity
-                key={item.id || idx}
-                style={{
-                  width: 210,
-                  height: 130,
-                  borderRadius: 10,
-                  overflow: 'hidden',
-                  backgroundColor: '#e2e8f0',
-                  position: 'relative',
-                }}
-                activeOpacity={0.85}
-                onPress={() => setSelectedPhotoIndex(idx)}
-              >
-                <Image
-                  source={{ uri: item.uri }}
-                  style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
-                />
-                {/* Bottom dark overlay banner */}
-                <View
+          {volunteerPhotos.length === 0 ? (
+            <View style={{ paddingVertical: 24, alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <MaterialIcons name="photo-library" size={32} color="#cbd5e1" />
+              <Text style={{ fontSize: 13, fontWeight: '600', color: '#94a3b8' }}>
+                No volunteer photos submitted for this quarter
+              </Text>
+            </View>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12 }}>
+              {volunteerPhotos.slice(0, 5).map((item, idx) => (
+                <TouchableOpacity
+                  key={item.id || idx}
                   style={{
-                    position: 'absolute',
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-                    paddingHorizontal: 10,
-                    paddingVertical: 6,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
+                    width: 210,
+                    height: 130,
+                    borderRadius: 10,
+                    overflow: 'hidden',
+                    backgroundColor: '#e2e8f0',
+                    position: 'relative',
                   }}
+                  activeOpacity={0.85}
+                  onPress={() => setSelectedPhotoIndex(idx)}
                 >
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: '500' }}>{item.date}</Text>
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#ffffff' }} numberOfLines={1}>
-                      {item.name}
-                    </Text>
-                  </View>
+                  <Image
+                    source={{ uri: item.uri }}
+                    style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
+                  />
+                  {/* Bottom dark overlay banner */}
                   <View
                     style={{
-                      backgroundColor: 'rgba(255, 255, 255, 0.25)',
-                      paddingHorizontal: 6,
-                      paddingVertical: 2,
-                      borderRadius: 4,
+                      position: 'absolute',
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      backgroundColor: 'rgba(0, 0, 0, 0.7)',
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
                     }}
                   >
-                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#ffffff' }}>
-                      {item.photosCount} photos
-                    </Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 10, color: '#94a3b8', fontWeight: '500' }}>{item.date}</Text>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#ffffff' }} numberOfLines={1}>
+                        {item.name}
+                      </Text>
+                    </View>
+                    <View
+                      style={{
+                        backgroundColor: 'rgba(255, 255, 255, 0.25)',
+                        paddingHorizontal: 6,
+                        paddingVertical: 2,
+                        borderRadius: 4,
+                      }}
+                    >
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: '#ffffff' }}>
+                        {item.photosCount} {item.photosCount === 1 ? 'photo' : 'photos'}
+                      </Text>
+                    </View>
                   </View>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
         </View>
       </ScrollView>
 
@@ -1651,39 +1794,48 @@ export function PartnerReportsDashboard({
               </TouchableOpacity>
             </View>
             <View style={{ gap: 10 }}>
-              {generatedDocuments.map(doc => (
-                <View
-                  key={doc.id}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    paddingVertical: 8,
-                    borderBottomWidth: 1,
-                    borderBottomColor: '#f1f5f9',
-                  }}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>{doc.title}</Text>
-                    <Text style={{ fontSize: 11, color: '#64748b' }}>{doc.size}</Text>
-                  </View>
-                  <TouchableOpacity
+              {generatedDocuments.length === 0 ? (
+                <View style={{ paddingVertical: 24, alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                  <MaterialIcons name="insert-drive-file" size={32} color="#cbd5e1" />
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#94a3b8' }}>
+                    No report documents found
+                  </Text>
+                </View>
+              ) : (
+                generatedDocuments.map(doc => (
+                  <View
+                    key={doc.id}
                     style={{
                       flexDirection: 'row',
                       alignItems: 'center',
-                      gap: 4,
-                      backgroundColor: '#F1F5F9',
-                      paddingHorizontal: 10,
-                      paddingVertical: 6,
-                      borderRadius: 6,
+                      justifyContent: 'space-between',
+                      paddingVertical: 8,
+                      borderBottomWidth: 1,
+                      borderBottomColor: '#f1f5f9',
                     }}
-                    onPress={handleDownloadReport}
                   >
-                    <MaterialIcons name="file-download" size={16} color="#334155" />
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155' }}>Download</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>{doc.title}</Text>
+                      <Text style={{ fontSize: 11, color: '#64748b' }}>{doc.size}</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 4,
+                        backgroundColor: '#F1F5F9',
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 6,
+                      }}
+                      onPress={() => void handleDownloadDoc(doc)}
+                    >
+                      <MaterialIcons name="file-download" size={16} color="#334155" />
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155' }}>Download</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )}
             </View>
           </View>
         </View>
@@ -1791,6 +1943,9 @@ function formatReportType(type: string): string {
     event_performance: 'Event Performance',
     partner_collaboration: 'Partner Collaboration',
     system_metrics: 'System Metrics',
+    attendance_photo: 'Attendance Photo',
+    completion_photo: 'Completion Photo',
+    event_photo: 'Event Photo',
   };
   return types[type] || type;
 }
@@ -1806,6 +1961,9 @@ function getReportIcon(type: string): MaterialIconName {
     event_performance: 'event',
     partner_collaboration: 'groups',
     system_metrics: 'analytics',
+    attendance_photo: 'photo-camera',
+    completion_photo: 'add-a-photo',
+    event_photo: 'photo-library',
   };
   return icons[type] || 'description';
 }

@@ -39,6 +39,7 @@ import { getAttachmentLabel, isImageMediaUri, openAttachmentUri, pickImageFromDe
 import { getRequestErrorMessage, getRequestErrorTitle, isAbortLikeError } from '../utils/requestErrors';
 import { getProjectDisplayStatus } from '../utils/projectStatus';
 import { TASK_SKILL_OPTIONS } from '../utils/skills';
+import { validatePasswordStrength, hashPassword } from '../utils/security';
 import VolunteerImpactMap from '../components/VolunteerImpactMap';
 
 const USER_TYPES: UserType[] = ['Student', 'Adult', 'Senior'];
@@ -376,11 +377,12 @@ export default function ProfileScreen() {
         Alert.alert('Validation Error', 'New passwords do not match.');
         return;
       }
-      if (newPasswordDraft.trim().length < 6) {
-        Alert.alert('Validation Error', 'Password must be at least 6 characters long.');
+      const strength = validatePasswordStrength(newPasswordDraft.trim());
+      if (!strength.isValid) {
+        Alert.alert('Password Requirements Not Met', strength.feedback);
         return;
       }
-      normalizedPassword = newPasswordDraft.trim();
+      normalizedPassword = await hashPassword(newPasswordDraft.trim());
     }
 
     if (!normalizedName || !normalizedPassword) {
@@ -945,7 +947,7 @@ export default function ProfileScreen() {
                         ? getAttachmentLabel(volunteerProfile.certificationsOrTrainings || user?.volunteerMembershipSheet?.certificationsOrTrainings || '')
                         : (volunteerProfile.certificationsOrTrainings || user?.volunteerMembershipSheet?.certificationsOrTrainings)}
                     </Text>
-                    {isImageMediaUri(volunteerProfile.certificationsOrTrainings || user?.volunteerMembershipSheet?.certificationsOrTrainings) ? (
+                    {Boolean(volunteerProfile.certificationsOrTrainings || user?.volunteerMembershipSheet?.certificationsOrTrainings) ? (
                       <TouchableOpacity
                         onPress={async () => {
                           try {
@@ -978,11 +980,9 @@ export default function ProfileScreen() {
                 {volunteerProfile.validIdPhoto || user?.volunteerMembershipSheet?.validIdPhoto ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                     <Text style={[styles.regValue, { flex: 1 }]} numberOfLines={1}>
-                      {isImageMediaUri(volunteerProfile.validIdPhoto || user?.volunteerMembershipSheet?.validIdPhoto)
-                        ? getAttachmentLabel(volunteerProfile.validIdPhoto || user?.volunteerMembershipSheet?.validIdPhoto || '')
-                        : (volunteerProfile.validIdPhoto || user?.volunteerMembershipSheet?.validIdPhoto)}
+                      {getAttachmentLabel(volunteerProfile.validIdPhoto || user?.volunteerMembershipSheet?.validIdPhoto || '')}
                     </Text>
-                    {isImageMediaUri(volunteerProfile.validIdPhoto || user?.volunteerMembershipSheet?.validIdPhoto) ? (
+                    {Boolean(volunteerProfile.validIdPhoto || user?.volunteerMembershipSheet?.validIdPhoto) ? (
                       <TouchableOpacity
                         onPress={async () => {
                           try {
@@ -1145,6 +1145,7 @@ export default function ProfileScreen() {
               initialMapStyleKey="volunteer-view"
               title="Personal Impact Map"
               subtitle="Pinned places where you joined or completed volunteer work."
+              isPersonal={true}
             />
           </View>
         </View>

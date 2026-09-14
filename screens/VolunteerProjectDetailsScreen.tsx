@@ -30,6 +30,7 @@ import { Project, Volunteer, VolunteerProjectMatch, VolunteerTimeLog, Partner } 
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
 import { getRequestErrorMessage } from '../utils/requestErrors';
 import { getPrimaryProjectImageSource } from '../utils/projectMap';
+import { openAddGoogleCalendarEvent } from '../utils/calendarSync';
 
 export default function VolunteerProjectDetailsScreen({
   navigation,
@@ -109,7 +110,7 @@ export default function VolunteerProjectDetailsScreen({
     useCallback(() => {
       loadData();
       return subscribeToStorageChanges(
-        ['projects', 'volunteerMatches', 'volunteerTimeLogs'],
+        ['projects', 'events', 'volunteerMatches', 'volunteerTimeLogs'],
         loadData
       );
     }, [loadData])
@@ -167,6 +168,20 @@ export default function VolunteerProjectDetailsScreen({
     }
   };
 
+  const handleReapplyEvent = async () => {
+    if (!user?.id || !project) return;
+    try {
+      setLoadingAction('reapply');
+      await requestVolunteerProjectJoin(project.id, user.id);
+      Alert.alert('Application Submitted', `Your application for "${project.title}" has been re-submitted for review!`);
+      await loadData();
+    } catch (err) {
+      Alert.alert('Error', getRequestErrorMessage(err, 'Failed to reapply for event'));
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
   if (loading) {
     return (
       <View style={styles.centerWrapper}>
@@ -188,8 +203,9 @@ export default function VolunteerProjectDetailsScreen({
   }
 
   const currentMatch = volunteerMatches.find((m) => m.projectId === project.id);
-  const isJoined = !!currentMatch;
+  const isJoined = currentMatch?.status === 'Matched';
   const isPending = currentMatch?.status === 'Requested';
+  const isRejected = currentMatch?.status === 'Rejected';
 
   const partnerInfo = partners.find((p) => p.id === project.partnerId) || null;
 
@@ -225,11 +241,48 @@ export default function VolunteerProjectDetailsScreen({
         </View>
       );
     }
+    if (isRejected) {
+      return (
+        <TouchableOpacity
+          style={[styles.joinBtn, styles.joinBtnReapply, styleProps]}
+          activeOpacity={0.85}
+          onPress={handleReapplyEvent}
+          disabled={loadingAction === 'reapply'}
+        >
+          {loadingAction === 'reapply' ? (
+            <ActivityIndicator size="small" color="#ffffff" />
+          ) : (
+            <>
+              <MaterialIcons name="replay" size={18} color="#ffffff" style={{ marginRight: 6 }} />
+              <Text style={styles.joinBtnText}>Reapply</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      );
+    }
     if (isJoined) {
       return (
-        <View style={[styles.joinBtn, styles.joinBtnJoined, styleProps]}>
-          <MaterialIcons name="check" size={18} color="#137333" style={{ marginRight: 6 }} />
-          <Text style={[styles.joinBtnText, { color: '#137333' }]}>Approved</Text>
+        <View style={{ gap: 8 }}>
+          <View style={[styles.joinBtn, styles.joinBtnJoined, styleProps]}>
+            <MaterialIcons name="check" size={18} color="#137333" style={{ marginRight: 6 }} />
+            <Text style={[styles.joinBtnText, { color: '#137333' }]}>Approved</Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.joinBtn, { backgroundColor: '#166534', borderColor: '#166534' }]}
+            activeOpacity={0.85}
+            onPress={() => {
+              void openAddGoogleCalendarEvent({
+                title: project.title,
+                details: project.description,
+                location: project.locationVenue || project.location?.address || '',
+                startDate: project.startDate,
+                endDate: project.endDate,
+              });
+            }}
+          >
+            <MaterialIcons name="event" size={18} color="#ffffff" style={{ marginRight: 6 }} />
+            <Text style={[styles.joinBtnText, { color: '#ffffff' }]}>Add to Google Calendar</Text>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -276,9 +329,35 @@ export default function VolunteerProjectDetailsScreen({
           <View style={[styles.heroDetails, !isDesktop && { minWidth: '100%' }]}>
             <Text style={styles.heroTitle}>{project.title}</Text>
 
-            <View style={[styles.statusBadge, { backgroundColor: isJoined ? '#e6f4ea' : isPending ? '#fef7e0' : '#e6f4ea' }]}>
-              <Text style={[styles.statusBadgeText, { color: isJoined ? '#137333' : isPending ? '#b06000' : '#137333' }]}>
-                {isJoined ? 'Approved' : isPending ? 'Pending' : 'Open'}
+            <View
+              style={[
+                styles.statusBadge,
+                {
+                  backgroundColor: isRejected
+                    ? '#fee2e2'
+                    : isJoined
+                    ? '#e6f4ea'
+                    : isPending
+                    ? '#fef7e0'
+                    : '#e6f4ea',
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.statusBadgeText,
+                  {
+                    color: isRejected
+                      ? '#b91c1c'
+                      : isJoined
+                      ? '#137333'
+                      : isPending
+                      ? '#b06000'
+                      : '#137333',
+                  },
+                ]}
+              >
+                {isRejected ? 'Declined' : isJoined ? 'Approved' : isPending ? 'Pending' : 'Open'}
               </Text>
             </View>
 
@@ -371,72 +450,27 @@ export default function VolunteerProjectDetailsScreen({
         <Text style={styles.bodyDescriptionText}>{project.description}</Text>
       </View>
 
-      {/* Time Logging (Legacy Support) */}
+      {/* Event Tasks Card */}
       {isJoined && !isPending && (
         <View style={styles.detailsCard}>
           <View style={styles.cardHeaderRow}>
             <View style={styles.roundIconBadge} {...({} as any)}>
-              <MaterialIcons name="access-time" size={16} color="#166534" />
+              <MaterialIcons name="assignment" size={16} color="#166534" />
             </View>
-            <Text style={styles.cardSectionTitle}>Time Logging</Text>
+            <Text style={styles.cardSectionTitle}>Event Tasks</Text>
           </View>
-
-          {activeTimeLog ? (
-            <View style={styles.timeLogActive} {...({} as any)}>
-              <MaterialIcons name="access-time" size={24} color="#f59e0b" />
-              <View style={styles.timeLogContent}>
-                <Text style={styles.timeLogStatus}>Time logging active</Text>
-                <Text style={styles.timeLogTime}>
-                  Started at {format(new Date(activeTimeLog.timeIn), 'h:mm a')}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={styles.timeLogButton}
-                onPress={handleEndTimeLog}
-                disabled={loadingAction === 'endTime'}
-              >
-                <Text style={styles.timeLogButtonText}>
-                  {loadingAction === 'endTime' ? 'Stopping...' : 'Stop'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <TouchableOpacity
-              style={styles.timeLogStartButton}
-              onPress={handleStartTimeLog}
-              disabled={loadingAction === 'startTime'}
-            >
-              <MaterialIcons name="play-arrow" size={20} color="#fff" />
-              <Text style={styles.timeLogStartButtonText}>
-                {loadingAction === 'startTime' ? 'Starting...' : 'Start Time Logging'}
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {timeLogs.length > 0 && (
-            <View style={styles.timeLogsHistory}>
-              <Text style={styles.timeLogsHistoryTitle}>
-                Logged time ({timeLogs.length} {timeLogs.length === 1 ? 'entry' : 'entries'})
-              </Text>
-              {timeLogs.map((log) => (
-                <View key={log.id} {...({} as any)} style={styles.timeLogEntry}>
-                  <Text style={styles.timeLogEntryDate}>
-                    {format(new Date(log.timeIn), 'MMM d, h:mm a')}
-                  </Text>
-                  {log.timeOut && (
-                    <Text style={styles.timeLogEntryDuration}>
-                      Duration:{' '}
-                      {Math.round(
-                        (new Date(log.timeOut).getTime() - new Date(log.timeIn).getTime()) /
-                          (1000 * 60)
-                      )}{' '}
-                      minutes
-                    </Text>
-                  )}
-                </View>
-              ))}
-            </View>
-          )}
+          <Text style={[styles.bodyDescriptionText, { marginBottom: 14 }]}>
+            View and manage tasks assigned to you for this event.
+          </Text>
+          <TouchableOpacity
+            style={styles.timeLogStartButton}
+            onPress={() => navigation.navigate('Tasks', { projectId: project.id })}
+          >
+            <MaterialIcons name="assignment" size={20} color="#fff" />
+            <Text style={styles.timeLogStartButtonText}>
+              VIEW TASKS
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -490,6 +524,27 @@ export default function VolunteerProjectDetailsScreen({
 
         <Text style={styles.appSlotsLabel}>Volunteer Slots</Text>
         <Text style={styles.appSlotsValue}>{`${joinedCount} / ${totalSlots} filled`}</Text>
+
+        {isRejected && (
+          <View style={styles.declinedNoticeCard}>
+            <View style={styles.declinedNoticeHeader}>
+              <MaterialIcons name="cancel" size={18} color="#dc2626" />
+              <Text style={styles.declinedNoticeTitle}>Application Declined</Text>
+            </View>
+            {Boolean(currentMatch?.reviewNotes || currentMatch?.rejectionReason) ? (
+              <View style={styles.declinedReviewNotesBox}>
+                <Text style={styles.declinedReviewNotesLabel}>Organizer Review Notes:</Text>
+                <Text style={styles.declinedReviewNotesText}>
+                  {currentMatch?.reviewNotes || currentMatch?.rejectionReason}
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.declinedNoticeBody}>
+                Your application was declined. You may review the event requirements and reapply below.
+              </Text>
+            )}
+          </View>
+        )}
 
         <View style={{ marginTop: 16 }}>{renderJoinButton()}</View>
 
@@ -807,10 +862,62 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#a7f3d0',
   },
+  joinBtnRejected: {
+    backgroundColor: '#fee2e2',
+    borderWidth: 1.5,
+    borderColor: '#fca5a5',
+  },
+  joinBtnReapply: {
+    backgroundColor: '#166534',
+  },
   joinBtnText: {
     color: '#ffffff',
     fontSize: 13,
     fontWeight: '700',
+  },
+  declinedNoticeCard: {
+    marginTop: 14,
+    padding: 14,
+    backgroundColor: '#fef2f2',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  declinedNoticeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  declinedNoticeTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#991b1b',
+  },
+  declinedReviewNotesBox: {
+    backgroundColor: '#ffffff',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  declinedReviewNotesLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#991b1b',
+    marginBottom: 3,
+  },
+  declinedReviewNotesText: {
+    fontSize: 12,
+    color: '#334155',
+    lineHeight: 16,
+  },
+  declinedNoticeBody: {
+    fontSize: 12,
+    color: '#7f1d1d',
+    lineHeight: 17,
   },
   bookmarkBtn: {
     width: 40,

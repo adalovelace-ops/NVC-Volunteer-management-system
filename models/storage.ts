@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import { NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isAbortLikeError } from '../utils/requestErrors';
+import { hashPassword, verifyPassword } from '../utils/security';
 import { sendGoogleCalendarSyncEmail } from '../utils/googleCalendarSync';
 import { getGoogleCalendarEventTemplateUrl } from '../utils/calendarSync';
 
@@ -564,13 +565,11 @@ async function getPrimaryAdminUser(): Promise<User | null> {
 async function sendSystemMessage(
   senderId: string,
   recipientId: string,
-  content: string
+  content: string,
+  customId?: string
 ): Promise<void> {
-  // Messages now live in Firestore (see lib/messages.ts). Writing here keeps
-  // system/proposal cards in the same store the Communication Hub reads from.
-  const { saveMessage: saveFirestoreMessage } = await import('../lib/messages');
-  await saveFirestoreMessage({
-    id: createGeneratedMessageId(),
+  await saveMessage({
+    id: customId || createGeneratedMessageId(),
     senderId,
     recipientId,
     content,
@@ -630,20 +629,25 @@ async function notifyAdminAboutPartnerProjectJoin(
     ? ` (${partnerUser.email.trim()})`
     : '';
 
+  const proposalCardMessageId = application ? `prop-card-${application.id}` : undefined;
+
   await sendSystemMessage(
     partnerUser.id,
     adminUser.id,
     application
       ? buildPartnerProposalCardMessageContent(application, partnerUser, requestedProgramModule)
-      : `${partnerUser.name}${partnerEmail} submitted a project proposal for ${targetLabel}. Review it in the Communication Hub to approve or reject.`
+      : `${partnerUser.name}${partnerEmail} submitted a project proposal for ${targetLabel}. Review it in the Communication Hub to approve or reject.`,
+    proposalCardMessageId
   );
 
   // Also send a lightweight confirmation back to the partner so they see a record in Messages.
   try {
+    const confirmMessageId = application ? `prop-confirm-${application.id}` : undefined;
     await sendSystemMessage(
       adminUser.id,
       partnerUser.id,
-      `Your proposal for ${targetLabel} has been submitted and is pending admin review.`
+      `Your proposal for ${targetLabel} has been submitted and is pending admin review.`,
+      confirmMessageId
     );
   } catch (err) {
     // Confirmation is best-effort — don't fail the main flow if it errors.
@@ -658,6 +662,7 @@ async function notifyPartnerAboutProjectJoinReview(
   const requestedProgramModule = getProgramModuleFromProposalProjectId(application.projectId);
   const reviewNotes = (application as any).reviewNotes;
 
+  const reviewMessageId = `prop-review-${application.id}-${Date.now()}`;
   await sendSystemMessage(
     reviewedBy,
     application.partnerUserId,
@@ -671,7 +676,8 @@ async function notifyPartnerAboutProjectJoinReview(
         reviewNotes: reviewNotes || null,
         projectId: application.projectId,
       }
-    )
+    ),
+    reviewMessageId
   );
 
   if (application.status === 'Approved') {
@@ -794,17 +800,17 @@ async function notifyVolunteerAboutProjectMatchDecision(
 export async function notifyVolunteerAboutTaskUnassignment(params: {
   event: Pick<Project, 'id' | 'title'>;
   task: Pick<ProjectInternalTask, 'id' | 'title'>;
-  volunteer: Pick<Volunteer, 'userId' | 'name'>;
+  volunteer: { id?: string; userId?: string; name?: string };
   actorUserId?: string;
 }): Promise<void> {
-  const recipientId = params.volunteer.userId;
+  const recipientId = params.volunteer.userId || params.volunteer.id;
   if (!recipientId) {
     return;
   }
 
   const adminUser = await getPrimaryAdminUser();
-  const senderId = params.actorUserId || adminUser?.id;
-  if (!senderId || senderId === recipientId) {
+  const senderId = params.actorUserId || adminUser?.id || 'admin-system';
+  if (senderId === recipientId) {
     return;
   }
 
@@ -2744,7 +2750,7 @@ function isCurrentOrFutureEvent(project: Project): boolean {
 }
 
 function ensureFieldOfficerTaskForEvent(event: Project): Project {
-  if (!isCurrentOrFutureEvent(event)) {
+  if (event.isDraft || !isCurrentOrFutureEvent(event)) {
     return event;
   }
   if ((event.internalTasks || []).some(task => task.isFieldOfficer)) {
@@ -2924,11 +2930,12 @@ export async function createUserAccount(input: {
   }
 
   const createdAt = new Date().toISOString();
+  const hashedPassword = await hashPassword(normalizedPassword);
   const createdUser: User = {
     id: `user-${Date.now()}`,
     name: normalizedName,
     email: normalizedEmail,
-    password: normalizedPassword,
+    password: hashedPassword,
     phone: normalizedPhone || undefined,
     role: input.role,
     userType: input.userType,
@@ -3181,7 +3188,8 @@ async function loginWithStoredCredentials(
     return null;
   }
 
-  if ((matchedUser.password || '').trim() !== password.trim()) {
+  const passwordMatches = await verifyPassword(password.trim(), (matchedUser.password || '').trim());
+  if (!passwordMatches) {
     return null;
   }
 
@@ -3798,6 +3806,73 @@ export async function saveEvent(event: Project): Promise<void> {
 // Deletes a project and cleans up dependent records that reference it.
 export async function deleteProject(projectId: string): Promise<void> {
   const [
+    cachedProjects,
+    cachedPrograms,
+    cachedEvents,
+  ] = await Promise.all([
+    getStorageItem<Project[]>(STORAGE_KEYS.PROJECTS),
+    getStorageItem<Project[]>(STORAGE_KEYS.PROGRAMS),
+    getStorageItem<Project[]>(STORAGE_KEYS.EVENTS),
+  ]);
+
+  const childEventIds = new Set<string>();
+  (cachedEvents || []).forEach(event => {
+    if (event.parentProjectId === projectId) childEventIds.add(event.id);
+  });
+  (cachedProjects || []).forEach(project => {
+    if (project.parentProjectId === projectId) childEventIds.add(project.id);
+  });
+
+  try {
+    const res = await fetchApiResponse(`/projects/${encodeURIComponent(projectId)}`, {
+      method: 'DELETE',
+    });
+    if (res.ok) {
+      // Also delete any child events if separate endpoint needed
+      for (const childId of childEventIds) {
+        try {
+          await fetchApiResponse(`/events/${encodeURIComponent(childId)}`, { method: 'DELETE' });
+        } catch {}
+      }
+
+      invalidateSharedStorageCache([
+        STORAGE_KEYS.PROJECTS,
+        STORAGE_KEYS.PROGRAMS,
+        STORAGE_KEYS.EVENTS,
+        STORAGE_KEYS.STATUS_UPDATES,
+        STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
+        STORAGE_KEYS.PARTNER_REPORTS,
+        STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
+        STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+        STORAGE_KEYS.VOLUNTEER_MATCHES,
+        STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+        STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+        STORAGE_KEYS.VOLUNTEERS,
+        STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
+      ]);
+      projectsSnapshotCache.clear();
+      notifyStorageChanged([
+        STORAGE_KEYS.PROJECTS,
+        STORAGE_KEYS.PROGRAMS,
+        STORAGE_KEYS.EVENTS,
+        STORAGE_KEYS.STATUS_UPDATES,
+        STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
+        STORAGE_KEYS.PARTNER_REPORTS,
+        STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
+        STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+        STORAGE_KEYS.VOLUNTEER_MATCHES,
+        STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+        STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+        STORAGE_KEYS.VOLUNTEERS,
+        STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
+      ]);
+      return;
+    }
+  } catch (backendError) {
+    console.warn('[deleteProject] direct endpoint failed, using fallback:', backendError);
+  }
+
+  const [
     projects,
     programs,
     events,
@@ -3831,22 +3906,26 @@ export async function deleteProject(projectId: string): Promise<void> {
   const relatedProjectIds = new Set([
     projectId,
     ...((events || [])
-      .filter(event => event.parentProjectId === projectId)
+      .filter(event => event.parentProjectId === projectId || event.id === projectId)
       .map(event => event.id)),
+    ...((projects || [])
+      .filter(project => project.parentProjectId === projectId || project.id === projectId)
+      .map(project => project.id)),
+    ...childEventIds,
   ]);
 
   await Promise.all([
     setStorageItem(
       STORAGE_KEYS.PROJECTS,
-      (projects || []).filter(project => project.id !== projectId)
+      (projects || []).filter(project => !relatedProjectIds.has(project.id) && project.parentProjectId !== projectId)
     ),
     setStorageItem(
       STORAGE_KEYS.PROGRAMS,
-      (programs || []).filter(project => project.id !== projectId)
+      (programs || []).filter(project => !relatedProjectIds.has(project.id) && project.parentProjectId !== projectId)
     ),
     setStorageItem(
       STORAGE_KEYS.EVENTS,
-      (events || []).filter(event => !relatedProjectIds.has(event.id))
+      (events || []).filter(event => !relatedProjectIds.has(event.id) && event.parentProjectId !== projectId)
     ),
     setStorageItem(
       STORAGE_KEYS.STATUS_UPDATES,
@@ -3923,6 +4002,46 @@ export async function deleteProject(projectId: string): Promise<void> {
 
 // Deletes one event and cleans up records that reference it.
 export async function deleteEvent(eventId: string): Promise<void> {
+  try {
+    const res = await fetchApiResponse(`/events/${encodeURIComponent(eventId)}`, {
+      method: 'DELETE',
+    });
+    if (res.ok) {
+      invalidateSharedStorageCache([
+        STORAGE_KEYS.PROJECTS,
+        STORAGE_KEYS.EVENTS,
+        STORAGE_KEYS.STATUS_UPDATES,
+        STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
+        STORAGE_KEYS.PARTNER_REPORTS,
+        STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
+        STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+        STORAGE_KEYS.VOLUNTEER_MATCHES,
+        STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+        STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+        STORAGE_KEYS.VOLUNTEERS,
+        STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
+      ]);
+      projectsSnapshotCache.clear();
+      notifyStorageChanged([
+        STORAGE_KEYS.PROJECTS,
+        STORAGE_KEYS.EVENTS,
+        STORAGE_KEYS.STATUS_UPDATES,
+        STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS,
+        STORAGE_KEYS.PARTNER_REPORTS,
+        STORAGE_KEYS.PUBLISHED_IMPACT_REPORTS,
+        STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+        STORAGE_KEYS.VOLUNTEER_MATCHES,
+        STORAGE_KEYS.VOLUNTEER_TIME_LOGS,
+        STORAGE_KEYS.PROJECT_GROUP_MESSAGES,
+        STORAGE_KEYS.VOLUNTEERS,
+        STORAGE_KEYS.ADMIN_PLANNING_CALENDARS,
+      ]);
+      return;
+    }
+  } catch (backendError) {
+    console.warn('[deleteEvent] direct endpoint failed, using fallback:', backendError);
+  }
+
   const [
     projects,
     events,
@@ -4436,6 +4555,8 @@ import {
   deleteProjectGroupChat as fbDeleteProjectGroupChat,
   deleteMessage as fbDeleteMessage,
   deleteProjectGroupMessage as fbDeleteProjectGroupMessage,
+  updateMessageContent as fbUpdateMessageContent,
+  updateProjectGroupMessageContent as fbUpdateProjectGroupMessageContent,
   getMessagesForUser as fbGetMessagesForUser,
   getConversation as fbGetConversation,
   getProjectGroupMessages as fbGetProjectGroupMessages,
@@ -4452,15 +4573,67 @@ export const subscribeToTypingStatus = fbSubscribeToTypingStatus;
 
 // Message Storage
 export async function saveMessage(message: Message): Promise<void> {
-  await fbSaveMessage(message);
-  invalidateMessageCache(message.senderId, message.recipientId);
-  invalidateMessageCache(message.recipientId, message.senderId);
+  const cacheKey = [message.senderId, message.recipientId].sort().join(':');
+  const cached = conversationCache.get(cacheKey);
+  const currentList = cached?.data || [];
+  const existingIndex = currentList.findIndex(m => m.id === message.id);
+  const nextData = existingIndex >= 0
+    ? currentList.map((m, i) => (i === existingIndex ? message : m))
+    : [...currentList, message];
+
+  conversationCache.set(cacheKey, {
+    data: nextData,
+    timestamp: Date.now(),
+  });
+
+  const userCached = messagesForUserCache.get(message.senderId);
+  if (userCached) {
+    messagesForUserCache.set(message.senderId, {
+      data: [message, ...userCached.data.filter(m => m.id !== message.id)],
+      timestamp: Date.now(),
+    });
+  }
+
+  try {
+    await requestApiJson('/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(message),
+    });
+  } catch (err) {
+    console.warn('[Storage] Backend saveMessage failed, persisting to Firestore:', err);
+  }
+
+  void fbSaveMessage(message).catch(() => {});
   notifyWebMessageUpdate();
 }
 
 export async function saveProjectGroupMessage(message: ProjectGroupMessage): Promise<void> {
-  await fbSaveProjectGroupMessage(message);
-  invalidateMessageCache(undefined, undefined, message.projectId);
+  for (const [key, cached] of groupMessagesCache.entries()) {
+    if (key.startsWith(`${message.projectId}:`)) {
+      const currentList = cached.data || [];
+      const existingIndex = currentList.findIndex(m => m.id === message.id);
+      const nextData = existingIndex >= 0
+        ? currentList.map((m, i) => (i === existingIndex ? message : m))
+        : [...currentList, message];
+      groupMessagesCache.set(key, {
+        data: nextData,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  try {
+    await requestApiJson(`/projects/${encodeURIComponent(message.projectId)}/group-messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(message),
+    });
+  } catch (err) {
+    console.warn('[Storage] Backend saveProjectGroupMessage failed:', err);
+  }
+
+  void fbSaveProjectGroupMessage(message).catch(() => {});
   notifyWebMessageUpdate();
 }
 
@@ -4470,8 +4643,55 @@ export async function deleteProjectGroupChat(projectId: string): Promise<void> {
   notifyWebMessageUpdate();
 }
 
+export async function editMessage(
+  messageId: string,
+  newContent: string,
+  senderId?: string,
+  recipientId?: string,
+  projectId?: string
+): Promise<void> {
+  try {
+    await requestApiJson(`/messages/${encodeURIComponent(messageId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: newContent, edited: true }),
+    });
+  } catch {}
+  await fbUpdateMessageContent(messageId, newContent).catch(() => {});
+  if (senderId && recipientId) {
+    invalidateMessageCache(senderId, recipientId);
+    invalidateMessageCache(recipientId, senderId);
+  } else if (senderId) {
+    invalidateMessageCache(senderId);
+  }
+  if (projectId) invalidateMessageCache(undefined, undefined, projectId);
+  notifyWebMessageUpdate();
+}
+
+export async function editProjectGroupMessage(
+  messageId: string,
+  newContent: string,
+  projectId?: string
+): Promise<void> {
+  try {
+    await requestApiJson(`/project-group-messages/${encodeURIComponent(messageId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: newContent, edited: true }),
+    });
+  } catch {}
+  await fbUpdateProjectGroupMessageContent(messageId, newContent).catch(() => {});
+  if (projectId) invalidateMessageCache(undefined, undefined, projectId);
+  notifyWebMessageUpdate();
+}
+
 export async function deleteMessage(messageId: string, senderId?: string, recipientId?: string, projectId?: string): Promise<void> {
-  await fbDeleteMessage(messageId);
+  try {
+    await requestApiJson(`/messages/${encodeURIComponent(messageId)}`, {
+      method: 'DELETE',
+    });
+  } catch {}
+  await fbDeleteMessage(messageId).catch(() => {});
   if (senderId && recipientId) {
     invalidateMessageCache(senderId, recipientId);
     invalidateMessageCache(recipientId, senderId);
@@ -4483,7 +4703,12 @@ export async function deleteMessage(messageId: string, senderId?: string, recipi
 }
 
 export async function deleteProjectGroupMessage(messageId: string, projectId?: string): Promise<void> {
-  await fbDeleteProjectGroupMessage(messageId);
+  try {
+    await requestApiJson(`/project-group-messages/${encodeURIComponent(messageId)}`, {
+      method: 'DELETE',
+    });
+  } catch {}
+  await fbDeleteProjectGroupMessage(messageId).catch(() => {});
   if (projectId) invalidateMessageCache(undefined, undefined, projectId);
   notifyWebMessageUpdate();
 }
@@ -4493,9 +4718,19 @@ export async function getMessagesForUser(userId: string): Promise<Message[]> {
   if (cached && Date.now() - cached.timestamp < MESSAGES_CACHE_TTL_MS) {
     return cached.data;
   }
-  const messages = await fbGetMessagesForUser(userId);
-  messagesForUserCache.set(userId, { data: messages, timestamp: Date.now() });
-  return messages;
+  try {
+    const payload = await requestApiJson<{ messages: Message[] }>(
+      `/messages?user_id=${encodeURIComponent(userId)}&limit=120`
+    );
+    const messages = payload?.messages || [];
+    messagesForUserCache.set(userId, { data: messages, timestamp: Date.now() });
+    return messages;
+  } catch (error) {
+    console.warn('[Storage] Backend getMessagesForUser failed, falling back to Firestore/local:', error);
+    const messages = await fbGetMessagesForUser(userId);
+    messagesForUserCache.set(userId, { data: messages, timestamp: Date.now() });
+    return messages;
+  }
 }
 
 export async function getConversation(userId1: string, userId2: string): Promise<Message[]> {
@@ -4504,9 +4739,19 @@ export async function getConversation(userId1: string, userId2: string): Promise
   if (cached && Date.now() - cached.timestamp < CONVERSATION_CACHE_TTL_MS) {
     return cached.data;
   }
-  const messages = await fbGetConversation(userId1, userId2);
-  conversationCache.set(cacheKey, { data: messages, timestamp: Date.now() });
-  return messages;
+  try {
+    const payload = await requestApiJson<{ messages: Message[] }>(
+      `/messages/conversation?user1=${encodeURIComponent(userId1)}&user2=${encodeURIComponent(userId2)}&limit=120`
+    );
+    const messages = payload?.messages || [];
+    conversationCache.set(cacheKey, { data: messages, timestamp: Date.now() });
+    return messages;
+  } catch (error) {
+    console.warn('[Storage] Backend getConversation failed, falling back to Firestore/local:', error);
+    const messages = await fbGetConversation(userId1, userId2);
+    conversationCache.set(cacheKey, { data: messages, timestamp: Date.now() });
+    return messages;
+  }
 }
 
 export async function getProjectGroupMessages(
@@ -4541,7 +4786,12 @@ export function invalidateMessageCache(userId?: string, conversationPartnerId?: 
 }
 
 export async function markMessageAsRead(messageId: string): Promise<void> {
-  await fbMarkMessageAsRead(messageId);
+  try {
+    await requestApiJson(`/messages/${encodeURIComponent(messageId)}/read`, {
+      method: 'PATCH',
+    });
+  } catch {}
+  await fbMarkMessageAsRead(messageId).catch(() => {});
   notifyWebMessageUpdate();
 }
 
@@ -4726,11 +4976,12 @@ export async function requestVolunteerProjectJoin(
   return requestedMatch;
 }
 
-// Approves or rejects a volunteer join request.
+// Approves, rejects, or moves back to applications a volunteer join request.
 export async function reviewVolunteerProjectMatch(
   matchId: string,
-  nextStatus: 'Matched' | 'Rejected',
-  reviewedBy: string
+  nextStatus: 'Matched' | 'Rejected' | 'Requested',
+  reviewedBy: string,
+  reviewNotes?: string
 ): Promise<VolunteerProjectMatch> {
   const payload = await requestApiJson<{ match?: VolunteerProjectMatch | null }>(
     `/volunteer-matches/${encodeURIComponent(matchId)}/review`,
@@ -4742,6 +4993,9 @@ export async function reviewVolunteerProjectMatch(
       body: JSON.stringify({
         status: nextStatus,
         reviewedBy,
+        reviewNotes,
+        notes: reviewNotes,
+        rejectionReason: reviewNotes,
       }),
     }
   );
@@ -4894,6 +5148,39 @@ export async function assignVolunteerToProject(
       'Matched',
       'assignment'
     );
+
+    // Send Calendar Confirmation Email to Assigned Volunteer
+    void (async () => {
+      try {
+        const volunteerUser = volunteer.userId ? await getUser(volunteer.userId) : null;
+        const recipientEmail = volunteer.email || volunteerUser?.email;
+        const recipientName = volunteer.name || volunteerUser?.name || 'Volunteer';
+
+        if (recipientEmail && project) {
+          const calendarUrl = getGoogleCalendarEventTemplateUrl({
+            title: project.title,
+            details: project.description,
+            location: project.locationVenue || project.location?.address || '',
+            startDate: project.startDate,
+            endDate: project.endDate,
+          });
+          await sendGoogleCalendarSyncEmail({
+            recipientEmail: recipientEmail.trim(),
+            userName: recipientName,
+            syncedCount: 1,
+            role: 'volunteer',
+            calendarUrl,
+            eventTitle: project.title,
+            eventDate: `${project.startDate.slice(0, 10)}${project.endDate ? ' to ' + project.endDate.slice(0, 10) : ''}`,
+            location: project.locationVenue || project.location?.address || '',
+            details: project.description,
+            subject: `Calendar Invitation: Assigned to ${project.title}`,
+          });
+        }
+      } catch (calErr) {
+        console.error('Failed sending volunteer event assignment calendar invitation email:', calErr);
+      }
+    })();
   } catch (error) {
     console.error('Error notifying volunteer about assignment:', error);
   }

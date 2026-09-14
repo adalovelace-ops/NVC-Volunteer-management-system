@@ -241,6 +241,7 @@ export default function AdminNavigator() {
   const reportNotificationCount = unreadReports.length;
   const pendingUserApprovalCount = pendingUsers.length;
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showNotificationsMenu, setShowNotificationsMenu] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [tabBarProps, setTabBarProps] = useState<BottomTabBarProps | null>(null);
   const [tabBarSignature, setTabBarSignature] = useState('');
@@ -428,26 +429,164 @@ export default function AdminNavigator() {
               </View>
             ) : null}
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.adminTopIconButton}
-            activeOpacity={0.8}
-            onPress={() => {
-              const pendingCount = pendingUserApprovalCount + messageUnreadCount + reportNotificationCount;
-              Alert.alert(
-                'Notifications',
-                pendingCount > 0
-                  ? `You have ${pendingCount} pending item${pendingCount === 1 ? '' : 's'}:\n• ${messageUnreadCount} unread message(s)\n• ${pendingUserApprovalCount} pending user approval(s)\n• ${reportNotificationCount} unread report(s)`
-                  : 'No new notifications.'
-              );
-            }}
-          >
-            <MaterialIcons name="notifications-none" size={24} color="#475569" />
-            {pendingUserApprovalCount + messageUnreadCount + reportNotificationCount > 0 ? (
-              <View style={styles.adminTopBadge}>
-                <Text style={styles.adminTopBadgeText}>{Math.min(pendingUserApprovalCount + messageUnreadCount + reportNotificationCount, 9)}</Text>
+          <View style={{ position: 'relative', zIndex: 110 }}>
+            <TouchableOpacity
+              style={[styles.adminTopIconButton, showNotificationsMenu && { backgroundColor: '#f1f5f9' }]}
+              activeOpacity={0.8}
+              onPress={() => {
+                setShowNotificationsMenu(!showNotificationsMenu);
+                setShowUserMenu(false);
+              }}
+            >
+              <MaterialIcons name="notifications-none" size={24} color="#475569" />
+              {pendingUserApprovalCount + messageUnreadCount + reportNotificationCount + pendingPartnerApplications.length + pendingVolunteerRequests.length > 0 ? (
+                <View style={styles.adminTopBadge}>
+                  <Text style={styles.adminTopBadgeText}>{Math.min(pendingUserApprovalCount + messageUnreadCount + reportNotificationCount + pendingPartnerApplications.length + pendingVolunteerRequests.length, 9)}</Text>
+                </View>
+              ) : null}
+            </TouchableOpacity>
+
+            {showNotificationsMenu && (
+              <View style={styles.notificationsDropdownMenu}>
+                <View style={styles.notificationsDropdownHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <MaterialIcons name="notifications-active" size={18} color="#166534" />
+                    <Text style={styles.notificationsDropdownTitle}>Notifications</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setShowNotificationsMenu(false)}
+                    style={{ padding: 4 }}
+                  >
+                    <MaterialIcons name="close" size={18} color="#64748b" />
+                  </TouchableOpacity>
+                </View>
+
+                <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={true}>
+                  {/* Pending Users */}
+                  {pendingUsers.map(pUser => (
+                    <TouchableOpacity
+                      key={pUser.id}
+                      style={styles.notificationDropdownItem}
+                      onPress={() => {
+                        setShowNotificationsMenu(false);
+                        if (tabBarProps?.navigation) {
+                          tabBarProps.navigation.navigate('Users');
+                        }
+                      }}
+                    >
+                      <View style={[styles.notifIconWrap, { backgroundColor: '#fef3c7' }]}>
+                        <MaterialIcons name="person-add" size={16} color="#d97706" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.notifItemTitle} numberOfLines={1}>{pUser.name || pUser.email}</Text>
+                        <Text style={styles.notifItemSub} numberOfLines={1}>Account awaiting approval ({pUser.role})</Text>
+                      </View>
+                      <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
+                    </TouchableOpacity>
+                  ))}
+
+                  {/* Unread Messages */}
+                  {unreadMessages.map(msg => (
+                    <TouchableOpacity
+                      key={msg.id}
+                      style={styles.notificationDropdownItem}
+                      onPress={() => {
+                        setShowNotificationsMenu(false);
+                        if (tabBarProps?.navigation) {
+                          tabBarProps.navigation.navigate('Messages');
+                        }
+                      }}
+                    >
+                      <View style={[styles.notifIconWrap, { backgroundColor: '#eff6ff' }]}>
+                        <MaterialIcons name="chat-bubble" size={16} color="#2563eb" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.notifItemTitle} numberOfLines={1}>Message from {msg.senderName || 'User'}</Text>
+                        <Text style={styles.notifItemSub} numberOfLines={1}>{msg.content || 'New message received'}</Text>
+                      </View>
+                      <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
+                    </TouchableOpacity>
+                  ))}
+
+                  {/* Partner Proposals */}
+                  {pendingPartnerApplications.map(app => (
+                    <TouchableOpacity
+                      key={app.id}
+                      style={styles.notificationDropdownItem}
+                      onPress={() => {
+                        setShowNotificationsMenu(false);
+                        if (tabBarProps?.navigation) {
+                          tabBarProps.navigation.navigate('Partners');
+                        }
+                      }}
+                    >
+                      <View style={[styles.notifIconWrap, { backgroundColor: '#f3e8ff' }]}>
+                        <MaterialIcons name="domain" size={16} color="#9333ea" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.notifItemTitle} numberOfLines={1}>{app.proposalDetails?.proposedTitle || 'Partner Proposal'}</Text>
+                        <Text style={styles.notifItemSub} numberOfLines={1}>Proposal by {app.partnerName || 'Partner'}</Text>
+                      </View>
+                      <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
+                    </TouchableOpacity>
+                  ))}
+
+                  {/* Volunteer Join Requests */}
+                  {pendingVolunteerRequests.map(req => (
+                    <TouchableOpacity
+                      key={req.id}
+                      style={styles.notificationDropdownItem}
+                      onPress={() => {
+                        setShowNotificationsMenu(false);
+                        if (tabBarProps?.navigation) {
+                          tabBarProps.navigation.navigate('Projects');
+                        }
+                      }}
+                    >
+                      <View style={[styles.notifIconWrap, { backgroundColor: '#f0fdf4' }]}>
+                        <MaterialIcons name="how-to-reg" size={16} color="#166534" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.notifItemTitle} numberOfLines={1}>Join Request: {req.volunteerName || 'Volunteer'}</Text>
+                        <Text style={styles.notifItemSub} numberOfLines={1}>{req.projectTitle || 'Project request'}</Text>
+                      </View>
+                      <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
+                    </TouchableOpacity>
+                  ))}
+
+                  {/* Unread Reports */}
+                  {unreadReports.map(rpt => (
+                    <TouchableOpacity
+                      key={rpt.id}
+                      style={styles.notificationDropdownItem}
+                      onPress={() => {
+                        setShowNotificationsMenu(false);
+                        if (tabBarProps?.navigation) {
+                          tabBarProps.navigation.navigate('Reports');
+                        }
+                      }}
+                    >
+                      <View style={[styles.notifIconWrap, { backgroundColor: '#fef2f2' }]}>
+                        <MaterialIcons name="description" size={16} color="#dc2626" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.notifItemTitle} numberOfLines={1}>{rpt.title || 'Submitted Report'}</Text>
+                        <Text style={styles.notifItemSub} numberOfLines={1}>Submitted by {rpt.submitterName || 'Partner'}</Text>
+                      </View>
+                      <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
+                    </TouchableOpacity>
+                  ))}
+
+                  {pendingUsers.length === 0 && unreadMessages.length === 0 && pendingPartnerApplications.length === 0 && pendingVolunteerRequests.length === 0 && unreadReports.length === 0 && (
+                    <View style={{ padding: 28, alignItems: 'center', justifyContent: 'center' }}>
+                      <MaterialIcons name="notifications-none" size={36} color="#cbd5e1" />
+                      <Text style={{ fontSize: 13, color: '#94a3b8', marginTop: 8, fontWeight: '600' }}>No new notifications</Text>
+                    </View>
+                  )}
+                </ScrollView>
               </View>
-            ) : null}
-          </TouchableOpacity>
+            )}
+          </View>
           <View style={styles.adminTopDivider} />
           <View style={{ position: 'relative', zIndex: 100 }}>
             <TouchableOpacity
@@ -607,5 +746,63 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: '#f1f5f9',
     marginVertical: 2,
+  },
+  notificationsDropdownMenu: {
+    position: 'absolute',
+    top: 48,
+    right: 0,
+    width: 320,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 25,
+    paddingVertical: 8,
+    zIndex: 9999,
+  },
+  notificationsDropdownHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    marginBottom: 4,
+  },
+  notificationsDropdownTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  notificationDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f8fafc',
+  },
+  notifIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notifItemTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  notifItemSub: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
   },
 });

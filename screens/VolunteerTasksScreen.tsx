@@ -701,22 +701,7 @@ export default function VolunteerTasksScreen({ navigation }: any) {
     const isAssigned = tasks.some(task => task.projectId === projectId);
     const attendanceState = getTaskEventAttendanceState(project, isAssigned, projectLogs);
 
-    // ERROR TRAP: checklist first — must complete assigned tasks before submitting attendance photo
-    const eventTasksForCheck = tasks.filter(t => t.projectId === projectId);
-    const pendingChecklistTasks = eventTasksForCheck.filter(t => t.status !== 'Completed');
-    if (eventTasksForCheck.length > 0 && pendingChecklistTasks.length > 0) {
-      Alert.alert(
-        'Checklist Required',
-        `Complete your checklist first. You have ${pendingChecklistTasks.length} of ${eventTasksForCheck.length} task(s) still in progress. Finish all assigned tasks before submitting your attendance photo.`
-      );
-      return;
-    }
-
-    // Bypassed strict restrictions for testing purposes
-    // if (!attendanceState.canConfirmAttendance && !attendanceState.eventHasNotStarted) {
-    //   Alert.alert('Attendance Unavailable', attendanceState.helperText);
-    //   return;
-    // }
+    // Tasks can be checked off during event, attendance photo confirms arrival on site
 
     try {
       const attendancePhoto = await pickImageFromDevice();
@@ -1848,6 +1833,15 @@ export default function VolunteerTasksScreen({ navigation }: any) {
             >
               <MaterialIcons name="close" size={28} color="#333" />
             </TouchableOpacity>
+
+            {attendanceNotice ? (
+              <View pointerEvents="none" style={styles.attendanceNoticeOverlay}>
+                <View style={styles.attendanceNoticeCard}>
+                  <MaterialIcons name="check-circle" size={18} color="#166534" />
+                  <Text style={styles.attendanceNoticeText}>{attendanceNotice}</Text>
+                </View>
+              </View>
+            ) : null}
 
             {selectedTaskGroup ? (
               <ScrollView style={styles.modalContent}>

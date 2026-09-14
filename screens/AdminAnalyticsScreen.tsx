@@ -27,6 +27,20 @@ import type { Partner, PartnerProjectApplication, PartnerReport, Project, Volunt
 import ModernTheme from '../utils/modernTheme';
 import { buildTextPdf, downloadPdfFile } from '../utils/pdfDownload';
 import AnalyticsReportPreviewModal from '../components/AnalyticsReportPreviewModal';
+import { exportVolunteerReportPdf, buildVolunteerReportData } from '../utils/volunteerReportTemplate';
+import {
+  exportVolunteersPerEventReportPdf,
+  buildVolunteersPerEventReportData,
+} from '../utils/volunteersPerEventReportTemplate';
+import {
+  exportSkillsContributedReportPdf,
+  buildSkillsContributedReportData,
+} from '../utils/skillsContributedReportTemplate';
+import {
+  exportPartnerSectorsReportPdf,
+  buildPartnerSectorsReportData,
+} from '../utils/partnerSectorsReportTemplate';
+import { useAuth } from '../contexts/AuthContext';
 
 type MonthPoint = {
   key: string;
@@ -640,6 +654,7 @@ function generateAnalyticsPdf(
 }
 
 export default function AdminAnalyticsScreen() {
+  const { user } = useAuth();
   const { width } = useWindowDimensions();
   const [projects, setProjects] = useState<Project[]>([]);
   const [volunteers, setVolunteers] = useState<Volunteer[]>([]);
@@ -764,7 +779,108 @@ export default function AdminAnalyticsScreen() {
   const [selectedExportSection, setSelectedExportSection] = useState<AnalyticsReportSection>('all');
   const [isExporting, setIsExporting] = useState(false);
 
+  const handleExportVolunteerReport = async () => {
+    setIsExporting(true);
+    try {
+      const userPosition =
+        user?.role === 'admin'
+          ? 'Administrator'
+          : user?.role === 'partner'
+          ? 'Partner Coordinator'
+          : user?.role === 'volunteer'
+          ? 'Volunteer'
+          : 'Administrator';
+
+      const reportData = buildVolunteerReportData({
+        partnerOrg: 'Negrense Volunteers for Change Foundation',
+        programName: 'NVC Volunteer Mobilization Program',
+        submittedBy: user?.name || user?.email || 'Administrator',
+        position: userPosition,
+        volunteers,
+        projects,
+        timeLogs,
+        joinRecords: volunteerJoinRecords,
+        monthPoints: monthPoints.map(p => ({ label: p.label, value: p.value })),
+        currentTotal,
+        monthlyDelta,
+      });
+      await exportVolunteerReportPdf(reportData);
+      setShowExportModal(false);
+    } catch (error: any) {
+      Alert.alert('Export Failed', error?.message || 'Unable to generate volunteer report PDF.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportVolunteersPerEventReport = async () => {
+    setIsExporting(true);
+    try {
+      const reportData = buildVolunteersPerEventReportData({
+        projects,
+        timeLogs,
+        joinRecords: volunteerJoinRecords,
+        volunteers,
+      });
+      await exportVolunteersPerEventReportPdf(reportData);
+      setShowExportModal(false);
+    } catch (error: any) {
+      Alert.alert('Export Failed', error?.message || 'Unable to generate volunteers per event report PDF.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportSkillsContributedReport = async () => {
+    setIsExporting(true);
+    try {
+      const reportData = buildSkillsContributedReportData({
+        volunteers,
+        projects,
+        timeLogs,
+        joinRecords: volunteerJoinRecords,
+      });
+      await exportSkillsContributedReportPdf(reportData);
+      setShowExportModal(false);
+    } catch (error: any) {
+      Alert.alert('Export Failed', error?.message || 'Unable to generate skills contributed report PDF.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportPartnerSectorsReport = async () => {
+    setIsExporting(true);
+    try {
+      const reportData = buildPartnerSectorsReportData({
+        partners,
+      });
+      await exportPartnerSectorsReportPdf(reportData);
+      setShowExportModal(false);
+    } catch (error: any) {
+      Alert.alert('Export Failed', error?.message || 'Unable to generate partner sectors report PDF.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const handleGenerateAnalyticsReport = async (section: AnalyticsReportSection = selectedExportSection) => {
+    if (section === 'total_volunteers') {
+      await handleExportVolunteerReport();
+      return;
+    }
+    if (section === 'volunteers_per_event') {
+      await handleExportVolunteersPerEventReport();
+      return;
+    }
+    if (section === 'skills_contributed') {
+      await handleExportSkillsContributedReport();
+      return;
+    }
+    if (section === 'partner_sectors') {
+      await handleExportPartnerSectorsReport();
+      return;
+    }
     setIsExporting(true);
     try {
       const report = generateAnalyticsPdf(
@@ -869,9 +985,9 @@ export default function AdminAnalyticsScreen() {
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
               <TouchableOpacity
-                onPress={() => setShowTemplatePreviewModal(true)}
+                onPress={() => void handleExportVolunteerReport()}
                 style={styles.cardExportIconBtn}
-                title="Preview & Download Report PDF"
+                title="Export Volunteer Report PDF"
               >
                 <MaterialIcons name="picture-as-pdf" size={16} color="#166534" />
                 <Text style={styles.cardExportIconText}>Export PDF</Text>
@@ -997,7 +1113,7 @@ export default function AdminAnalyticsScreen() {
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                 <TouchableOpacity
-                  onPress={() => setShowTemplatePreviewModal(true)}
+                  onPress={() => void handleExportVolunteersPerEventReport()}
                   style={styles.cardExportIconBtn}
                   title="Preview & Download Report PDF"
                 >
