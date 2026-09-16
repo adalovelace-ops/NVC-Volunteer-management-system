@@ -142,12 +142,12 @@ export default function UserManagementScreen() {
     setSelectedUser(null);
   };
 
-  const openAddModal = () => {
+  const openAddModal = (initialRole?: UserRole) => {
     setNameDraft('');
     setEmailDraft('');
     setPhoneDraft('');
     setPasswordDraft('Password123!');
-    setRoleDraft('volunteer');
+    setRoleDraft(initialRole || (accountFilter === 'admin' ? 'admin' : accountFilter === 'partner' ? 'partner' : 'volunteer'));
     setUserTypeDraft('Adult');
     setPillarsDraft([]);
     setShowAddModal(true);
@@ -164,11 +164,18 @@ export default function UserManagementScreen() {
       return;
     }
 
+    const normalizedEmail = emailDraft.trim().toLowerCase();
+    const existing = users.find(u => u.email?.toLowerCase() === normalizedEmail);
+    if (existing) {
+      Alert.alert('Duplicate Email', 'An account with this email address already exists.');
+      return;
+    }
+
     try {
       const newUser: User = {
         id: `user-${Date.now()}`,
         name: nameDraft.trim(),
-        email: emailDraft.trim().toLowerCase(),
+        email: normalizedEmail,
         phone: phoneDraft.trim() || undefined,
         password: passwordDraft.trim() || 'Password123!',
         role: roleDraft,
@@ -181,8 +188,10 @@ export default function UserManagementScreen() {
       await saveUser(newUser);
       closeAddModal();
       setSuccessNotice({
-        title: 'User Added',
-        message: `Account for ${newUser.name} created successfully.`,
+        title: roleDraft === 'admin' ? 'Admin Account Created' : 'User Added',
+        message: roleDraft === 'admin'
+          ? `Admin account for ${newUser.name} created successfully. Ready for web login.`
+          : `Account for ${newUser.name} created successfully.`,
       });
       void loadUsers();
     } catch (error) {
@@ -387,7 +396,11 @@ export default function UserManagementScreen() {
             </View>
           </View>
           <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.primaryAddButton} onPress={openAddModal} activeOpacity={0.85}>
+            <TouchableOpacity style={styles.primaryAddAdminButton} onPress={() => openAddModal('admin')} activeOpacity={0.85}>
+              <MaterialIcons name="shield" size={18} color="#ffffff" />
+              <Text style={styles.primaryAddButtonText}>Add Admin</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.primaryAddButton} onPress={() => openAddModal()} activeOpacity={0.85}>
               <MaterialIcons name="add" size={20} color="#ffffff" />
               <Text style={styles.primaryAddButtonText}>Add New User</Text>
             </TouchableOpacity>
@@ -795,7 +808,7 @@ export default function UserManagementScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContentCard}>
             <View style={styles.modalHeaderBar}>
-              <Text style={styles.modalHeadingTitle}>Add New User</Text>
+              <Text style={styles.modalHeadingTitle}>{roleDraft === 'admin' ? 'Add Admin Account' : 'Add New User'}</Text>
               <TouchableOpacity onPress={closeAddModal}>
                 <MaterialIcons name="close" size={22} color="#64748b" />
               </TouchableOpacity>
@@ -841,7 +854,7 @@ export default function UserManagementScreen() {
                 <Text style={styles.cancelFormButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.submitFormButton} onPress={handleAddUser}>
-                <Text style={styles.submitFormButtonText}>Create User</Text>
+                <Text style={styles.submitFormButtonText}>{roleDraft === 'admin' ? 'Create Admin Account' : 'Create User'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1377,6 +1390,19 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 8,
     shadowColor: '#15803d',
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  primaryAddAdminButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#2563eb',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    shadowColor: '#2563eb',
     shadowOpacity: 0.15,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },

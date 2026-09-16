@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project Status Overview</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #f7f8f7;
+    color: #17231b;
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  }
+  .page { width: min(1180px, calc(100% - 48px)); margin: 40px auto; }
+  .header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding-bottom: 24px;
+    border-bottom: 1px solid #dfe6e1;
+  }
+  .eyebrow {
+    color: #3c7650;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  h1 { margin: 0; font-size: 32px; letter-spacing: -.02em; }
+  .subtitle { margin: 8px 0 0; color: #69766d; font-size: 15px; }
+  .meta { color: #69766d; font-size: 13px; text-align: right; line-height: 1.7; }
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    margin: 24px 0;
+  }
+  .metric { background: #fff; border: 1px solid #dfe6e1; border-radius: 10px; padding: 16px; }
+  .metric-label { color: #69766d; font-size: 12px; margin-bottom: 8px; }
+  .metric-value { font-size: 22px; font-weight: 700; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+  .filter {
+    border: 1px solid #dfe6e1;
+    background: #fff;
+    border-radius: 7px;
+    padding: 9px 14px;
+    color: #4d5b52;
+    font-size: 13px;
+  }
+  .filter.active { background: #eaf4ec; border-color: #9bc3a4; color: #28643a; font-weight: 700; }
+  .report { background: #fff; border: 1px solid #dfe6e1; border-radius: 12px; overflow: hidden; }
+  .report-title { padding: 18px 20px; border-bottom: 1px solid #e8ece9; font-size: 15px; font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 15px 20px; border-bottom: 1px solid #edf0ee; font-size: 13px; }
+  th { background: #fafbfa; color: #69766d; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  td { color: #26332b; }
+  tr:last-child td { border-bottom: 0; }
+  .status { display: inline-flex; align-items: center; border-radius: 999px; padding: 5px 9px; font-size: 11px; font-weight: 700; background: #f0f2f1; color: #667269; }
+  .empty { text-align: center; padding: 58px 20px; color: #89948d; }
+  .empty strong { display: block; color: #4e5b53; font-size: 14px; margin-bottom: 6px; }
+  @media (max-width: 800px) {
+    .page { width: min(100% - 28px, 1180px); margin: 24px auto; }
+    .header { display: block; }
+    .meta { text-align: left; margin-top: 14px; }
+    .summary { grid-template-columns: repeat(2, 1fr); }
+    .report { overflow-x: auto; }
+    table { min-width: 700px; }
+  }
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="header">
+    <div>
+      <div class="eyebrow">NVC Foundation</div>
+      <h1>Project Status Overview</h1>
+      <p class="subtitle">Partner organization projects with counts and current status</p>
+    </div>
+    <div class="meta">Reporting Period<br>__________________</div>
+  </header>
+
+  <section class="summary">
+    <div class="metric"><div class="metric-label">All Projects</div><div class="metric-value">—</div></div>
+    <div class="metric"><div class="metric-label">Planning</div><div class="metric-value">—</div></div>
+    <div class="metric"><div class="metric-label">In Progress</div><div class="metric-value">—</div></div>
+    <div class="metric"><div class="metric-label">On Hold</div><div class="metric-value">—</div></div>
+    <div class="metric"><div class="metric-label">Completed / Cancelled</div><div class="metric-value">—</div></div>
+  </section>
+
+  <div class="filters">
+    <div class="filter active">All</div>
+    <div class="filter">Planning</div>
+    <div class="filter">In Progress</div>
+    <div class="filter">On Hold</div>
+    <div class="filter">Completed</div>
+    <div class="filter">Cancelled</div>
+  </div>
+
+  <section class="report">
+    <div class="report-title">Project Status Overview</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Project</th>
+          <th>Program / Sector</th>
+          <th>Type</th>
+          <th>Volunteers</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td colspan="5">
+            <div class="empty">
+              <strong>No projects to display</strong>
+              Project records will appear here.
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+</main>
+</body>
+</html>

@@ -24,7 +24,7 @@
     "android": "react-native run-android",
     "ios": "react-native run-ios",
     "pod:install": "cd ios && pod install && cd ..",
-    "web": "vite --host 0.0.0.0 --port 8081",
+    "web": "node ./scripts/run-vite.mjs",
     "backend": "node ./scripts/run-python.js -m uvicorn backend.api:app --host 0.0.0.0 --port 8000 --ws websockets --reload --reload-dir backend",
     "backend:stable": "node ./scripts/run-python.js -m uvicorn backend.api:app --host 0.0.0.0 --port 8000 --ws websockets",
     "backend:seed-storage": "node ./scripts/run-python.js -m backend.app_storage_seed",

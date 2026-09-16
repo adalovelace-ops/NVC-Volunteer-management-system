@@ -264,6 +264,9 @@ class ProjectGroupMessagePayload(BaseModel):
     responseAction: str | None = None
     responseToTitle: str | None = None
     attachments: list[str] | None = None
+    replyToId: str | None = None
+    replyToContent: str | None = None
+    replyToSenderName: str | None = None
 
 
 # Request payload for one impact-hub or field report submission.
@@ -886,9 +889,12 @@ def _replace_special_storage_collection(connection: Any, key: str, value: Any) -
                       response_to_message_id,
                       response_action,
                       response_to_title,
-                      attachments
+                                            attachments,
+                                            reply_to_id,
+                                            reply_to_content,
+                                            reply_to_sender_name
                     )
-                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                        values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         item["id"],
@@ -4208,7 +4214,10 @@ async def create_project_group_message(
                       response_to_message_id,
                       response_action,
                       response_to_title,
-                      attachments
+                      attachments,
+                      reply_to_id,
+                      reply_to_content,
+                      reply_to_sender_name
                     )
                     values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     returning
@@ -4238,6 +4247,9 @@ async def create_project_group_message(
                         payload.responseAction,
                         payload.responseToTitle,
                         json.dumps(attachments),
+                        payload.replyToId,
+                        payload.replyToContent,
+                        payload.replyToSenderName,
                     ),
                 )
                 row = cursor.fetchone()
@@ -4979,6 +4991,9 @@ class MessageCreatePayload(BaseModel):
     timestamp: str | None = None
     read: bool = False
     attachments: list[Any] = []
+    replyToId: str | None = None
+    replyToContent: str | None = None
+    replyToSenderName: str | None = None
 
 
 def serialize_message_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -5113,12 +5128,15 @@ async def create_message(payload: MessageCreatePayload) -> dict[str, Any]:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO public.messages (id, sender_id, recipient_id, project_id, content, timestamp, read, attachments)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                INSERT INTO public.messages (id, sender_id, recipient_id, project_id, content, timestamp, read, attachments, reply_to_id, reply_to_content, reply_to_sender_name)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
                   content = EXCLUDED.content,
                   read = EXCLUDED.read,
-                  attachments = EXCLUDED.attachments
+                  attachments = EXCLUDED.attachments,
+                  reply_to_id = EXCLUDED.reply_to_id,
+                  reply_to_content = EXCLUDED.reply_to_content,
+                  reply_to_sender_name = EXCLUDED.reply_to_sender_name
                 """,
                 (
                     msg_id,
@@ -5129,6 +5147,9 @@ async def create_message(payload: MessageCreatePayload) -> dict[str, Any]:
                     ts,
                     payload.read,
                     json.dumps(payload.attachments),
+                    payload.replyToId,
+                    payload.replyToContent,
+                    payload.replyToSenderName,
                 ),
             )
         connection.commit()
@@ -5143,6 +5164,9 @@ async def create_message(payload: MessageCreatePayload) -> dict[str, Any]:
         "timestamp": ts,
         "read": payload.read,
         "attachments": payload.attachments,
+        "replyToId": payload.replyToId,
+        "replyToContent": payload.replyToContent,
+        "replyToSenderName": payload.replyToSenderName,
     }
     try:
         await connection_manager.broadcast_message_event(msg_dict)
@@ -5182,7 +5206,7 @@ async def update_message_endpoint(message_id: str, payload: dict[str, Any]) -> d
                 cursor.execute(
                     """
                     UPDATE public.messages
-                    SET deleted = true, content = 'This message was deleted'
+                    SET deleted = true, content = 'This message was unsent'
                     WHERE id = %s
                     RETURNING id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments, deleted, edited, reply_to_id, reply_to_content, reply_to_sender_name
                     """,
@@ -5222,6 +5246,26 @@ async def update_message_endpoint(message_id: str, payload: dict[str, Any]) -> d
     return {"success": True, "message": msg_dict}
 
 
+@app.delete("/messages/conversation")
+async def delete_conversation_endpoint(user1: str, user2: str) -> dict[str, Any]:
+    """Permanently remove all direct messages between two users."""
+    ensure_message_storage()
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                DELETE FROM public.messages
+                WHERE (sender_id = %s AND recipient_id = %s)
+                   OR (sender_id = %s AND recipient_id = %s)
+                """,
+                (user1, user2, user2, user1),
+            )
+            deleted_count = cursor.rowcount or 0
+        connection.commit()
+    _message_query_cache.clear()
+    return {"success": True, "deletedCount": deleted_count}
+
+
 @app.delete("/messages/{message_id}")
 async def delete_message_endpoint(message_id: str) -> dict[str, Any]:
     """Soft delete a direct message so it shows 'This message was deleted'."""
@@ -5233,7 +5277,7 @@ async def delete_message_endpoint(message_id: str) -> dict[str, Any]:
             cursor.execute(
                 """
                 UPDATE public.messages
-                SET deleted = true, content = 'This message was deleted'
+                SET deleted = true, content = 'This message was unsent'
                 WHERE id = %s
                 RETURNING id as messages_id, sender_id, recipient_id, project_id, content, timestamp, read, attachments, deleted, edited, reply_to_id, reply_to_content, reply_to_sender_name
                 """,
@@ -5268,7 +5312,7 @@ async def update_project_group_message_endpoint(message_id: str, payload: dict[s
                 cursor.execute(
                     """
                     UPDATE project_group_messages
-                    SET deleted = true, content = 'This message was deleted'
+                    SET deleted = true, content = 'This message was unsent'
                     WHERE id = %s
                     RETURNING id as project_group_messages_id, project_id, sender_id, content, timestamp, kind, need_post, scope_proposal, response_to_message_id, response_action, response_to_title, attachments, deleted, edited, reply_to_id, reply_to_content, reply_to_sender_name
                     """,
@@ -5319,7 +5363,7 @@ async def delete_project_group_message_endpoint(message_id: str) -> dict[str, An
             cursor.execute(
                 """
                 UPDATE project_group_messages
-                SET deleted = true, content = 'This message was deleted'
+                SET deleted = true, content = 'This message was unsent'
                 WHERE id = %s
                 RETURNING id as project_group_messages_id, project_id, sender_id, content, timestamp, kind, need_post, scope_proposal, response_to_message_id, response_action, response_to_title, attachments, deleted, edited, reply_to_id, reply_to_content, reply_to_sender_name
                 """,

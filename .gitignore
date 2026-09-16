@@ -20,3 +20,5 @@ web-build/
 serviceAccountKey.json
 scratch/
 scratch_plan.md
+*.db
+*.sqlite*

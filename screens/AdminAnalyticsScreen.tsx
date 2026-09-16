@@ -27,6 +27,7 @@ import type { Partner, PartnerProjectApplication, PartnerReport, Project, Volunt
 import ModernTheme from '../utils/modernTheme';
 import { buildTextPdf, downloadPdfFile } from '../utils/pdfDownload';
 import AnalyticsReportPreviewModal from '../components/AnalyticsReportPreviewModal';
+import HtmlReportPreviewModal from '../components/HtmlReportPreviewModal';
 import { exportVolunteerReportPdf, buildVolunteerReportData } from '../utils/volunteerReportTemplate';
 import {
   exportVolunteersPerEventReportPdf,
@@ -41,6 +42,11 @@ import {
   buildPartnerSectorsReportData,
 } from '../utils/partnerSectorsReportTemplate';
 import { useAuth } from '../contexts/AuthContext';
+import {
+  buildProjectTrackingReportData,
+  generateProjectStatusOverviewReportHtml,
+  generateProjectTrackingReportHtml,
+} from '../utils/projectTrackingReportTemplate';
 
 type MonthPoint = {
   key: string;
@@ -776,8 +782,21 @@ export default function AdminAnalyticsScreen() {
 
   const [showExportModal, setShowExportModal] = useState(false);
   const [showTemplatePreviewModal, setShowTemplatePreviewModal] = useState(false);
+  const [showProjectTrackingPreview, setShowProjectTrackingPreview] = useState(false);
+  const [showProjectStatusOverviewPreview, setShowProjectStatusOverviewPreview] = useState(false);
   const [selectedExportSection, setSelectedExportSection] = useState<AnalyticsReportSection>('all');
   const [isExporting, setIsExporting] = useState(false);
+
+  const projectTrackingHtml = useMemo(() => generateProjectTrackingReportHtml(buildProjectTrackingReportData({
+    projects,
+    partners,
+    partnerApplications,
+  })), [projects, partners, partnerApplications]);
+  const projectStatusOverviewHtml = useMemo(() => generateProjectStatusOverviewReportHtml(buildProjectTrackingReportData({
+    projects,
+    partners,
+    partnerApplications,
+  })), [projects, partners, partnerApplications]);
 
   const handleExportVolunteerReport = async () => {
     setIsExporting(true);
@@ -1327,7 +1346,7 @@ export default function AdminAnalyticsScreen() {
               <Text style={styles.cardSubtitle}>Engage projects are sorted by current status</Text>
             </View>
             <TouchableOpacity
-              onPress={() => void handleGenerateAnalyticsReport('project_status')}
+              onPress={() => setShowProjectStatusOverviewPreview(true)}
               style={styles.cardExportIconBtn}
               title="Download Project Status Overview PDF"
             >
@@ -1375,6 +1394,14 @@ export default function AdminAnalyticsScreen() {
               <Text style={styles.cardTitle}>PROJECTS TRACKING</Text>
               <Text style={styles.cardSubtitle}>Partner organization projects with their counts and current status</Text>
             </View>
+            <TouchableOpacity
+              onPress={() => setShowProjectTrackingPreview(true)}
+              style={styles.cardExportIconBtn}
+              title="Preview and export projects tracking PDF"
+            >
+              <MaterialIcons name="picture-as-pdf" size={16} color="#166534" />
+              <Text style={styles.cardExportIconText}>Preview PDF</Text>
+            </TouchableOpacity>
             <View style={styles.trackingFilters}>
               {(() => {
                 const partnerProjects = projects.filter(p => !p.isEvent);
@@ -1607,6 +1634,22 @@ export default function AdminAnalyticsScreen() {
         skillAnalytics={skillAnalytics}
         currentTotal={currentTotal}
         monthlyDelta={monthlyDelta}
+      />
+      <HtmlReportPreviewModal
+        visible={showProjectTrackingPreview}
+        onClose={() => setShowProjectTrackingPreview(false)}
+        title="Projects Tracking Report"
+        subtitle="Live partner project and event status"
+        html={projectTrackingHtml}
+        filename={`NVC_Projects_Tracking_${new Date().toISOString().slice(0, 10)}.pdf`}
+      />
+      <HtmlReportPreviewModal
+        visible={showProjectStatusOverviewPreview}
+        onClose={() => setShowProjectStatusOverviewPreview(false)}
+        title="Project Status Overview"
+        subtitle="Engaged projects sorted by current status"
+        html={projectStatusOverviewHtml}
+        filename={`NVC_Project_Status_Overview_${new Date().toISOString().slice(0, 10)}.pdf`}
       />
     </View>
   );

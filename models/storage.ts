@@ -4554,6 +4554,7 @@ import {
   saveProjectGroupMessage as fbSaveProjectGroupMessage,
   deleteProjectGroupChat as fbDeleteProjectGroupChat,
   deleteMessage as fbDeleteMessage,
+  deleteConversation as fbDeleteConversation,
   deleteProjectGroupMessage as fbDeleteProjectGroupMessage,
   updateMessageContent as fbUpdateMessageContent,
   updateProjectGroupMessageContent as fbUpdateProjectGroupMessageContent,
@@ -4638,7 +4639,19 @@ export async function saveProjectGroupMessage(message: ProjectGroupMessage): Pro
 }
 
 export async function deleteProjectGroupChat(projectId: string): Promise<void> {
-  await fbDeleteProjectGroupChat(projectId);
+  let backendError: unknown;
+  try {
+    await requestApiJson(`/projects/${encodeURIComponent(projectId)}/group-messages`, { method: 'DELETE' });
+  } catch (error) {
+    backendError = error;
+  }
+  try {
+    await fbDeleteProjectGroupChat(projectId);
+  } catch (firebaseError) {
+    if (backendError) throw backendError;
+    console.warn('[Storage] Firestore group-chat delete failed; backend delete succeeded:', firebaseError);
+  }
+  if (backendError) console.warn('[Storage] Backend group-chat delete failed; Firestore fallback used:', backendError);
   invalidateMessageCache(undefined, undefined, projectId);
   notifyWebMessageUpdate();
 }
@@ -4686,12 +4699,15 @@ export async function editProjectGroupMessage(
 }
 
 export async function deleteMessage(messageId: string, senderId?: string, recipientId?: string, projectId?: string): Promise<void> {
-  try {
-    await requestApiJson(`/messages/${encodeURIComponent(messageId)}`, {
-      method: 'DELETE',
-    });
-  } catch {}
-  await fbDeleteMessage(messageId).catch(() => {});
+  // Update in-memory caches immediately for instant UI response
+  const deletedMessage = (message: Message): Message =>
+    message.id === messageId ? { ...message, deleted: true, content: 'This message was unsent' } : message;
+  for (const [key, cached] of conversationCache.entries()) {
+    conversationCache.set(key, { ...cached, data: cached.data.map(deletedMessage) });
+  }
+  for (const [key, cached] of messagesForUserCache.entries()) {
+    messagesForUserCache.set(key, { ...cached, data: cached.data.map(deletedMessage) });
+  }
   if (senderId && recipientId) {
     invalidateMessageCache(senderId, recipientId);
     invalidateMessageCache(recipientId, senderId);
@@ -4700,17 +4716,71 @@ export async function deleteMessage(messageId: string, senderId?: string, recipi
   }
   if (projectId) invalidateMessageCache(undefined, undefined, projectId);
   notifyWebMessageUpdate();
+
+  // Run backend and firebase delete concurrently with timeout to prevent lag
+  const backendPromise = requestApiJson(`/messages/${encodeURIComponent(messageId)}`, {
+    method: 'DELETE',
+  });
+  const fbPromise = Promise.race([
+    fbDeleteMessage(messageId),
+    new Promise(resolve => setTimeout(resolve, 2000)),
+  ]);
+
+  const [backendResult] = await Promise.allSettled([backendPromise, fbPromise]);
+  if (backendResult.status === 'rejected') {
+    console.warn('[Storage] Backend message delete failed:', backendResult.reason);
+  }
+}
+
+export async function deleteConversation(userId: string, conversationPartnerId: string): Promise<void> {
+  invalidateMessageCache(userId, conversationPartnerId);
+  invalidateMessageCache(conversationPartnerId, userId);
+  notifyWebMessageUpdate();
+
+  const [backendResult, fbResult] = await Promise.allSettled([
+    requestApiJson(
+      `/messages/conversation?user1=${encodeURIComponent(userId)}&user2=${encodeURIComponent(conversationPartnerId)}`,
+      { method: 'DELETE' }
+    ),
+    fbDeleteConversation(userId, conversationPartnerId),
+  ]);
+
+  if (backendResult.status === 'rejected' && fbResult.status === 'rejected') {
+    throw backendResult.reason || fbResult.reason;
+  }
+  if (backendResult.status === 'rejected') {
+    console.warn('[Storage] Backend conversation delete failed; Firestore fallback used:', backendResult.reason);
+  }
+  if (fbResult.status === 'rejected') {
+    console.warn('[Storage] Firestore conversation delete failed; backend delete succeeded:', fbResult.reason);
+  }
 }
 
 export async function deleteProjectGroupMessage(messageId: string, projectId?: string): Promise<void> {
-  try {
-    await requestApiJson(`/project-group-messages/${encodeURIComponent(messageId)}`, {
-      method: 'DELETE',
-    });
-  } catch {}
-  await fbDeleteProjectGroupMessage(messageId).catch(() => {});
+  // Update in-memory caches immediately for instant UI response
   if (projectId) invalidateMessageCache(undefined, undefined, projectId);
+  for (const [key, cached] of groupMessagesCache.entries()) {
+    groupMessagesCache.set(key, {
+      ...cached,
+      data: cached.data.map(message =>
+        message.id === messageId ? { ...message, deleted: true, content: 'This message was unsent' } : message
+      ),
+    });
+  }
   notifyWebMessageUpdate();
+
+  const backendPromise = requestApiJson(`/project-group-messages/${encodeURIComponent(messageId)}`, {
+    method: 'DELETE',
+  });
+  const fbPromise = Promise.race([
+    fbDeleteProjectGroupMessage(messageId),
+    new Promise(resolve => setTimeout(resolve, 2000)),
+  ]);
+
+  const [backendResult] = await Promise.allSettled([backendPromise, fbPromise]);
+  if (backendResult.status === 'rejected') {
+    console.warn('[Storage] Backend group-message delete failed:', backendResult.reason);
+  }
 }
 
 export async function getMessagesForUser(userId: string): Promise<Message[]> {

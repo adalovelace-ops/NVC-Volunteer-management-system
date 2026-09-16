@@ -232,15 +232,28 @@ export async function deleteMessage(messageId: string): Promise<void> {
   const list = await getLocalDirectMessages();
   const idx = list.findIndex(m => m.id === messageId);
   if (idx > -1) {
-    list[idx] = { ...list[idx], deleted: true, content: 'This message was deleted' };
+    list[idx] = { ...list[idx], deleted: true, content: 'This message was unsent' };
     await AsyncStorage.setItem(LOCAL_DM_KEY, JSON.stringify(list));
   }
   const ref = doc(db(), DM_COLLECTION, messageId);
-  try {
-    await updateDoc(ref, { deleted: true, content: 'This message was deleted' });
-  } catch {
-    await deleteDoc(ref).catch(() => {});
-  }
+  await setDoc(ref, { deleted: true, content: 'This message was unsent' }, { merge: true });
+}
+
+export async function deleteConversation(userId: string, otherUserId: string): Promise<void> {
+  const list = await getLocalDirectMessages();
+  await AsyncStorage.setItem(
+    LOCAL_DM_KEY,
+    JSON.stringify(list.filter(message => !(
+      (message.senderId === userId && message.recipientId === otherUserId) ||
+      (message.senderId === otherUserId && message.recipientId === userId)
+    )))
+  );
+
+  const sent = await getDocs(query(collection(db(), DM_COLLECTION), where('senderId', '==', userId), where('recipientId', '==', otherUserId)));
+  const received = await getDocs(query(collection(db(), DM_COLLECTION), where('senderId', '==', otherUserId), where('recipientId', '==', userId)));
+  const batch = writeBatch(db());
+  [...sent.docs, ...received.docs].forEach(item => batch.delete(item.ref));
+  if (sent.docs.length + received.docs.length > 0) await batch.commit();
 }
 
 export async function deleteProjectGroupMessage(messageId: string): Promise<void> {
@@ -250,16 +263,12 @@ export async function deleteProjectGroupMessage(messageId: string): Promise<void
     const list = JSON.parse(raw);
     const idx = Array.isArray(list) ? list.findIndex((m: any) => m.id === messageId) : -1;
     if (idx > -1) {
-      list[idx] = { ...list[idx], deleted: true, content: 'This message was deleted' };
+      list[idx] = { ...list[idx], deleted: true, content: 'This message was unsent' };
       await AsyncStorage.setItem(LOCAL_PROJECT_MSG_KEY, JSON.stringify(list));
     }
   }
   const ref = doc(db(), PROJECT_MSG_COLLECTION, messageId);
-  try {
-    await updateDoc(ref, { deleted: true, content: 'This message was deleted' });
-  } catch {
-    await deleteDoc(ref).catch(() => {});
-  }
+  await setDoc(ref, { deleted: true, content: 'This message was unsent' }, { merge: true });
 }
 
 export async function getProjectGroupMessages(

@@ -108,6 +108,76 @@ export default function ProfileScreen() {
   const [advocacyFocusDraft, setAdvocacyFocusDraft] = useState<AdvocacyFocus[]>([]);
   const [addressDraft, setAddressDraft] = useState('');
 
+  // Admin accounts state
+  const [adminUsers, setAdminUsers] = useState<User[]>([]);
+  const [showAddAdminModal, setShowAddAdminModal] = useState(false);
+  const [addAdminLoading, setAddAdminLoading] = useState(false);
+  const [newAdminName, setNewAdminName] = useState('');
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [newAdminPhone, setNewAdminPhone] = useState('');
+  const [newAdminPassword, setNewAdminPassword] = useState('Password123!');
+  const [adminSuccessNotice, setAdminSuccessNotice] = useState<string | null>(null);
+
+  const loadAdminUsers = useCallback(async () => {
+    if (user?.role !== 'admin') return;
+    try {
+      const allUsers = await getAllUsers();
+      const admins = allUsers.filter(u => u.role === 'admin');
+      setAdminUsers(admins);
+    } catch (err) {
+      console.error('Error loading admin users:', err);
+    }
+  }, [user?.role]);
+
+  const handleAddAdminAccount = async () => {
+    const name = newAdminName.trim();
+    const email = newAdminEmail.trim().toLowerCase();
+    const phone = newAdminPhone.trim();
+    const password = newAdminPassword.trim() || 'Password123!';
+
+    if (!name || !email) {
+      Alert.alert('Validation Error', 'Name and Email are required.');
+      return;
+    }
+
+    const existing = adminUsers.find(u => u.email?.toLowerCase() === email);
+    if (existing) {
+      Alert.alert('Duplicate Email', 'An account with this email address already exists.');
+      return;
+    }
+
+    try {
+      setAddAdminLoading(true);
+      const newAdmin: User = {
+        id: `admin-${Date.now()}`,
+        name,
+        email,
+        phone: phone || undefined,
+        password,
+        role: 'admin',
+        userType: 'Adult',
+        approvalStatus: 'approved',
+        approvedBy: user?.id,
+        approvedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      };
+
+      await saveUser(newAdmin);
+      setShowAddAdminModal(false);
+      setNewAdminName('');
+      setNewAdminEmail('');
+      setNewAdminPhone('');
+      setNewAdminPassword('Password123!');
+      setAdminSuccessNotice(`Admin account for ${name} created successfully.`);
+      setTimeout(() => setAdminSuccessNotice(null), 5000);
+      await loadAdminUsers();
+    } catch (err) {
+      Alert.alert(getRequestErrorTitle(err), getRequestErrorMessage(err, 'Failed to create admin account.'));
+    } finally {
+      setAddAdminLoading(false);
+    }
+  };
+
   // Loads the volunteer profile plus recognition details for volunteer accounts.
   const loadVolunteerProfile = useCallback(async () => {
     if (user?.role !== 'volunteer' || !user.id) {
@@ -206,15 +276,17 @@ export default function ProfileScreen() {
       void loadVolunteerProfile();
       void loadPartnerProfiles();
       void loadProjectTitles();
+      void loadAdminUsers();
       return subscribeToStorageChanges(
-        ['volunteers', 'partners', 'projects', 'volunteerProjectJoins'],
+        ['volunteers', 'partners', 'projects', 'volunteerProjectJoins', 'users'],
         () => {
           void loadVolunteerProfile();
           void loadPartnerProfiles();
           void loadProjectTitles();
+          void loadAdminUsers();
         }
       );
-    }, [loadPartnerProfiles, loadProjectTitles, loadVolunteerProfile])
+    }, [loadAdminUsers, loadPartnerProfiles, loadProjectTitles, loadVolunteerProfile])
   );
 
   // Copies the current profile into editable draft fields.
@@ -711,13 +783,25 @@ export default function ProfileScreen() {
       {/* Screen Title Header */}
       <View style={styles.headerContainer}>
         <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitleText}>My Profile</Text>
+          <Text style={styles.headerTitleText}>{user?.role === 'admin' ? 'Admin Account' : 'My Profile'}</Text>
           <View style={styles.headerUnderline} />
         </View>
-        <TouchableOpacity style={styles.headerEditButton} onPress={openEditModal}>
-          <MaterialIcons name="edit" size={18} color="#166534" style={{ marginRight: 6 }} />
-          <Text style={styles.headerEditButtonText}>Edit Profile</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          {user?.role === 'admin' && (
+            <TouchableOpacity
+              style={styles.headerAddAdminButton}
+              onPress={() => setShowAddAdminModal(true)}
+              activeOpacity={0.85}
+            >
+              <MaterialIcons name="person-add" size={18} color="#ffffff" style={{ marginRight: 6 }} />
+              <Text style={styles.headerAddAdminButtonText}>Add Admin</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity style={styles.headerEditButton} onPress={openEditModal}>
+            <MaterialIcons name="edit" size={18} color="#166534" style={{ marginRight: 6 }} />
+            <Text style={styles.headerEditButtonText}>Edit Profile</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Hero Card */}
@@ -1153,15 +1237,83 @@ export default function ProfileScreen() {
 
       {/* Admin and Partner Sections */}
       {user?.role === 'admin' && (
-        <View style={styles.sectionBlock}>
-          <Text style={styles.sectionTitleText}>About</Text>
-          <View style={[styles.detailInfoCard, styles.detailInfoCardWide]}>
-            <Text style={styles.detailInfoLabel}>Coordinator Scope</Text>
-            <Text style={styles.detailInfoValue}>
-              Oversees program rollouts, partner validation, and volunteer engagement across Negros Occidental.
-            </Text>
+        <>
+          <View style={styles.sectionBlock}>
+            <View style={styles.sectionHeaderRowBetween}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <MaterialIcons name="security" size={22} color="#166534" />
+                <Text style={styles.sectionTitleText}>Administrator Accounts</Text>
+                <View style={styles.adminCountBadge}>
+                  <Text style={styles.adminCountBadgeText}>{adminUsers.length}</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.addAdminButton}
+                onPress={() => setShowAddAdminModal(true)}
+                activeOpacity={0.85}
+              >
+                <MaterialIcons name="person-add" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                <Text style={styles.addAdminButtonText}>Add Admin Account</Text>
+              </TouchableOpacity>
+            </View>
+
+            {adminSuccessNotice && (
+              <View style={styles.adminSuccessBanner}>
+                <MaterialIcons name="check-circle" size={18} color="#166534" />
+                <Text style={styles.adminSuccessBannerText}>{adminSuccessNotice}</Text>
+              </View>
+            )}
+
+            <View style={styles.adminGrid}>
+              {adminUsers.map(admin => {
+                const isCurrent = admin.id === user?.id;
+                const adminInitials = admin.name
+                  ? admin.name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()
+                  : 'AD';
+                return (
+                  <View key={admin.id} style={[styles.adminCard, isCurrent && styles.adminCardCurrent]}>
+                    <View style={styles.adminCardTop}>
+                      <View style={[styles.adminAvatarBox, isCurrent && styles.adminAvatarBoxCurrent]}>
+                        <Text style={styles.adminAvatarText}>{adminInitials}</Text>
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <Text style={styles.adminCardName} numberOfLines={1}>{admin.name}</Text>
+                          {isCurrent && (
+                            <View style={styles.youBadge}>
+                              <Text style={styles.youBadgeText}>You</Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={styles.adminCardEmail} numberOfLines={1}>{admin.email || 'No email'}</Text>
+                      </View>
+                      <View style={styles.adminRolePill}>
+                        <MaterialIcons name="shield" size={12} color="#166534" />
+                        <Text style={styles.adminRolePillText}>Admin</Text>
+                      </View>
+                    </View>
+                    {admin.phone ? (
+                      <View style={styles.adminCardMeta}>
+                        <MaterialIcons name="phone" size={14} color="#64748b" />
+                        <Text style={styles.adminCardMetaText}>{admin.phone}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
           </View>
-        </View>
+
+          <View style={styles.sectionBlock}>
+            <Text style={styles.sectionTitleText}>About</Text>
+            <View style={[styles.detailInfoCard, styles.detailInfoCardWide]}>
+              <Text style={styles.detailInfoLabel}>Coordinator Scope</Text>
+              <Text style={styles.detailInfoValue}>
+                Oversees program rollouts, partner validation, and volunteer engagement across Negros Occidental.
+              </Text>
+            </View>
+          </View>
+        </>
       )}
 
       {user?.role === 'partner' && (
@@ -1332,6 +1484,116 @@ export default function ProfileScreen() {
         onClose={() => setShowLogoutModal(false)}
         onConfirm={logout}
       />
+
+      {/* Add Admin Account Modal */}
+      <Modal
+        visible={showAddAdminModal}
+        animationType="fade"
+        transparent
+        onRequestClose={() => !addAdminLoading && setShowAddAdminModal(false)}
+      >
+        <View style={styles.addAdminModalOverlay}>
+          <View style={styles.addAdminModalCard}>
+            <View style={styles.addAdminModalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View style={styles.addAdminModalIconWrap}>
+                  <MaterialIcons name="shield" size={22} color="#166534" />
+                </View>
+                <View>
+                  <Text style={styles.addAdminModalTitle}>Add Admin Account</Text>
+                  <Text style={styles.addAdminModalSubtitle}>Web administrator access</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowAddAdminModal(false)}
+                disabled={addAdminLoading}
+                style={styles.addAdminModalClose}
+              >
+                <MaterialIcons name="close" size={20} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.addAdminModalBody} showsVerticalScrollIndicator={false}>
+              <Text style={styles.addAdminFieldLabel}>Full Name *</Text>
+              <TextInput
+                style={styles.addAdminInput}
+                placeholder="e.g. Maria Santos"
+                placeholderTextColor="#94a3b8"
+                value={newAdminName}
+                onChangeText={setNewAdminName}
+                editable={!addAdminLoading}
+              />
+
+              <Text style={styles.addAdminFieldLabel}>Email Address *</Text>
+              <TextInput
+                style={styles.addAdminInput}
+                placeholder="e.g. maria.santos@nvcc.org"
+                placeholderTextColor="#94a3b8"
+                value={newAdminEmail}
+                onChangeText={setNewAdminEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                editable={!addAdminLoading}
+              />
+
+              <Text style={styles.addAdminFieldLabel}>Phone Number (Optional)</Text>
+              <TextInput
+                style={styles.addAdminInput}
+                placeholder="0918 123 4567"
+                placeholderTextColor="#94a3b8"
+                value={newAdminPhone}
+                onChangeText={setNewAdminPhone}
+                keyboardType="phone-pad"
+                editable={!addAdminLoading}
+              />
+
+              <Text style={styles.addAdminFieldLabel}>Initial Password</Text>
+              <TextInput
+                style={styles.addAdminInput}
+                placeholder="Password123!"
+                placeholderTextColor="#94a3b8"
+                value={newAdminPassword}
+                onChangeText={setNewAdminPassword}
+                secureTextEntry
+                editable={!addAdminLoading}
+              />
+
+              <View style={styles.addAdminInfoNotice}>
+                <MaterialIcons name="info-outline" size={18} color="#0369a1" />
+                <Text style={styles.addAdminInfoNoticeText}>
+                  This admin will have full administrative privileges and can log in immediately via the web portal.
+                </Text>
+              </View>
+            </ScrollView>
+
+            <View style={styles.addAdminModalFooter}>
+              <TouchableOpacity
+                style={styles.addAdminCancelBtn}
+                onPress={() => setShowAddAdminModal(false)}
+                disabled={addAdminLoading}
+              >
+                <Text style={styles.addAdminCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.addAdminSubmitBtn, addAdminLoading && { opacity: 0.7 }]}
+                onPress={handleAddAdminAccount}
+                disabled={addAdminLoading}
+                activeOpacity={0.85}
+              >
+                {addAdminLoading ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <>
+                    <MaterialIcons name="person-add" size={18} color="#ffffff" style={{ marginRight: 6 }} />
+                    <Text style={styles.addAdminSubmitBtnText}>Create Admin Account</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Edit Profile Modal */}
       <Modal visible={showEditModal} animationType="slide" onRequestClose={handleCancelEdit}>
@@ -2638,5 +2900,293 @@ const styles = StyleSheet.create({
     padding: 16,
     minHeight: 450,
     marginTop: 12,
+  },
+  headerAddAdminButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#166534',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    shadowColor: '#166534',
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  headerAddAdminButtonText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+    fontFamily: Platform.OS === 'web' ? "'Nunito', sans-serif" : 'Nunito',
+  },
+  sectionHeaderRowBetween: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  adminCountBadge: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  adminCountBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  addAdminButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#166534',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  addAdminButtonText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  adminSuccessBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 14,
+  },
+  adminSuccessBannerText: {
+    fontSize: 13,
+    color: '#166534',
+    fontWeight: '600',
+    flex: 1,
+  },
+  adminGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  adminCard: {
+    width: '48%',
+    minWidth: 260,
+    flexGrow: 1,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    padding: 14,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  adminCardCurrent: {
+    borderColor: '#bbf7d0',
+    backgroundColor: '#fcfdfd',
+  },
+  adminCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  adminAvatarBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f1f5f9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  adminAvatarBoxCurrent: {
+    backgroundColor: '#dcfce7',
+  },
+  adminAvatarText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#166534',
+  },
+  adminCardName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  adminCardEmail: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  youBadge: {
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+  },
+  youBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#166534',
+  },
+  adminRolePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  adminRolePillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  adminCardMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+  },
+  adminCardMetaText: {
+    fontSize: 12,
+    color: '#64748b',
+  },
+  addAdminModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  addAdminModalCard: {
+    width: '100%',
+    maxWidth: 460,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+  },
+  addAdminModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  addAdminModalIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f0fdf4',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addAdminModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  addAdminModalSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 1,
+  },
+  addAdminModalClose: {
+    padding: 4,
+  },
+  addAdminModalBody: {
+    padding: 20,
+    maxHeight: 420,
+  },
+  addAdminFieldLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+    marginTop: 12,
+  },
+  addAdminInput: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 14,
+    color: '#0f172a',
+  },
+  addAdminInfoNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f0f9ff',
+    borderWidth: 1,
+    borderColor: '#bae6fd',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  addAdminInfoNoticeText: {
+    fontSize: 12,
+    color: '#0369a1',
+    flex: 1,
+    lineHeight: 16,
+  },
+  addAdminModalFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    backgroundColor: '#fafafa',
+  },
+  addAdminCancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
+  },
+  addAdminCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  addAdminSubmitBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#166534',
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    borderRadius: 8,
+  },
+  addAdminSubmitBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
   },
 });

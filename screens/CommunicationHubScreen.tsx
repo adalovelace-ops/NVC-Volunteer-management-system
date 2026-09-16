@@ -37,10 +37,13 @@ import {
 } from '../utils/philippineAddressData';
 
 import ProposalMessageTemplate from '../components/ProposalMessageTemplate';
+import UnsendConfirmationModal from '../components/UnsendConfirmationModal';
+import DeleteChatConfirmationModal from '../components/DeleteChatConfirmationModal';
 
 import {
   deleteProjectGroupChat,
   deleteMessage,
+  deleteConversation,
   deleteProjectGroupMessage,
   editMessage,
   editProjectGroupMessage,
@@ -109,7 +112,7 @@ import { getRequestErrorMessage } from '../utils/requestErrors';
 import ProposalCard from '../components/ProposalCard';
 import AppLogo from '../components/AppLogo';
 
-const QUICK_EMOJIS = ['😊','😂','❤️','👍','👏','🙏','😍','🔥','💪','🎉','😁','🤔','😮','😢','🙌','✅','⭐','🌟','💚','💙','😅','🥰','🤩','👌','💯','🙂'];
+const QUICK_EMOJIS = ['😊', '😂', '❤️', '👍', '👏', '🙏', '😍', '🔥', '💪', '🎉', '😁', '🤔', '😮', '😢', '🙌', '✅', '⭐', '🌟', '💚', '💙', '😅', '🥰', '🤩', '👌', '💯', '🙂'];
 
 
 
@@ -400,6 +403,31 @@ function getAttachmentName(uri: string, index: number): string {
   return fileName || `Attachment ${index + 1}`;
 }
 
+async function copyChatText(content: string): Promise<boolean> {
+  if (!content) return false;
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(content);
+      return true;
+    }
+    if (typeof document !== 'undefined') {
+      const input = document.createElement('textarea');
+      input.value = content;
+      input.style.position = 'fixed';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+      input.focus();
+      input.select();
+      const copied = document.execCommand('copy');
+      document.body.removeChild(input);
+      return copied;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 
 
 function formatProposalDate(value?: string): string {
@@ -540,9 +568,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
     newProposalProjectId,
 
     newProposalTitle,
-    
+
     proposalId: requestedProposalId,
-    
+
     section: requestedSection
 
   } = route?.params || {};
@@ -651,6 +679,11 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
     senderName: string;
     content: string;
   } | null>(null);
+  const [pendingUnsendMessage, setPendingUnsendMessage] = useState<{
+    id: string;
+    isProjectMsg: boolean;
+  } | null>(null);
+  const [pendingDeleteConversation, setPendingDeleteConversation] = useState<ConversationItem | null>(null);
 
   // Inline draft proposal card state (shown inside the message thread, not a separate screen)
   const [inlineDraftProposal, setInlineDraftProposal] = useState<ProposalFormState | null>(null);
@@ -710,8 +743,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   const availableSections: SidebarSection[] = isVolunteer
     ? ['messages', 'projects', 'contacts']
     : isPartner
-    ? ['messages', 'projects', 'proposals', 'contacts']
-    : ['messages', 'projects', 'contacts'];
+      ? ['messages', 'projects', 'proposals', 'contacts']
+      : ['messages', 'projects', 'contacts'];
 
 
 
@@ -725,97 +758,97 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     const run = (async () => {
 
-    const t0 = Date.now();
-    try {
+      const t0 = Date.now();
+      try {
 
-      // Start all fetches in parallel, snapshot limited to fields needed for messages
-      const t_users = Date.now();
-      const t_snapshot = Date.now();
-      const t_messages = Date.now();
-      const t_apps = Date.now();
+        // Start all fetches in parallel, snapshot limited to fields needed for messages
+        const t_users = Date.now();
+        const t_snapshot = Date.now();
+        const t_messages = Date.now();
+        const t_apps = Date.now();
 
-      const usersP = getAllUsers().then(r => { console.log(`[COM-HUB] getAllUsers ${Date.now() - t_users}ms`); return r; });
-      const snapshotP = getProjectsScreenSnapshot(user, ['projects', 'partnerApplications', 'volunteerProfile', 'volunteerJoinRecords']).then(r => { console.log(`[COM-HUB] getProjectsScreenSnapshot ${Date.now() - t_snapshot}ms`); return r; });
-      const messagesP = getMessagesForUser(user.id).then(r => { console.log(`[COM-HUB] getMessagesForUser ${Date.now() - t_messages}ms`); return r; });
-      const partnerAppsP = (user.role === 'volunteer' ? Promise.resolve([] as PartnerProjectApplication[]) : getAllPartnerProjectApplications()).then(r => { console.log(`[COM-HUB] getAllPartnerProjectApplications ${Date.now() - t_apps}ms`); return r; });
+        const usersP = getAllUsers().then(r => { console.log(`[COM-HUB] getAllUsers ${Date.now() - t_users}ms`); return r; });
+        const snapshotP = getProjectsScreenSnapshot(user, ['projects', 'partnerApplications', 'volunteerProfile', 'volunteerJoinRecords']).then(r => { console.log(`[COM-HUB] getProjectsScreenSnapshot ${Date.now() - t_snapshot}ms`); return r; });
+        const messagesP = getMessagesForUser(user.id).then(r => { console.log(`[COM-HUB] getMessagesForUser ${Date.now() - t_messages}ms`); return r; });
+        const partnerAppsP = (user.role === 'volunteer' ? Promise.resolve([] as PartnerProjectApplication[]) : getAllPartnerProjectApplications()).then(r => { console.log(`[COM-HUB] getAllPartnerProjectApplications ${Date.now() - t_apps}ms`); return r; });
 
-      // FAST PATH: render DM conversations without waiting for heavy snapshot
-      const [usersResult, messagesResult, partnerApplicationsResult] = await Promise.allSettled([usersP, messagesP, partnerAppsP]);
-      console.log(`[COM-HUB] fast path (users+messages) done in ${Date.now() - t_users}ms`);
+        // FAST PATH: render DM conversations without waiting for heavy snapshot
+        const [usersResult, messagesResult, partnerApplicationsResult] = await Promise.allSettled([usersP, messagesP, partnerAppsP]);
+        console.log(`[COM-HUB] fast path (users+messages) done in ${Date.now() - t_users}ms`);
 
-      const users = usersResult.status === 'fulfilled' ? usersResult.value : [];
-      const msgs = messagesResult.status === 'fulfilled' ? messagesResult.value : [];
-      const directPartnerApplications = partnerApplicationsResult.status === 'fulfilled' ? partnerApplicationsResult.value : [];
+        const users = usersResult.status === 'fulfilled' ? usersResult.value : [];
+        const msgs = messagesResult.status === 'fulfilled' ? messagesResult.value : [];
+        const directPartnerApplications = partnerApplicationsResult.status === 'fulfilled' ? partnerApplicationsResult.value : [];
 
-      const others = users.filter(u => u.id !== user.id);
-      let adminUsers = users.filter(candidate => candidate.role === 'admin' || (candidate as any).isAdmin);
-      if (adminUsers.length === 0) {
-        adminUsers = [{
-          id: 'admin-1',
-          name: 'NVC Admin',
-          email: 'admin@nvc.org',
-          role: 'admin',
-          status: 'Active',
-          createdAt: new Date().toISOString(),
-        } as User];
-      }
-
-      const allowedDirectUsers = user.role === 'volunteer' || user.role === 'partner'
-        ? (others.filter(u => u.role === 'admin' || (u as any).isAdmin).length > 0
-            ? others.filter(u => u.role === 'admin' || (u as any).isAdmin)
-            : adminUsers)
-        : others;
-      const allowedDirectUserIds = new Set(allowedDirectUsers.map(u => u.id));
-      setAllUsers(allowedDirectUsers);
-      // Immediate DM conversation list for sidebar
-      {
-        const fastConvMap = new Map<string, ConversationItem>();
-        allowedDirectUsers.forEach(u => {
-          fastConvMap.set(u.id, { user: u, unreadCount: 0 });
-        });
-        msgs.forEach(m => {
-          const otherId = m.senderId === user.id ? m.recipientId : m.senderId;
-          if (!allowedDirectUserIds.has(otherId)) return;
-          const otherUser = allowedDirectUsers.find(u => u.id === otherId);
-          if (!otherUser) return;
-          const entry = fastConvMap.get(otherId) || { user: otherUser, unreadCount: 0 };
-          if (!entry.lastMessage || new Date(m.timestamp) > new Date(entry.lastMessage.timestamp)) {
-            entry.lastMessage = m;
-          }
-          if (!m.read && m.recipientId === user.id) {
-            entry.unreadCount++;
-          }
-          fastConvMap.set(otherId, entry as ConversationItem);
-        });
-        const convList = Array.from(fastConvMap.values()).sort((a, b) =>
-          new Date(b.lastMessage?.timestamp || 0).getTime() - new Date(a.lastMessage?.timestamp || 0).getTime()
-        );
-        setConversations(convList);
-
-        // Preselect admin conversation if on wide screen and none selected
-        if (isWide && (user.role === 'volunteer' || user.role === 'partner') && allowedDirectUsers.length > 0) {
-          if (!selectedUserRef.current && !selectedProjectChatRef.current) {
-            setSelectedUser(allowedDirectUsers[0]);
-            setView('detail');
-          }
+        const others = users.filter(u => u.id !== user.id);
+        let adminUsers = users.filter(candidate => candidate.role === 'admin' || (candidate as any).isAdmin);
+        if (adminUsers.length === 0) {
+          adminUsers = [{
+            id: 'admin-1',
+            name: 'NVC Admin',
+            email: 'admin@nvc.org',
+            role: 'admin',
+            status: 'Active',
+            createdAt: new Date().toISOString(),
+          } as unknown as User];
         }
 
-        // Show messages immediately — don't wait for heavy project snapshot
-        setLoading(false);
-      }
+        const allowedDirectUsers = user.role === 'volunteer' || user.role === 'partner'
+          ? (others.filter(u => u.role === 'admin' || (u as any).isAdmin).length > 0
+            ? others.filter(u => u.role === 'admin' || (u as any).isAdmin)
+            : adminUsers)
+          : others;
+        const allowedDirectUserIds = new Set(allowedDirectUsers.map(u => u.id));
+        setAllUsers(allowedDirectUsers);
+        // Immediate DM conversation list for sidebar
+        {
+          const fastConvMap = new Map<string, ConversationItem>();
+          allowedDirectUsers.forEach(u => {
+            fastConvMap.set(u.id, { user: u, unreadCount: 0 });
+          });
+          msgs.forEach(m => {
+            const otherId = m.senderId === user.id ? m.recipientId : m.senderId;
+            if (!allowedDirectUserIds.has(otherId)) return;
+            const otherUser = allowedDirectUsers.find(u => u.id === otherId);
+            if (!otherUser) return;
+            const entry = fastConvMap.get(otherId) || { user: otherUser, unreadCount: 0 };
+            if (!entry.lastMessage || new Date(m.timestamp) > new Date(entry.lastMessage.timestamp)) {
+              entry.lastMessage = m;
+            }
+            if (!m.read && m.recipientId === user.id) {
+              entry.unreadCount++;
+            }
+            fastConvMap.set(otherId, entry as ConversationItem);
+          });
+          const convList = Array.from(fastConvMap.values()).sort((a, b) =>
+            new Date(b.lastMessage?.timestamp || 0).getTime() - new Date(a.lastMessage?.timestamp || 0).getTime()
+          );
+          setConversations(convList);
 
-      // Now await the heavy snapshot (already in flight) for project/proposal chats
-      let snapshotResult: PromiseSettledResult<any>;
-      try {
-        const v = await snapshotP;
-        snapshotResult = { status: 'fulfilled', value: v } as any;
-      } catch (e) {
-        snapshotResult = { status: 'rejected', reason: e } as any;
-      }
-      const snapshot =
-        (snapshotResult as any).status === 'fulfilled'
-          ? (snapshotResult as any).value
-          : {
+          // Preselect admin conversation if on wide screen and none selected
+          if (isWide && (user.role === 'volunteer' || user.role === 'partner') && allowedDirectUsers.length > 0) {
+            if (!selectedUserRef.current && !selectedProjectChatRef.current) {
+              setSelectedUser(allowedDirectUsers[0]);
+              setView('detail');
+            }
+          }
+
+          // Show messages immediately — don't wait for heavy project snapshot
+          setLoading(false);
+        }
+
+        // Now await the heavy snapshot (already in flight) for project/proposal chats
+        let snapshotResult: PromiseSettledResult<any>;
+        try {
+          const v = await snapshotP;
+          snapshotResult = { status: 'fulfilled', value: v } as any;
+        } catch (e) {
+          snapshotResult = { status: 'rejected', reason: e } as any;
+        }
+        const snapshot =
+          (snapshotResult as any).status === 'fulfilled'
+            ? (snapshotResult as any).value
+            : {
               projects: [],
               partnerApplications: [],
               volunteerJoinRecords: [],
@@ -824,178 +857,108 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
 
-      // Extract active programs present in system
-      const loadedProjects: Project[] = Array.isArray(snapshot.projects) ? snapshot.projects : [];
-      const loadedPrograms = loadedProjects
-        .filter(p => !p.isEvent && !p.parentProjectId && !p.isDraft)
-        .map(p => {
-          let mod: AdvocacyFocus = 'Nutrition';
-          const text = `${p.programModule || ''} ${p.id || ''} ${p.title || ''} ${p.category || ''}`.toLowerCase();
-          if (text.includes('education')) mod = 'Education';
-          else if (text.includes('livelihood')) mod = 'Livelihood';
-          else if (text.includes('disaster')) mod = 'Disaster';
-          else if (text.includes('nutrition')) mod = 'Nutrition';
-          return { id: p.id, title: p.title, module: mod };
-        });
-      setSystemPrograms(loadedPrograms);
+        // Extract active programs present in system
+        const loadedProjects: Project[] = Array.isArray(snapshot.projects) ? snapshot.projects : [];
+        const loadedPrograms = loadedProjects
+          .filter(p => !p.isEvent && !p.parentProjectId && !p.isDraft)
+          .map(p => {
+            let mod: AdvocacyFocus = 'Nutrition';
+            const text = `${p.programModule || ''} ${p.id || ''} ${p.title || ''} ${p.category || ''}`.toLowerCase();
+            if (text.includes('education')) mod = 'Education';
+            else if (text.includes('livelihood')) mod = 'Livelihood';
+            else if (text.includes('disaster')) mod = 'Disaster';
+            else if (text.includes('nutrition')) mod = 'Nutrition';
+            return { id: p.id, title: p.title, module: mod };
+          });
+        setSystemPrograms(loadedPrograms);
 
-      const joinedEventIds = new Set(snapshot.volunteerJoinRecords.map(record => record.projectId));
+        const joinedEventIds = new Set(snapshot.volunteerJoinRecords.map((record: any) => record.projectId));
 
-      const volunteerProfileId = snapshot.volunteerProfile?.id;
-
-
-
-      const approvedPartnerProjectIds = new Set(
-
-        [...snapshot.partnerApplications, ...directPartnerApplications]
-
-          .filter(
-
-            application =>
-
-              application.status === 'Approved' && application.partnerUserId === user.id
-
-          )
-
-          .map(application => application.projectId)
-
-          .filter(Boolean)
-
-      );
+        const volunteerProfileId = snapshot.volunteerProfile?.id;
 
 
 
-      setProjectChats(
+        const approvedPartnerProjectIds = new Set(
 
-        snapshot.projects
+          [...snapshot.partnerApplications, ...directPartnerApplications]
 
-          .filter(project => {
+            .filter(
 
-            if (!project?.isEvent || project.groupChatDisabled || project.isDraft) {
+              application =>
 
-              return false;
+                application.status === 'Approved' && application.partnerUserId === user.id
 
-            }
+            )
 
-            if (user.role === 'admin') {
+            .map(application => application.projectId)
 
-              return true;
+            .filter(Boolean)
 
-            }
-
-            if (user.role === 'partner') {
-
-              return (
-
-                approvedPartnerProjectIds.has(project.id) ||
-
-                Boolean(project.parentProjectId && approvedPartnerProjectIds.has(project.parentProjectId))
-
-              );
-
-            }
+        );
 
 
 
-            const joinedByRecord = joinedEventIds.has(project.id);
+        setProjectChats(
 
-            const joinedByUserId = (project.joinedUserIds || []).includes(user.id);
+          snapshot.projects
 
-            const joinedByVolunteerId = Boolean(
+            .filter((project: any) => {
 
-              volunteerProfileId && (project.volunteers || []).includes(volunteerProfileId)
+              if (!project?.isEvent || project.groupChatDisabled || project.isDraft) {
 
-            );
+                return false;
 
-            return joinedByRecord || joinedByUserId || joinedByVolunteerId;
+              }
 
-          })
+              if (user.role === 'admin') {
 
-          .map(project => {
+                return true;
 
-            const memberMap = new Map<string, ProjectChatMember>();
+              }
 
-            adminUsers.forEach(admin => {
+              if (user.role === 'partner') {
 
-              memberMap.set(`admin:${admin.id}`, {
+                return (
 
-                id: admin.id,
+                  approvedPartnerProjectIds.has(project.id) ||
 
-                name: admin.name || 'Admin',
+                  Boolean(project.parentProjectId && approvedPartnerProjectIds.has(project.parentProjectId))
 
-                role: 'Admin',
-
-                detail: admin.email,
-
-              });
-
-            });
-
-
-
-            (project.joinedUserIds || []).forEach(joinedUserId => {
-
-              const joinedUser = users.find(candidate => candidate.id === joinedUserId);
-
-              if (!joinedUser || joinedUser.role !== 'volunteer') {
-
-                return;
+                );
 
               }
 
 
 
-              memberMap.set(`volunteer:${joinedUser.id}`, {
+              const joinedByRecord = joinedEventIds.has(project.id);
 
-                id: joinedUser.id,
+              const joinedByUserId = (project.joinedUserIds || []).includes(user.id);
 
-                name: joinedUser.name || 'Volunteer',
+              const joinedByVolunteerId = Boolean(
 
-                role: 'Volunteer',
+                volunteerProfileId && (project.volunteers || []).includes(volunteerProfileId)
 
-                detail: joinedUser.email,
+              );
 
-              });
+              return joinedByRecord || joinedByUserId || joinedByVolunteerId;
 
-            });
+            })
 
+            .map((project: any) => {
 
+              const memberMap = new Map<string, ProjectChatMember>();
 
-            [...snapshot.partnerApplications, ...directPartnerApplications]
+              adminUsers.forEach(admin => {
 
-              .filter(application => {
+                memberMap.set(`admin:${admin.id}`, {
 
-                if (application.status !== 'Approved') {
+                  id: admin.id,
 
-                  return false;
+                  name: admin.name || 'Admin',
 
-                }
+                  role: 'Admin',
 
-
-
-                return (
-
-                  application.projectId === project.id ||
-
-                  Boolean(project.parentProjectId && application.projectId === project.parentProjectId)
-
-                );
-
-              })
-
-              .forEach(application => {
-
-                const partnerUser = users.find(candidate => candidate.id === application.partnerUserId);
-
-                memberMap.set(`partner:${application.partnerUserId}`, {
-
-                  id: application.partnerUserId,
-
-                  name: application.partnerName || partnerUser?.name || 'Partner Account',
-
-                  role: 'Partner',
-
-                  detail: application.partnerEmail || partnerUser?.email,
+                  detail: admin.email,
 
                 });
 
@@ -1003,118 +966,188 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
 
-            const members = Array.from(memberMap.values()).sort((left, right) => {
+              (project.joinedUserIds || []).forEach((joinedUserId: string) => {
 
-              const rank = { Admin: 0, Partner: 1, Volunteer: 2 };
+                const joinedUser = users.find(candidate => candidate.id === joinedUserId);
 
-              const roleRank = rank[left.role] - rank[right.role];
+                if (!joinedUser || joinedUser.role !== 'volunteer') {
 
-              return roleRank !== 0 ? roleRank : left.name.localeCompare(right.name);
+                  return;
 
-            });
-
-            const partnerParticipantCount =
-
-              user.role === 'partner' &&
-
-              (approvedPartnerProjectIds.has(project.id) ||
-
-                Boolean(project.parentProjectId && approvedPartnerProjectIds.has(project.parentProjectId)))
-
-                ? 1
-
-                : 0;
+                }
 
 
 
-            return {
+                memberMap.set(`volunteer:${joinedUser.id}`, {
 
-              project,
+                  id: joinedUser.id,
 
-              participantCount:
+                  name: joinedUser.name || 'Volunteer',
 
-                Math.max(
+                  role: 'Volunteer',
 
-                  members.length,
+                  detail: joinedUser.email,
+
+                });
+
+              });
+
+
+
+              [...snapshot.partnerApplications, ...directPartnerApplications]
+
+                .filter(application => {
+
+                  if (application.status !== 'Approved') {
+
+                    return false;
+
+                  }
+
+
+
+                  return (
+
+                    application.projectId === project.id ||
+
+                    Boolean(project.parentProjectId && application.projectId === project.parentProjectId)
+
+                  );
+
+                })
+
+                .forEach(application => {
+
+                  const partnerUser = users.find(candidate => candidate.id === application.partnerUserId);
+
+                  memberMap.set(`partner:${application.partnerUserId}`, {
+
+                    id: application.partnerUserId,
+
+                    name: application.partnerName || partnerUser?.name || 'Partner Account',
+
+                    role: 'Partner',
+
+                    detail: application.partnerEmail || partnerUser?.email,
+
+                  });
+
+                });
+
+
+
+              const members = Array.from(memberMap.values()).sort((left, right) => {
+
+                const rank = { Admin: 0, Partner: 1, Volunteer: 2 };
+
+                const roleRank = rank[left.role] - rank[right.role];
+
+                return roleRank !== 0 ? roleRank : left.name.localeCompare(right.name);
+
+              });
+
+              const partnerParticipantCount =
+
+                user.role === 'partner' &&
+
+                  (approvedPartnerProjectIds.has(project.id) ||
+
+                    Boolean(project.parentProjectId && approvedPartnerProjectIds.has(project.parentProjectId)))
+
+                  ? 1
+
+                  : 0;
+
+
+
+              return {
+
+                project,
+
+                participantCount:
 
                   Math.max(
 
-                    (project.joinedUserIds || []).length,
+                    members.length,
 
-                    (project.volunteers || []).length
+                    Math.max(
 
-                  ) + partnerParticipantCount
+                      (project.joinedUserIds || []).length,
 
-                ),
+                      (project.volunteers || []).length
 
-              members,
+                    ) + partnerParticipantCount
 
-            };
+                  ),
 
-          })
+                members,
 
-      );
+              };
 
+            })
 
-
-      setProposalChats(
-
-        (user.role === 'admin' 
-          ? directPartnerApplications 
-          : (partnerApplicationsResult.status === 'fulfilled' ? partnerApplicationsResult.value : [])
-        )
-
-          .sort((left, right) => {
-
-            const leftRank = left.status === 'Pending' ? 0 : 1;
-
-            const rightRank = right.status === 'Pending' ? 0 : 1;
-
-            if (leftRank !== rightRank) {
-
-              return leftRank - rightRank;
-
-            }
-
-            return new Date(right.requestedAt).getTime() - new Date(left.requestedAt).getTime();
-
-          })
-
-          .map(app => ({
-
-            application: app,
-
-            projectTitle:
-
-              app.proposalDetails?.proposedTitle ||
-
-              app.proposalDetails?.targetProjectTitle ||
-
-              'Untitled Proposal',
-
-            programModule: app.proposalDetails?.requestedProgramModule || 'Nutrition'
-
-          }))
-
-      );
+        );
 
 
 
-      console.log(`[COM-HUB] loadData: total ${Date.now() - t0}ms`);
+        setProposalChats(
 
-      setLoading(false);
+          (user.role === 'admin'
+            ? directPartnerApplications
+            : (partnerApplicationsResult.status === 'fulfilled' ? partnerApplicationsResult.value : [])
+          )
 
-    } catch (e) {
+            .sort((left, right) => {
 
-      console.error(e);
+              const leftRank = left.status === 'Pending' ? 0 : 1;
 
-      setLoading(false);
+              const rightRank = right.status === 'Pending' ? 0 : 1;
 
-    } finally {
+              if (leftRank !== rightRank) {
 
-      loadDataInFlightRef.current = null;
+                return leftRank - rightRank;
 
-    }
+              }
+
+              return new Date(right.requestedAt).getTime() - new Date(left.requestedAt).getTime();
+
+            })
+
+            .map(app => ({
+
+              application: app,
+
+              projectTitle:
+
+                app.proposalDetails?.proposedTitle ||
+
+                app.proposalDetails?.targetProjectTitle ||
+
+                'Untitled Proposal',
+
+              programModule: app.proposalDetails?.requestedProgramModule || 'Nutrition'
+
+            }))
+
+        );
+
+
+
+        console.log(`[COM-HUB] loadData: total ${Date.now() - t0}ms`);
+
+        setLoading(false);
+
+      } catch (e) {
+
+        console.error(e);
+
+        setLoading(false);
+
+      } finally {
+
+        loadDataInFlightRef.current = null;
+
+      }
 
     })();
 
@@ -1138,10 +1171,10 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       if (selectedUser) {
         const targetUserId = selectedUser.id;
         const chat = await getConversation(user.id, targetUserId);
-        
+
         // Ensure user hasn't switched conversation while fetch was in flight
         if (selectedUserRef.current?.id !== targetUserId) return;
-        
+
         const deduped = dedupeProposalReviewCards(chat);
 
         const idMap = new Map<string, ChatMessage>();
@@ -1156,22 +1189,22 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
           // AND never drop proposal cards
           const pendingRecent = prev.filter(
             m => !serverIds.has(m.id) &&
-                 (
-                   (typeof m.content === 'string' && m.content.startsWith(PROPOSAL_PREFIX)) ||
-                   (Date.now() - new Date(m.timestamp).getTime() < 60000 &&
-                    (('recipientId' in m ? (m.senderId === user.id || m.recipientId === user.id) : m.senderId === user.id)))
-                 )
+              (
+                (typeof m.content === 'string' && m.content.startsWith(PROPOSAL_PREFIX)) ||
+                (Date.now() - new Date(m.timestamp).getTime() < 60000 &&
+                  (('recipientId' in m ? (m.senderId === user.id || m.recipientId === user.id) : m.senderId === user.id)))
+              )
           );
           const next = pendingRecent.length > 0
             ? dedupeProposalReviewCards([...deduped, ...pendingRecent]).sort(
-                (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-              )
+              (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+            )
             : deduped;
 
           if (prev.length !== next.length) return next;
           const isIdentical = prev.every((m, idx) => {
             const d = next[idx];
-            return d && m.id === d.id && m.content === d.content && m.read === d.read;
+            return d && m.id === d.id && m.content === d.content && ('read' in m ? m.read : false) === ('read' in d ? d.read : false);
           });
           return isIdentical ? prev : next;
         });
@@ -1185,10 +1218,10 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       } else if (selectedProjectChat) {
         const targetProjectId = selectedProjectChat.project.id;
         const chat = await getProjectGroupMessages(targetProjectId, user.id);
-        
+
         // Ensure project chat hasn't switched while in flight
         if (selectedProjectChatRef.current?.project.id !== targetProjectId) return;
-        
+
         const deduped = dedupeProposalReviewCards(chat);
 
         // Maintain in-memory ref for zero-latency instant rendering on project chat switch
@@ -1203,21 +1236,21 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
           // Never drop recent optimistic/in-flight messages sent by current user or proposal cards
           const pendingRecent = prev.filter(
             m => !groupServerIds.has(m.id) &&
-                 (
-                   (typeof m.content === 'string' && m.content.startsWith(PROPOSAL_PREFIX)) ||
-                   (Date.now() - new Date(m.timestamp).getTime() < 60000 && m.senderId === user.id)
-                 )
+              (
+                (typeof m.content === 'string' && m.content.startsWith(PROPOSAL_PREFIX)) ||
+                (Date.now() - new Date(m.timestamp).getTime() < 60000 && m.senderId === user.id)
+              )
           );
           const next = pendingRecent.length > 0
             ? dedupeProposalReviewCards([...deduped, ...pendingRecent]).sort(
-                (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-              )
+              (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+            )
             : deduped;
 
           if (prev.length !== next.length) return next;
           const isIdentical = prev.every((m, idx) => {
             const d = next[idx];
-            return d && m.id === d.id && m.content === d.content && m.read === d.read;
+            return d && m.id === d.id && m.content === d.content && ('read' in m ? m.read : false) === ('read' in d ? d.read : false);
           });
           return isIdentical ? prev : next;
         });
@@ -1367,8 +1400,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
     if (selectedUser && user?.id) {
       const inMemory = directMessagesRef.current.filter(
         m => ('senderId' in m && 'recipientId' in m) &&
-             ((m.senderId === user.id && m.recipientId === selectedUser.id) ||
-              (m.senderId === selectedUser.id && m.recipientId === user.id))
+          ((m.senderId === user.id && m.recipientId === selectedUser.id) ||
+            (m.senderId === selectedUser.id && m.recipientId === user.id))
       );
       if (inMemory.length > 0) {
         setMessages(inMemory);
@@ -1376,8 +1409,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         setMessages(curr => {
           const currentForThisUser = curr.filter(
             m => ('senderId' in m && 'recipientId' in m) &&
-                 ((m.senderId === user.id && m.recipientId === selectedUser.id) ||
-                  (m.senderId === selectedUser.id && m.recipientId === user.id))
+              ((m.senderId === user.id && m.recipientId === selectedUser.id) ||
+                (m.senderId === selectedUser.id && m.recipientId === user.id))
           );
           return currentForThisUser.length > 0 ? currentForThisUser : [];
         });
@@ -1715,7 +1748,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       try {
         setIsSubmittingInlineDraft(true);
         const reviewed = await reviewPartnerProjectApplication(app.id, 'Approved', user.id);
-        
+
         // Update local message status
         const updateAppStatus = (current: ChatMessage[]) =>
           current.map(msg => {
@@ -1726,7 +1759,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                   const updatedApp = { ...msgApp, status: 'Approved' };
                   return { ...msg, content: PROPOSAL_PREFIX + JSON.stringify(updatedApp) };
                 }
-              } catch (_) {}
+              } catch (_) { }
             }
             return msg;
           });
@@ -2042,7 +2075,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
           setPreviewImageUri(normalizedUri);
           return;
         }
-        
+
         // For non-images, download as before
         if (typeof document !== 'undefined') {
           const link = document.createElement('a');
@@ -2307,34 +2340,91 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   };
 
-  const handleDeleteMessage = (messageId: string, isProjectMsg: boolean) => {
+
+
+  const confirmUnsendMessage = async (targetId?: string, isProject?: boolean) => {
+    const messageId = targetId || pendingUnsendMessage?.id;
+    const isProjectMsg = isProject !== undefined ? isProject : pendingUnsendMessage?.isProjectMsg;
     if (!messageId) return;
-    Alert.alert('Delete message?', 'This message will be deleted for everyone.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          setActiveMessageMenu(null);
-          // Optimistically mark as deleted with "This message was deleted"
-          setMessages(curr =>
-            curr.map(m => (m.id === messageId ? { ...m, deleted: true, content: 'This message was deleted' } : m))
-          );
-          directMessagesRef.current = directMessagesRef.current.map(m =>
-            m.id === messageId ? { ...m, deleted: true, content: 'This message was deleted' } : m
-          );
-          try {
-            if (isProjectMsg) {
-              await deleteProjectGroupMessage(messageId, selectedProjectChat?.project.id);
-            } else {
-              await deleteMessage(messageId, user?.id, selectedUser?.id);
-            }
-          } catch (e) {
-            Alert.alert('Failed to delete', getRequestErrorMessage(e, 'Could not delete message.'));
-          }
-        },
-      },
-    ]);
+    setPendingUnsendMessage(null);
+
+    const targetUserId = selectedUser?.id;
+    const targetProjectId = selectedProjectChat?.project.id;
+    const previousMessages = messages;
+    const targetMessage = previousMessages.find(message => message.id === messageId);
+
+    // Optimistic update
+    setMessages(curr =>
+      curr.map(m => (m.id === messageId ? { ...m, deleted: true, content: 'This message was unsent' } : m))
+    );
+    directMessagesRef.current = directMessagesRef.current.map(m =>
+      m.id === messageId ? { ...m, deleted: true, content: 'This message was unsent' } : m
+    );
+
+    setReviewNotice({ title: 'Message unsent', message: 'Message unsent for everyone.', tone: 'warning' });
+
+    try {
+      if (isProjectMsg) {
+        await deleteProjectGroupMessage(messageId, targetProjectId);
+      } else {
+        const senderId = targetMessage?.senderId || user?.id;
+        const recipientId = (targetMessage as Message | undefined)?.recipientId || targetUserId;
+        await deleteMessage(messageId, senderId, recipientId);
+      }
+      if (targetUserId || targetProjectId) {
+        void loadMessages();
+      }
+    } catch (e) {
+      setMessages(previousMessages);
+      directMessagesRef.current = previousMessages;
+      if (Platform.OS === 'web') {
+        window.alert(getRequestErrorMessage(e, 'Could not unsend message.'));
+      } else {
+        Alert.alert('Failed to unsend', getRequestErrorMessage(e, 'Could not unsend message.'));
+      }
+    }
+  };
+
+  const handleUnsendMessage = (messageId: string, isProjectMsg: boolean) => {
+    if (!messageId) return;
+    setActiveMessageMenu(null);
+    setPendingUnsendMessage({ id: messageId, isProjectMsg });
+  };
+
+  const handleDeleteMessage = (messageId: string, isProjectMsg: boolean) => {
+    handleUnsendMessage(messageId, isProjectMsg);
+  };
+
+  const confirmDeleteConversation = async () => {
+    if (!pendingDeleteConversation || !user?.id) return;
+    const targetConversation = pendingDeleteConversation;
+    setPendingDeleteConversation(null);
+
+    const previousConversations = conversations;
+    setConversations(current => current.filter(item => item.user.id !== targetConversation.user.id));
+    if (selectedUser?.id === targetConversation.user.id) {
+      setSelectedUser(null);
+      setMessages([]);
+      setView(isWide ? 'detail' : 'sidebar');
+    }
+    setReviewNotice({ title: 'Chat deleted', message: `Chat with ${targetConversation.user.name} was deleted.`, tone: 'warning' });
+
+    try {
+      await deleteConversation(user.id, targetConversation.user.id);
+    } catch (error) {
+      setConversations(previousConversations);
+      if (Platform.OS === 'web') {
+        window.alert(getRequestErrorMessage(error, 'Could not delete entire chat.'));
+      } else {
+        Alert.alert('Delete failed', getRequestErrorMessage(error, 'Could not delete entire chat.'));
+      }
+      void loadData();
+    }
+  };
+
+  const handleDeleteConversation = (conversation: ConversationItem) => {
+    if (!user?.id || !conversation.user.id) return;
+    setPendingDeleteConversation(conversation);
   };
 
   const handleStartReply = (message: ChatMessage) => {
@@ -2571,17 +2661,17 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         current.map(item =>
           item.application.id === reviewedApplication.id
             ? {
-                ...item,
-                application: reviewedApplication,
-                projectTitle:
-                  reviewedApplication.proposalDetails?.proposedTitle ||
-                  reviewedApplication.proposalDetails?.targetProjectTitle ||
-                  item.projectTitle,
-              }
+              ...item,
+              application: reviewedApplication,
+              projectTitle:
+                reviewedApplication.proposalDetails?.proposedTitle ||
+                reviewedApplication.proposalDetails?.targetProjectTitle ||
+                item.projectTitle,
+            }
             : item
         )
       );
-      
+
       const updateReviewedMsgs = (current: ChatMessage[]) =>
         current.map(msg => {
           if (typeof msg.content === 'string' && msg.content.startsWith(PROPOSAL_PREFIX)) {
@@ -2603,8 +2693,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         status === 'Approved'
           ? { title: 'Proposal approved', message: 'The proposal was approved and a new project was created.', tone: 'success', projectId: reviewedApplication.projectId }
           : status === 'Revision Requested' || status === 'Needs Revision'
-          ? { title: 'Revision requested', message: 'Revision requested. Feedback has been sent to the partner.', tone: 'warning' }
-          : { title: 'Proposal rejected', message: 'The proposal was rejected. A notification card has been sent to the partner.', tone: 'warning' }
+            ? { title: 'Revision requested', message: 'Revision requested. Feedback has been sent to the partner.', tone: 'warning' }
+            : { title: 'Proposal rejected', message: 'The proposal was rejected. A notification card has been sent to the partner.', tone: 'warning' }
       );
 
       if (selectedProposalApplication?.id === reviewedApplication.id) {
@@ -2618,10 +2708,10 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         setActiveProposalCardData((prev: any) =>
           prev
             ? {
-                ...prev,
-                status: reviewedApplication.status,
-                reviewNotes: reviewedApplication.reviewNotes || prev.reviewNotes,
-              }
+              ...prev,
+              status: reviewedApplication.status,
+              reviewNotes: reviewedApplication.reviewNotes || prev.reviewNotes,
+            }
             : prev
         );
       }
@@ -2722,7 +2812,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     onPress: () => void,
 
-    options?: { avatar?: string; icon?: string; badge?: number; color?: string }
+    options?: { avatar?: string; icon?: string; badge?: number; color?: string; onDelete?: () => void }
 
   ) => (
 
@@ -2774,11 +2864,24 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
         </View>
 
-        <Text style={[styles.sidebarItemSubtitle, active && styles.sidebarItemSubtitleActive]} numberOfLines={1}>
-
-          {subtitle}
-
-        </Text>
+        <View style={styles.sidebarItemSubtitleRow}>
+          <Text style={[styles.sidebarItemSubtitle, active && styles.sidebarItemSubtitleActive]} numberOfLines={1}>
+            {subtitle}
+          </Text>
+          {options?.onDelete ? (
+            <TouchableOpacity
+              style={styles.sidebarItemMenuButton}
+              onPress={event => {
+                event.stopPropagation();
+                options.onDelete?.();
+              }}
+              accessibilityLabel={`Delete chat with ${title}`}
+              hitSlop={8}
+            >
+              <MaterialIcons name="more-vert" size={18} color="#64748b" />
+            </TouchableOpacity>
+          ) : null}
+        </View>
 
       </View>
 
@@ -2792,69 +2895,69 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     <View style={[styles.sidebar, !isWide && view === 'detail' && styles.hidden]}>
 
-        <View style={styles.sidebarHeader}>
-          <AppLogo />
-          <TouchableOpacity
-            style={styles.sidebarHeaderAction}
-            onPress={() => {
-              const adminUser = allUsers.find(u => u.role === 'admin') || allUsers[0];
-              if ((isVolunteer || isPartner) && adminUser) {
-                setSelectedUser(adminUser);
-                setSelectedProjectChat(null);
-                setSelectedProposalApplication(null);
-                setProposalIntent(null);
-                setView('detail');
-              } else if (availableSections.includes('contacts')) {
-                setActiveSection('contacts');
-              } else if (allUsers.length > 0) {
-                setSelectedUser(allUsers[0]);
-                setSelectedProjectChat(null);
-                setSelectedProposalApplication(null);
-                setProposalIntent(null);
-                setView('detail');
-              }
-            }}
-            activeOpacity={0.8}
-            accessibilityLabel="New conversation"
-          >
-            <MaterialIcons name="add" size={24} color="#166534" />
-          </TouchableOpacity>
-        </View>
+      <View style={styles.sidebarHeader}>
+        <AppLogo />
+        <TouchableOpacity
+          style={styles.sidebarHeaderAction}
+          onPress={() => {
+            const adminUser = allUsers.find(u => u.role === 'admin') || allUsers[0];
+            if ((isVolunteer || isPartner) && adminUser) {
+              setSelectedUser(adminUser);
+              setSelectedProjectChat(null);
+              setSelectedProposalApplication(null);
+              setProposalIntent(null);
+              setView('detail');
+            } else if (availableSections.includes('contacts')) {
+              setActiveSection('contacts');
+            } else if (allUsers.length > 0) {
+              setSelectedUser(allUsers[0]);
+              setSelectedProjectChat(null);
+              setSelectedProposalApplication(null);
+              setProposalIntent(null);
+              setView('detail');
+            }
+          }}
+          activeOpacity={0.8}
+          accessibilityLabel="New conversation"
+        >
+          <MaterialIcons name="add" size={24} color="#166534" />
+        </TouchableOpacity>
+      </View>
 
-        <View style={styles.searchBox}>
-          <Ionicons name="search-outline" size={18} color="#94a3b8" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search messages, volunteers, or announcements"
-            value={searchText}
-            onChangeText={setSearchText}
-            placeholderTextColor="#94a3b8"
-          />
-        </View>
+      <View style={styles.searchBox}>
+        <Ionicons name="search-outline" size={18} color="#94a3b8" />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search messages, volunteers, or announcements"
+          value={searchText}
+          onChangeText={setSearchText}
+          placeholderTextColor="#94a3b8"
+        />
+      </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sectionTabs} contentContainerStyle={styles.sectionTabsContent}>
-            {['messages', 'updates', 'projects'].map(section => {
-              const isUpdates = section === 'updates';
-              const label = section === 'messages' ? 'Messages' : section === 'updates' ? 'Updates' : 'Event Group Chat';
-              return (
-                <TouchableOpacity
-                  key={section}
-                  onPress={() => !isUpdates && setActiveSection(section as any)}
-                  style={[
-                    styles.sectionTab,
-                    activeSection === section && styles.sectionTabActive
-                  ]}
-                >
-                  <Text style={[
-                    styles.sectionTabText,
-                    activeSection === section && styles.sectionTabTextActive
-                  ]}>
-                    {label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sectionTabs} contentContainerStyle={styles.sectionTabsContent}>
+        {['messages', 'updates', 'projects'].map(section => {
+          const isUpdates = section === 'updates';
+          const label = section === 'messages' ? 'Messages' : section === 'updates' ? 'Updates' : 'Event Group Chat';
+          return (
+            <TouchableOpacity
+              key={section}
+              onPress={() => !isUpdates && setActiveSection(section as any)}
+              style={[
+                styles.sectionTab,
+                activeSection === section && styles.sectionTabActive
+              ]}
+            >
+              <Text style={[
+                styles.sectionTabText,
+                activeSection === section && styles.sectionTabTextActive
+              ]}>
+                {label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
 
       <ScrollView
         style={styles.sidebarList}
@@ -2867,78 +2970,78 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
           <>
 
-              {adminConversations.length === 0 && partnerConversations.length === 0 && volunteerConversations.length === 0 ? (
-                <View style={styles.emptyStateContainer}>
-                  <View style={styles.emptyStateIllustration}>
-                    <MaterialCommunityIcons name="chat-processing-outline" size={80} color="#bbf7d0" style={{ position: 'absolute' }} />
-                    <MaterialCommunityIcons name="star-four-points" size={24} color="#fcd34d" style={{ position: 'absolute', top: -10, right: -10 }} />
-                  </View>
-                  <Text style={styles.emptyStateTitle}>No messages yet</Text>
-                  <Text style={styles.emptyStateSubtitle}>When you start a conversation or receive a message, it will appear here.</Text>
-                  <TouchableOpacity
-                    style={styles.emptyStateButton}
-                    onPress={() => {
-                      const adminUser = allUsers.find(u => u.role === 'admin') || allUsers[0];
-                      if (adminUser) {
-                        setSelectedUser(adminUser);
-                        setSelectedProjectChat(null);
-                        setSelectedProposalApplication(null);
-                        setProposalIntent(null);
-                        setView('detail');
-                      } else if (availableSections.includes('contacts')) {
-                        setActiveSection('contacts');
-                      }
-                    }}
-                  >
-                    <MaterialIcons name="support-agent" size={18} color="#fff" />
-                    <Text style={styles.emptyStateButtonText}>Message Admin Support</Text>
-                  </TouchableOpacity>
+            {adminConversations.length === 0 && partnerConversations.length === 0 && volunteerConversations.length === 0 ? (
+              <View style={styles.emptyStateContainer}>
+                <View style={styles.emptyStateIllustration}>
+                  <MaterialCommunityIcons name="chat-processing-outline" size={80} color="#bbf7d0" style={{ position: 'absolute' }} />
+                  <MaterialCommunityIcons name="star-four-points" size={24} color="#fcd34d" style={{ position: 'absolute', top: -10, right: -10 }} />
                 </View>
-              ) : (
-                <>
-                  {adminConversations.length > 0 && (
-                    <>
-                      <Text style={styles.listSectionLabel}>Admin Support</Text>
-                      {adminConversations.map(c => renderSidebarItem(
-                        c.user.id,
-                        c.user.name,
-                        formatMessageSubtitle(c.lastMessage, 'Tap to chat with Admin'),
-                        selectedUser?.id === c.user.id,
-                        () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
-                        { badge: c.unreadCount }
-                      ))}
-                    </>
-                  )}
+                <Text style={styles.emptyStateTitle}>No messages yet</Text>
+                <Text style={styles.emptyStateSubtitle}>When you start a conversation or receive a message, it will appear here.</Text>
+                <TouchableOpacity
+                  style={styles.emptyStateButton}
+                  onPress={() => {
+                    const adminUser = allUsers.find(u => u.role === 'admin') || allUsers[0];
+                    if (adminUser) {
+                      setSelectedUser(adminUser);
+                      setSelectedProjectChat(null);
+                      setSelectedProposalApplication(null);
+                      setProposalIntent(null);
+                      setView('detail');
+                    } else if (availableSections.includes('contacts')) {
+                      setActiveSection('contacts');
+                    }
+                  }}
+                >
+                  <MaterialIcons name="support-agent" size={18} color="#fff" />
+                  <Text style={styles.emptyStateButtonText}>Message Admin Support</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <>
+                {adminConversations.length > 0 && (
+                  <>
+                    <Text style={styles.listSectionLabel}>Admin Support</Text>
+                    {adminConversations.map(c => renderSidebarItem(
+                      c.user.id,
+                      c.user.name,
+                      formatMessageSubtitle(c.lastMessage, 'Tap to chat with Admin'),
+                      selectedUser?.id === c.user.id,
+                      () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
+                      { badge: c.unreadCount }
+                    ))}
+                  </>
+                )}
 
-                  {partnerConversations.length > 0 && (
-                    <>
-                      <Text style={styles.listSectionLabel}>Proposal Partners</Text>
-                      {partnerConversations.map(c => renderSidebarItem(
-                        c.user.id,
-                        c.user.name,
-                        formatMessageSubtitle(c.lastMessage, 'Start a conversation'),
-                        selectedUser?.id === c.user.id,
-                        () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
-                        { badge: c.unreadCount }
-                      ))}
-                    </>
-                  )}
-                  
-                  {volunteerConversations.length > 0 && (
-                    <>
-                      <Text style={styles.listSectionLabel}>Volunteers</Text>
-                      {volunteerConversations.map(c => renderSidebarItem(
-                        c.user.id,
-                        c.user.name,
-                        formatMessageSubtitle(c.lastMessage, 'Start a conversation'),
-                        selectedUser?.id === c.user.id,
-                        () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
-                        { badge: c.unreadCount }
-                      ))}
-                    </>
-                  )}
-                </>
-              )}
+                {partnerConversations.length > 0 && (
+                  <>
+                    <Text style={styles.listSectionLabel}>Proposal Partners</Text>
+                    {partnerConversations.map(c => renderSidebarItem(
+                      c.user.id,
+                      c.user.name,
+                      formatMessageSubtitle(c.lastMessage, 'Start a conversation'),
+                      selectedUser?.id === c.user.id,
+                      () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
+                      { badge: c.unreadCount, onDelete: () => handleDeleteConversation(c) }
+                    ))}
+                  </>
+                )}
+
+                {volunteerConversations.length > 0 && (
+                  <>
+                    <Text style={styles.listSectionLabel}>Volunteers</Text>
+                    {volunteerConversations.map(c => renderSidebarItem(
+                      c.user.id,
+                      c.user.name,
+                      formatMessageSubtitle(c.lastMessage, 'Start a conversation'),
+                      selectedUser?.id === c.user.id,
+                      () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
+                      { badge: c.unreadCount, onDelete: () => handleDeleteConversation(c) }
+                    ))}
+                  </>
+                )}
+              </>
+            )}
 
           </>
 
@@ -3026,9 +3129,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                       : p.application.status === 'Rejected'
 
-                      ? '#dc2626'
+                        ? '#dc2626'
 
-                      : '#f59e0b',
+                        : '#f59e0b',
 
                   badge: p.application.status === 'Pending' ? 1 : (p.application.status === 'Rejected' ? 1 : undefined),
 
@@ -3708,17 +3811,17 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                     onPress={() => {
                       Alert.prompt
                         ? Alert.prompt(
-                            'Request Revision',
-                            'Specify what changes the partner needs to make:',
-                            [
-                              { text: 'Cancel', style: 'cancel' },
-                              {
-                                text: 'Send Request',
-                                onPress: (notes) => handleReview(app, 'Revision Requested', notes?.trim() || 'Please revise proposal details.'),
-                              },
-                            ],
-                            'plain-text'
-                          )
+                          'Request Revision',
+                          'Specify what changes the partner needs to make:',
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                              text: 'Send Request',
+                              onPress: (notes?: string) => handleReview(app, 'Revision Requested', notes?.trim() || 'Please revise proposal details.'),
+                            },
+                          ],
+                          'plain-text'
+                        )
                         : handleRejectWithNotes(app);
                     }}
                   >
@@ -3813,9 +3916,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
               : user?.role === 'partner'
 
-              ? 'Select an admin conversation to start collaborating.'
+                ? 'Select an admin conversation to start collaborating.'
 
-              : 'Select an admin conversation or Event GC to start collaborating.'}
+                : 'Select an admin conversation or Event GC to start collaborating.'}
 
           </Text>
 
@@ -3977,23 +4080,77 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                     {user?.role === 'volunteer' ? (
 
+                      <TouchableOpacity
+
+                        style={[styles.conversationMenuItem, styles.conversationMenuItemDanger]}
+
+                        onPress={handleLeaveEventGc}
+
+                        activeOpacity={0.85}
+
+                      >
+
+                        <MaterialIcons name="logout" size={18} color="#dc2626" />
+
+                        <Text style={styles.conversationMenuDangerText}>Leave GC</Text>
+
+                      </TouchableOpacity>
+
+                    ) : null}
+
+                  </View>
+
+                ) : null}
+
+              </View>
+
+            ) : selectedUser ? (
+
+              <View style={styles.conversationMenuWrap}>
+
+                <TouchableOpacity
+
+                  style={styles.headerAction}
+
+                  onPress={() => setShowConversationMenu(current => !current)}
+
+                  activeOpacity={0.8}
+
+                  accessibilityLabel="Conversation options"
+
+                >
+
+                  <Ionicons name="ellipsis-vertical" size={22} color="#64748b" />
+
+                </TouchableOpacity>
+
+                {showConversationMenu ? (
+
+                  <View style={styles.conversationMenu}>
+
                     <TouchableOpacity
 
                       style={[styles.conversationMenuItem, styles.conversationMenuItemDanger]}
 
-                      onPress={handleLeaveEventGc}
+                      onPress={() => {
+
+                        setShowConversationMenu(false);
+
+                        const conv = conversations.find(c => c.user.id === selectedUser.id) || { user: selectedUser, unreadCount: 0 };
+
+                        handleDeleteConversation(conv);
+
+                      }}
 
                       activeOpacity={0.85}
 
                     >
 
-                      <MaterialIcons name="logout" size={18} color="#dc2626" />
+                      <MaterialIcons name="delete-forever" size={18} color="#dc2626" />
 
-                      <Text style={styles.conversationMenuDangerText}>Leave GC</Text>
+                      <Text style={styles.conversationMenuDangerText}>Delete Chat</Text>
 
                     </TouchableOpacity>
-
-                    ) : null}
 
                   </View>
 
@@ -4015,6 +4172,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
           contentContainerStyle={styles.messagesListContent}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={true}
+          onScrollBeginDrag={() => {
+            if (activeMessageMenu) setActiveMessageMenu(null);
+          }}
         >
           {isMessagesLoading && messages.length === 0 ? (
             <View style={{ paddingVertical: 40, alignItems: 'center', justifyContent: 'center', gap: 10 }}>
@@ -4081,317 +4241,476 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
               return filteredMessages.map((m, i) => {
 
-              const isOwn = m.senderId === user?.id;
+                const isOwn = m.senderId === user?.id;
 
-              const isProposal = typeof m.content === 'string' && m.content.startsWith(PROPOSAL_PREFIX);
-
-
-
-              if (isProposal) {
-
-                let application: any = {};
-
-                try {
-
-                  application = JSON.parse(m.content.replace(PROPOSAL_PREFIX, ''));
-
-                } catch (e) { return null; }
-
-                // Normalize proposalDetails for system data compatibility
-                if (!application.proposalDetails && (application.proposedTitle || application.proposedDescription)) {
-                  application.proposalDetails = {
-                    proposedTitle: application.proposedTitle,
-                    proposedDescription: application.proposedDescription,
-                    proposedStartDate: application.proposedStartDate,
-                    proposedEndDate: application.proposedEndDate,
-                    proposedLocation: application.proposedLocation,
-                    proposedVolunteersNeeded: application.proposedVolunteersNeeded,
-                    communityNeed: application.communityNeed,
-                    expectedDeliverables: application.expectedDeliverables,
-                    requestedProgramModule: application.requestedProgramModule || application.programModule,
-                    targetProjectId: application.targetProjectId || application.projectId,
-                    attachments: application.attachments,
-                    photoAttachment: application.photoAttachment,
-                  };
-                }
-                const isAdminView = user?.role === 'admin';
-                const isOwner = Boolean((application.proposedById && application.proposedById === user?.id) || (application.partnerUserId && application.partnerUserId === user?.id) || isOwn);
-                const templateApp: PartnerProjectApplication = {
-                  id: application.id || m.id,
-                  projectId: application.projectId || application.targetProjectId || 'new',
-                  partnerUserId: application.partnerUserId || application.proposedById || '',
-                  partnerName: application.partnerName || application.proposedByName || user?.name || 'Partner',
-                  partnerEmail: application.partnerEmail || '',
-                  status: (application.status === 'Proposed' ? 'Pending' : application.status) as any || 'Pending',
-                  requestedAt: application.timestamp || application.requestedAt || m.timestamp,
-                  proposalDetails: application.proposalDetails || {},
-                  reviewNotes: application.reviewNotes,
-                } as any;
-
-                return (
-
-                  <View key={`proposal-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther, styles.proposalMessageRow]}>
-
-                    <TouchableOpacity
-                      onLongPress={() => isOwn && handleDeleteMessage(m.id, !!selectedProjectChat)}
-                      activeOpacity={0.95}
-                      delayLongPress={500}
-                    >
-                      <ProposalMessageTemplate
-                        application={templateApp}
-                        isAdmin={isAdminView}
-                        isOwner={isOwner}
-                        isSubmitting={isSubmittingInlineDraft}
-                        onEdit={(app) => handleEditProposalFromMessage(app)}
-                        onSubmit={(app) => handleSubmitProposalFromMessage(app)}
-                        onViewProjects={(app) => {
-                          navigateToAvailableRoute(
-                            navigation,
-                            'Projects',
-                            { projectId: app.projectId, programSuiteView: 'projects' },
-                            { routeName: 'Projects', params: { projectId: app.projectId, programSuiteView: 'projects' } }
-                          );
-                        }}
-                        onOpenAttachment={(url) => {
-                          void openAttachmentUri(url).catch(() => Alert.alert('Attachment', 'Unable to open this attachment on this device.'));
-                        }}
-                      />
-                    </TouchableOpacity>
-
-                    <Text style={styles.messageTime}>
-
-                      {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-
-                    </Text>
-
-                  </View>
-
-                );
-
-              }
+                const isProposal = typeof m.content === 'string' && m.content.startsWith(PROPOSAL_PREFIX);
 
 
 
-              const isProposalNotification =
-                typeof m.content === 'string' &&
-                (m.content.startsWith('Your proposal for ') ||
-                 m.content.includes('has been submitted and'));
+                if (isProposal) {
 
-              if (isProposalNotification) {
-                const titleMatch = m.content.match(/Your proposal for (?:the )?["“]?([^"”]+)["”]?/i);
-                const extractedTarget = titleMatch ? titleMatch[1].replace(/ program module/i, '').trim() : '';
+                  let application: any = {};
 
-                // Look up proposal in proposalChats / partner proposals
-                const matchingChat = proposalChats.find(item => {
-                  const pTitle = item.projectTitle || item.application?.proposalDetails?.proposedTitle || '';
-                  const pModule = item.application?.proposalDetails?.requestedProgramModule || getProgramModuleFromProposalProjectId(item.application?.projectId) || '';
-                  const normTarget = extractedTarget.toLowerCase();
+                  try {
+
+                    application = JSON.parse(m.content.replace(PROPOSAL_PREFIX, ''));
+
+                  } catch (e) { return null; }
+
+                  // Normalize proposalDetails for system data compatibility
+                  if (!application.proposalDetails && (application.proposedTitle || application.proposedDescription)) {
+                    application.proposalDetails = {
+                      proposedTitle: application.proposedTitle,
+                      proposedDescription: application.proposedDescription,
+                      proposedStartDate: application.proposedStartDate,
+                      proposedEndDate: application.proposedEndDate,
+                      proposedLocation: application.proposedLocation,
+                      proposedVolunteersNeeded: application.proposedVolunteersNeeded,
+                      communityNeed: application.communityNeed,
+                      expectedDeliverables: application.expectedDeliverables,
+                      requestedProgramModule: application.requestedProgramModule || application.programModule,
+                      targetProjectId: application.targetProjectId || application.projectId,
+                      attachments: application.attachments,
+                      photoAttachment: application.photoAttachment,
+                    };
+                  }
+                  const isAdminView = user?.role === 'admin';
+                  const isOwner = Boolean((application.proposedById && application.proposedById === user?.id) || (application.partnerUserId && application.partnerUserId === user?.id) || isOwn);
+                  const templateApp: PartnerProjectApplication = {
+                    id: application.id || m.id,
+                    projectId: application.projectId || application.targetProjectId || 'new',
+                    partnerUserId: application.partnerUserId || application.proposedById || '',
+                    partnerName: application.partnerName || application.proposedByName || user?.name || 'Partner',
+                    partnerEmail: application.partnerEmail || '',
+                    status: (application.status === 'Proposed' ? 'Pending' : application.status) as any || 'Pending',
+                    requestedAt: application.timestamp || application.requestedAt || m.timestamp,
+                    proposalDetails: application.proposalDetails || {},
+                    reviewNotes: application.reviewNotes,
+                  } as any;
+
                   return (
-                    pTitle.toLowerCase().includes(normTarget) ||
-                    normTarget.includes(pTitle.toLowerCase()) ||
-                    pModule.toLowerCase() === normTarget ||
-                    normTarget.includes(pModule.toLowerCase())
-                  );
-                });
-
-                const appStatus = matchingChat?.application?.status;
-                const isApproved = appStatus === 'Approved' || m.content.toLowerCase().includes('has been approved');
-                const isRevisionRequested = appStatus === 'Revision Requested' || appStatus === 'Needs Revision' || m.content.toLowerCase().includes('requires revision');
-                const isResubmitted = appStatus === 'Resubmitted' || m.content.toLowerCase().includes('has been resubmitted');
-                const displayTitle = matchingChat?.projectTitle || extractedTarget || 'Program Proposal';
-                const targetProjectId = matchingChat?.application?.projectId || 'all';
-
-                const badgeBg = isApproved ? '#dcfce7' : isRevisionRequested ? '#fef3c7' : isResubmitted ? '#dbeafe' : '#fef3c7';
-                const badgeColor = isApproved ? '#166534' : isRevisionRequested ? '#b45309' : isResubmitted ? '#1d4ed8' : '#b45309';
-                const badgeText = isApproved ? 'APPROVED' : isRevisionRequested ? 'NEEDS REVISION' : isResubmitted ? 'RESUBMITTED' : 'PENDING REVIEW';
-                const iconName = isApproved ? 'check-circle' : isRevisionRequested ? 'edit-note' : isResubmitted ? 'update' : 'schedule';
-
-                return (
-                  <View key={`proposal-notice-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther]}>
-                    <View style={[styles.approvedNoticeContainer, isRevisionRequested && { borderColor: '#fed7aa' }, isResubmitted && { borderColor: '#bfdbfe' }]}>
-                      <View style={styles.approvedNoticeHeader}>
-                        <View style={[styles.approvedNoticeIconCircle, { backgroundColor: badgeBg }]}>
-                          <MaterialIcons
-                            name={iconName as any}
-                            size={22}
-                            color={badgeColor}
+                    <View key={`proposal-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther, styles.proposalMessageRow]}>
+                      <View style={[styles.messageBubbleContainer, isOwn ? styles.messageBubbleContainerOwn : styles.messageBubbleContainerOther]}>
+                        <View style={{ maxWidth: '100%', flexShrink: 1 }}>
+                          <ProposalMessageTemplate
+                            application={templateApp}
+                            isAdmin={isAdminView}
+                            isOwner={isOwner}
+                            isSubmitting={isSubmittingInlineDraft}
+                            onEdit={(app) => handleEditProposalFromMessage(app)}
+                            onSubmit={(app) => handleSubmitProposalFromMessage(app)}
+                            onViewProjects={(app) => {
+                              navigateToAvailableRoute(
+                                navigation,
+                                'Projects',
+                                { projectId: app.projectId, programSuiteView: 'projects' },
+                                { routeName: 'Projects', params: { projectId: app.projectId, programSuiteView: 'projects' } }
+                              );
+                            }}
+                            onOpenAttachment={(url) => {
+                              void openAttachmentUri(url).catch(() => Alert.alert('Attachment', 'Unable to open this attachment on this device.'));
+                            }}
                           />
                         </View>
-                        <View style={{ flex: 1 }}>
-                          <View style={[styles.approvedBadgePill, { backgroundColor: badgeBg }]}>
-                            <Text style={[styles.approvedBadgeText, { color: badgeColor }]}>
-                              {badgeText}
-                            </Text>
-                          </View>
-                          <Text style={styles.approvedNoticeHeadline}>
-                            {isApproved
-                              ? `Your proposal for "${displayTitle}" has been submitted and has been approved`
-                              : isRevisionRequested
-                              ? `Revision Requested for "${displayTitle}". Please edit and resubmit.`
-                              : isResubmitted
-                              ? `Your revised proposal for "${displayTitle}" has been submitted and is pending admin review.`
-                              : `Your proposal for "${displayTitle}" has been submitted and is pending admin review.`}
-                          </Text>
+
+                        {/* Three dots action button & inline popup menu for proposal card */}
+                        <View style={{ position: 'relative', zIndex: activeMessageMenu?.message?.id === m.id ? 99999 : 1 }}>
+                          <TouchableOpacity
+                            style={[styles.messageMenuTrigger, isOwn ? styles.messageMenuTriggerOwn : styles.messageMenuTriggerOther]}
+                            onPress={() => setActiveMessageMenu(activeMessageMenu?.message?.id === m.id ? null : { message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
+                            activeOpacity={0.7}
+                          >
+                            <MaterialIcons name="more-vert" size={16} color={activeMessageMenu?.message?.id === m.id ? '#166534' : '#94a3b8'} />
+                          </TouchableOpacity>
+
+                          {activeMessageMenu?.message?.id === m.id && (
+                            <View style={[styles.inlineMessageMenu, isOwn ? styles.inlineMessageMenuOwn : styles.inlineMessageMenuOther]}>
+                              {(isOwner || isAdminView) && (
+                                <TouchableOpacity
+                                  style={styles.inlineMessageOptionItem}
+                                  onPress={() => {
+                                    setActiveMessageMenu(null);
+                                    handleEditProposalFromMessage(templateApp);
+                                  }}
+                                  activeOpacity={0.75}
+                                >
+                                  <MaterialIcons name="edit" size={16} color="#0284c7" />
+                                  <Text style={styles.inlineMessageOptionText}>Edit</Text>
+                                </TouchableOpacity>
+                              )}
+
+                              {templateApp.projectId && templateApp.projectId !== 'new' && (
+                                <TouchableOpacity
+                                  style={styles.inlineMessageOptionItem}
+                                  onPress={() => {
+                                    setActiveMessageMenu(null);
+                                    navigateToAvailableRoute(
+                                      navigation,
+                                      'Projects',
+                                      { projectId: templateApp.projectId, programSuiteView: 'projects' },
+                                      { routeName: 'Projects', params: { projectId: templateApp.projectId, programSuiteView: 'projects' } }
+                                    );
+                                  }}
+                                  activeOpacity={0.75}
+                                >
+                                  <MaterialIcons name="folder-open" size={16} color="#166534" />
+                                  <Text style={styles.inlineMessageOptionText}>Projects</Text>
+                                </TouchableOpacity>
+                              )}
+
+                              <TouchableOpacity
+                                style={[styles.inlineMessageOptionItem, styles.inlineMessageOptionDanger]}
+                                onPress={() => {
+                                  setActiveMessageMenu(null);
+                                  handleDeleteMessage(m.id, Boolean(selectedProjectChat));
+                                }}
+                                activeOpacity={0.75}
+                              >
+                                <MaterialIcons name="delete-outline" size={16} color="#dc2626" />
+                                <Text style={[styles.inlineMessageOptionText, { color: '#dc2626', fontWeight: '700' }]}>
+                                  Delete
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
                         </View>
                       </View>
 
-                      {isApproved && (
-                        <TouchableOpacity
-                          style={styles.approvedNoticeButton}
-                          onPress={() => {
-                            navigateToAvailableRoute(
-                              navigation,
-                              'Projects',
-                              { projectId: targetProjectId, programSuiteView: 'projects' },
-                              { routeName: 'Projects', params: { projectId: targetProjectId, programSuiteView: 'projects' } }
-                            );
-                          }}
-                          activeOpacity={0.85}
-                        >
-                          <MaterialIcons name="folder-special" size={18} color="#ffffff" style={{ marginRight: 6 }} />
-                          <Text style={styles.approvedNoticeButtonText}>View my Projects</Text>
-                          <MaterialIcons name="arrow-forward" size={16} color="#ffffff" style={{ marginLeft: 4 }} />
-                        </TouchableOpacity>
-                      )}
+                      <Text style={styles.messageTime}>
+                        {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </Text>
+                    </View>
+                  );
+                }
 
-                      {isRevisionRequested && (
-                        <TouchableOpacity
-                          style={[styles.approvedNoticeButton, { backgroundColor: '#d97706' }]}
-                          onPress={() => {
-                            if (matchingChat?.application) {
-                              handleEditProposalFromMessage(matchingChat.application);
-                            }
-                          }}
-                          activeOpacity={0.85}
-                        >
-                          <MaterialIcons name="edit" size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                          <Text style={styles.approvedNoticeButtonText}>Edit & Resubmit Proposal</Text>
-                        </TouchableOpacity>
+                const isProposalNotification =
+                  typeof m.content === 'string' &&
+                  (m.content.startsWith('Your proposal for ') ||
+                    m.content.includes('has been submitted and'));
+
+                if (isProposalNotification) {
+                  const titleMatch = m.content.match(/Your proposal for (?:the )?["“]?([^"”]+)["”]?/i);
+                  const extractedTarget = titleMatch ? titleMatch[1].replace(/ program module/i, '').trim() : '';
+
+                  // Look up proposal in proposalChats / partner proposals
+                  const matchingChat = proposalChats.find(item => {
+                    const pTitle = item.projectTitle || item.application?.proposalDetails?.proposedTitle || '';
+                    const pModule = item.application?.proposalDetails?.requestedProgramModule || getProgramModuleFromProposalProjectId(item.application?.projectId) || '';
+                    const normTarget = extractedTarget.toLowerCase();
+                    return (
+                      pTitle.toLowerCase().includes(normTarget) ||
+                      normTarget.includes(pTitle.toLowerCase()) ||
+                      pModule.toLowerCase() === normTarget ||
+                      normTarget.includes(pModule.toLowerCase())
+                    );
+                  });
+
+                  const appStatus = matchingChat?.application?.status;
+                  const isApproved = appStatus === 'Approved' || m.content.toLowerCase().includes('has been approved');
+                  const isRevisionRequested = appStatus === 'Revision Requested' || appStatus === 'Needs Revision' || m.content.toLowerCase().includes('requires revision');
+                  const isResubmitted = appStatus === 'Resubmitted' || m.content.toLowerCase().includes('has been resubmitted');
+                  const displayTitle = matchingChat?.projectTitle || extractedTarget || 'Program Proposal';
+                  const targetProjectId = matchingChat?.application?.projectId || 'all';
+
+                  const badgeBg = isApproved ? '#dcfce7' : isRevisionRequested ? '#fef3c7' : isResubmitted ? '#dbeafe' : '#fef3c7';
+                  const badgeColor = isApproved ? '#166534' : isRevisionRequested ? '#b45309' : isResubmitted ? '#1d4ed8' : '#b45309';
+                  const badgeText = isApproved ? 'APPROVED' : isRevisionRequested ? 'NEEDS REVISION' : isResubmitted ? 'RESUBMITTED' : 'PENDING REVIEW';
+                  const iconName = isApproved ? 'check-circle' : isRevisionRequested ? 'edit-note' : isResubmitted ? 'update' : 'schedule';
+
+                  return (
+                    <View key={`proposal-notice-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther]}>
+                      <View style={[styles.messageBubbleContainer, isOwn ? styles.messageBubbleContainerOwn : styles.messageBubbleContainerOther]}>
+                        <View style={[styles.approvedNoticeContainer, isRevisionRequested && { borderColor: '#fed7aa' }, isResubmitted && { borderColor: '#bfdbfe' }]}>
+                          <View style={styles.approvedNoticeHeader}>
+                            <View style={[styles.approvedNoticeIconCircle, { backgroundColor: badgeBg }]}>
+                              <MaterialIcons
+                                name={iconName as any}
+                                size={22}
+                                color={badgeColor}
+                              />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <View style={[styles.approvedBadgePill, { backgroundColor: badgeBg }]}>
+                                <Text style={[styles.approvedBadgeText, { color: badgeColor }]}>
+                                  {badgeText}
+                                </Text>
+                              </View>
+                              <Text style={styles.approvedNoticeHeadline}>
+                                {isApproved
+                                  ? `Your proposal for "${displayTitle}" has been submitted and has been approved`
+                                  : isRevisionRequested
+                                    ? `Revision Requested for "${displayTitle}". Please edit and resubmit.`
+                                    : isResubmitted
+                                      ? `Your revised proposal for "${displayTitle}" has been submitted and is pending admin review.`
+                                      : `Your proposal for "${displayTitle}" has been submitted and is pending admin review.`}
+                              </Text>
+                            </View>
+                          </View>
+
+                          {isApproved && (
+                            <TouchableOpacity
+                              style={styles.approvedNoticeButton}
+                              onPress={() => {
+                                navigateToAvailableRoute(
+                                  navigation,
+                                  'Projects',
+                                  { projectId: targetProjectId, programSuiteView: 'projects' },
+                                  { routeName: 'Projects', params: { projectId: targetProjectId, programSuiteView: 'projects' } }
+                                );
+                              }}
+                              activeOpacity={0.85}
+                            >
+                              <MaterialIcons name="folder-special" size={18} color="#ffffff" style={{ marginRight: 6 }} />
+                              <Text style={styles.approvedNoticeButtonText}>View my Projects</Text>
+                              <MaterialIcons name="arrow-forward" size={16} color="#ffffff" style={{ marginLeft: 4 }} />
+                            </TouchableOpacity>
+                          )}
+
+                          {isRevisionRequested && (
+                            <TouchableOpacity
+                              style={[styles.approvedNoticeButton, { backgroundColor: '#d97706' }]}
+                              onPress={() => {
+                                if (matchingChat?.application) {
+                                  handleEditProposalFromMessage(matchingChat.application);
+                                }
+                              }}
+                              activeOpacity={0.85}
+                            >
+                              <MaterialIcons name="edit" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                              <Text style={styles.approvedNoticeButtonText}>Edit & Resubmit Proposal</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+
+                        {/* Three dots action button & inline popup menu for proposal notice */}
+                        <View style={{ position: 'relative', zIndex: activeMessageMenu?.message?.id === m.id ? 99999 : 1 }}>
+                          <TouchableOpacity
+                            style={[styles.messageMenuTrigger, isOwn ? styles.messageMenuTriggerOwn : styles.messageMenuTriggerOther]}
+                            onPress={() => setActiveMessageMenu(activeMessageMenu?.message?.id === m.id ? null : { message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
+                            activeOpacity={0.7}
+                          >
+                            <MaterialIcons name="more-vert" size={16} color={activeMessageMenu?.message?.id === m.id ? '#166534' : '#94a3b8'} />
+                          </TouchableOpacity>
+
+                          {activeMessageMenu?.message?.id === m.id && (
+                            <View style={[styles.inlineMessageMenu, isOwn ? styles.inlineMessageMenuOwn : styles.inlineMessageMenuOther]}>
+                              <TouchableOpacity
+                                style={[styles.inlineMessageOptionItem, styles.inlineMessageOptionDanger]}
+                                onPress={() => {
+                                  setActiveMessageMenu(null);
+                                  handleDeleteMessage(m.id, Boolean(selectedProjectChat));
+                                }}
+                                activeOpacity={0.75}
+                              >
+                                <MaterialIcons name="delete-outline" size={16} color="#dc2626" />
+                                <Text style={[styles.inlineMessageOptionText, { color: '#dc2626', fontWeight: '700' }]}>
+                                  Delete
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+
+                      <Text style={styles.messageTime}>
+                        {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </Text>
+                    </View>
+                  );
+                }
+
+                const messageAttachments = m.attachments || [];
+                const isDeleted = Boolean(m.deleted || m.content === 'This message was deleted' || m.content === 'This message was unsent');
+                const isEdited = Boolean(m.edited);
+                const senderName = isOwn ? 'You' : (allUsers.find(u => u.id === m.senderId)?.name || selectedUser?.name || 'User');
+
+                return (
+                  <View key={`msg-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther]}>
+                    {/* Sender Name in Group Chat */}
+                    {selectedProjectChat && !isOwn && (
+                      <Text style={styles.groupMessageSenderName}>{senderName}</Text>
+                    )}
+
+                    <View style={[styles.messageBubbleContainer, isOwn ? styles.messageBubbleContainerOwn : styles.messageBubbleContainerOther]}>
+                      <TouchableOpacity
+                        style={[
+                          styles.bubble,
+                          isOwn ? styles.bubbleOwn : styles.bubbleOther,
+                          isDeleted && styles.bubbleDeleted,
+                        ]}
+                        onLongPress={() => !isDeleted && setActiveMessageMenu({ message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
+                        activeOpacity={0.88}
+                        delayLongPress={400}
+                      >
+                        {/* Quoted Reply Preview */}
+                        {Boolean(m.replyToContent) && !isDeleted && (
+                          <View style={[styles.replyQuoteBox, isOwn ? styles.replyQuoteBoxOwn : styles.replyQuoteBoxOther]}>
+                            <View style={[styles.replyQuoteBar, isOwn ? styles.replyQuoteBarOwn : styles.replyQuoteBarOther]} />
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.replyQuoteSender, isOwn && styles.replyQuoteSenderOwn]} numberOfLines={1}>
+                                {m.replyToSenderName || 'User'}
+                              </Text>
+                              <Text style={[styles.replyQuoteContent, isOwn && styles.replyQuoteContentOwn]} numberOfLines={1}>
+                                {m.replyToContent}
+                              </Text>
+                            </View>
+                          </View>
+                        )}
+
+                        {/* Content */}
+                        {isDeleted ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <MaterialIcons name="undo" size={14} color="#94a3b8" />
+                            <Text style={[styles.bubbleTextDeleted, isOwn && styles.bubbleTextDeletedOwn]}>
+                              This message was unsent
+                            </Text>
+                          </View>
+                        ) : m.content ? (
+                          <Text style={[styles.bubbleText, isOwn && styles.bubbleTextOwn]}>{m.content}</Text>
+                        ) : null}
+
+                        {/* Attachments */}
+                        {!isDeleted && messageAttachments.length > 0 ? (
+                          <View style={styles.messageAttachmentList}>
+                            {messageAttachments.map((attachmentUri, attachmentIndex) => {
+                              const attachmentName = getAttachmentName(attachmentUri, attachmentIndex);
+                              const isImageAttachment = isImageMediaUri(attachmentUri);
+
+                              return (
+                                <TouchableOpacity
+                                  key={`${m.id}-attachment-${attachmentIndex}`}
+                                  style={[
+                                    styles.messageAttachmentCard,
+                                    isOwn && styles.messageAttachmentCardOwn,
+                                  ]}
+                                  onPress={() => {
+                                    void openAttachmentUri(attachmentUri).catch(() => {
+                                      Alert.alert('Attachment', 'Unable to open this attachment on this device.');
+                                    });
+                                  }}
+                                  activeOpacity={0.85}
+                                >
+                                  {isImageAttachment ? (
+                                    <Image source={{ uri: attachmentUri }} style={styles.messageAttachmentImage} />
+                                  ) : (
+                                    <View style={[styles.messageAttachmentFileIcon, isOwn && styles.messageAttachmentFileIconOwn]}>
+                                      <MaterialIcons name="insert-drive-file" size={22} color={isOwn ? '#dcfce7' : '#166534'} />
+                                    </View>
+                                  )}
+                                  <Text
+                                    style={[
+                                      styles.messageAttachmentName,
+                                      isOwn && styles.messageAttachmentNameOwn,
+                                    ]}
+                                    numberOfLines={1}
+                                  >
+                                    {attachmentName}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                        ) : null}
+                      </TouchableOpacity>
+
+                      {/* Three dots action button & inline popup menu */}
+                      {!isDeleted && (
+                        <View style={{ position: 'relative', zIndex: activeMessageMenu?.message?.id === m.id ? 9999 : 1 }}>
+                          <TouchableOpacity
+                            style={[styles.messageMenuTrigger, isOwn ? styles.messageMenuTriggerOwn : styles.messageMenuTriggerOther]}
+                            onPress={() => setActiveMessageMenu(activeMessageMenu?.message?.id === m.id ? null : { message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
+                            activeOpacity={0.7}
+                          >
+                            <MaterialIcons name="more-vert" size={16} color={activeMessageMenu?.message?.id === m.id ? '#166534' : '#94a3b8'} />
+                          </TouchableOpacity>
+
+                          {activeMessageMenu?.message?.id === m.id && (() => {
+                            const isDeleted = Boolean(m.deleted || m.content === 'This message was deleted' || m.content === 'This message was unsent');
+                            const isProposal = typeof m.content === 'string' && m.content.startsWith(PROPOSAL_PREFIX);
+                            const isProjectMsg = Boolean(selectedProjectChat);
+
+                            return (
+                              <View style={[styles.inlineMessageMenu, isOwn ? styles.inlineMessageMenuOwn : styles.inlineMessageMenuOther]}>
+                                {/* Reply */}
+                                {!isDeleted && (
+                                  <TouchableOpacity
+                                    style={styles.inlineMessageOptionItem}
+                                    onPress={() => {
+                                      setActiveMessageMenu(null);
+                                      handleStartReply(m);
+                                    }}
+                                    activeOpacity={0.75}
+                                  >
+                                    <MaterialIcons name="reply" size={16} color="#166534" />
+                                    <Text style={styles.inlineMessageOptionText}>Reply</Text>
+                                  </TouchableOpacity>
+                                )}
+
+                                {/* Edit (for sender if not deleted and not proposal) */}
+                                {isOwn && !isDeleted && !isProposal && (
+                                  <TouchableOpacity
+                                    style={styles.inlineMessageOptionItem}
+                                    onPress={() => {
+                                      setActiveMessageMenu(null);
+                                      handleStartEdit(m, isProjectMsg);
+                                    }}
+                                    activeOpacity={0.75}
+                                  >
+                                    <MaterialIcons name="edit" size={16} color="#0284c7" />
+                                    <Text style={styles.inlineMessageOptionText}>Edit</Text>
+                                  </TouchableOpacity>
+                                )}
+
+                                {/* Copy Text */}
+                                {!isDeleted && m.content ? (
+                                  <TouchableOpacity
+                                    style={styles.inlineMessageOptionItem}
+                                    onPress={async () => {
+                                      setActiveMessageMenu(null);
+                                      const copied = await copyChatText(m.content);
+                                      Alert.alert(copied ? 'Copied' : 'Copy failed', copied ? 'Message text copied to clipboard.' : 'Clipboard is unavailable on this device.');
+                                    }}
+                                    activeOpacity={0.75}
+                                  >
+                                    <MaterialIcons name="content-copy" size={16} color="#475569" />
+                                    <Text style={styles.inlineMessageOptionText}>Copy</Text>
+                                  </TouchableOpacity>
+                                ) : null}
+
+                                {/* Unsend */}
+                                {!isDeleted && (
+                                  <TouchableOpacity
+                                    style={[styles.inlineMessageOptionItem, styles.inlineMessageOptionDanger]}
+                                    onPress={() => {
+                                      setActiveMessageMenu(null);
+                                      handleUnsendMessage(m.id, isProjectMsg);
+                                    }}
+                                    activeOpacity={0.75}
+                                  >
+                                    <MaterialIcons name="undo" size={16} color="#dc2626" />
+                                    <Text style={[styles.inlineMessageOptionText, { color: '#dc2626', fontWeight: '700' }]}>
+                                      Unsend
+                                    </Text>
+                                  </TouchableOpacity>
+                                )}
+                              </View>
+                            );
+                          })()}
+                        </View>
                       )}
                     </View>
 
-                    <Text style={styles.messageTime}>
-                      {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </Text>
+                    {/* Timestamp & Edited Indicator */}
+                    <View style={[styles.messageTimeRow, isOwn ? styles.messageTimeRowOwn : styles.messageTimeRowOther]}>
+                      {isEdited && !isDeleted && (
+                        <Text style={styles.messageEditedLabel}>(edited)</Text>
+                      )}
+                      <Text style={styles.messageTime}>
+                        {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </Text>
+                    </View>
                   </View>
                 );
-              }
-
-              const messageAttachments = m.attachments || [];
-              const isDeleted = Boolean(m.deleted || m.content === 'This message was deleted');
-              const isEdited = Boolean(m.edited);
-              const senderName = isOwn ? 'You' : (allUsers.find(u => u.id === m.senderId)?.name || selectedUser?.name || 'User');
-
-              return (
-                <View key={`msg-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther]}>
-                  {/* Sender Name in Group Chat */}
-                  {selectedProjectChat && !isOwn && (
-                    <Text style={styles.groupMessageSenderName}>{senderName}</Text>
-                  )}
-
-                  <View style={[styles.messageBubbleContainer, isOwn ? styles.messageBubbleContainerOwn : styles.messageBubbleContainerOther]}>
-                    <TouchableOpacity
-                      style={[
-                        styles.bubble,
-                        isOwn ? styles.bubbleOwn : styles.bubbleOther,
-                        isDeleted && styles.bubbleDeleted,
-                      ]}
-                      onLongPress={() => setActiveMessageMenu({ message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
-                      activeOpacity={0.88}
-                      delayLongPress={400}
-                    >
-                      {/* Quoted Reply Preview */}
-                      {Boolean(m.replyToContent) && !isDeleted && (
-                        <View style={[styles.replyQuoteBox, isOwn ? styles.replyQuoteBoxOwn : styles.replyQuoteBoxOther]}>
-                          <View style={[styles.replyQuoteBar, isOwn ? styles.replyQuoteBarOwn : styles.replyQuoteBarOther]} />
-                          <View style={{ flex: 1 }}>
-                            <Text style={[styles.replyQuoteSender, isOwn && styles.replyQuoteSenderOwn]} numberOfLines={1}>
-                              {m.replyToSenderName || 'User'}
-                            </Text>
-                            <Text style={[styles.replyQuoteContent, isOwn && styles.replyQuoteContentOwn]} numberOfLines={1}>
-                              {m.replyToContent}
-                            </Text>
-                          </View>
-                        </View>
-                      )}
-
-                      {/* Content */}
-                      {isDeleted ? (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                          <MaterialIcons name="block" size={14} color="#94a3b8" />
-                          <Text style={[styles.bubbleTextDeleted, isOwn && styles.bubbleTextDeletedOwn]}>
-                            This message was deleted
-                          </Text>
-                        </View>
-                      ) : m.content ? (
-                        <Text style={[styles.bubbleText, isOwn && styles.bubbleTextOwn]}>{m.content}</Text>
-                      ) : null}
-
-                      {/* Attachments */}
-                      {!isDeleted && messageAttachments.length > 0 ? (
-                        <View style={styles.messageAttachmentList}>
-                          {messageAttachments.map((attachmentUri, attachmentIndex) => {
-                            const attachmentName = getAttachmentName(attachmentUri, attachmentIndex);
-                            const isImageAttachment = isImageMediaUri(attachmentUri);
-
-                            return (
-                              <TouchableOpacity
-                                key={`${m.id}-attachment-${attachmentIndex}`}
-                                style={[
-                                  styles.messageAttachmentCard,
-                                  isOwn && styles.messageAttachmentCardOwn,
-                                ]}
-                                onPress={() => {
-                                  void openAttachmentUri(attachmentUri).catch(() => {
-                                    Alert.alert('Attachment', 'Unable to open this attachment on this device.');
-                                  });
-                                }}
-                                activeOpacity={0.85}
-                              >
-                                {isImageAttachment ? (
-                                  <Image source={{ uri: attachmentUri }} style={styles.messageAttachmentImage} />
-                                ) : (
-                                  <View style={[styles.messageAttachmentFileIcon, isOwn && styles.messageAttachmentFileIconOwn]}>
-                                    <MaterialIcons name="insert-drive-file" size={22} color={isOwn ? '#dcfce7' : '#166534'} />
-                                  </View>
-                                )}
-                                <Text
-                                  style={[
-                                    styles.messageAttachmentName,
-                                    isOwn && styles.messageAttachmentNameOwn,
-                                  ]}
-                                  numberOfLines={1}
-                                >
-                                  {attachmentName}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </View>
-                      ) : null}
-                    </TouchableOpacity>
-
-                    {/* Three dots action button */}
-                    <TouchableOpacity
-                      style={[styles.messageMenuTrigger, isOwn ? styles.messageMenuTriggerOwn : styles.messageMenuTriggerOther]}
-                      onPress={() => setActiveMessageMenu({ message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
-                      activeOpacity={0.7}
-                    >
-                      <MaterialIcons name="more-vert" size={16} color="#94a3b8" />
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Timestamp & Edited Indicator */}
-                  <View style={[styles.messageTimeRow, isOwn ? styles.messageTimeRowOwn : styles.messageTimeRowOther]}>
-                    {isEdited && !isDeleted && (
-                      <Text style={styles.messageEditedLabel}>(edited)</Text>
-                    )}
-                    <Text style={styles.messageTime}>
-                      {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </Text>
-                  </View>
-                </View>
-              );
 
               });
 
@@ -4491,7 +4810,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                           draft.proposedTitle &&
                           draft.proposedTitle.trim().length >= 2 &&
                           (systemPrograms.some(p => p?.title && p.title.trim().toLowerCase() === draft.proposedTitle.trim().toLowerCase()) ||
-                           proposalChats.some(p => p?.projectTitle && p.projectTitle.trim().toLowerCase() === draft.proposedTitle.trim().toLowerCase()))
+                            proposalChats.some(p => p?.projectTitle && p.projectTitle.trim().toLowerCase() === draft.proposedTitle.trim().toLowerCase()))
                         );
                         return (
                           <View style={[inlineStyles.draftRow, !isWide && inlineStyles.draftRowMobile]}>
@@ -4975,92 +5294,106 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
         </KeyboardAvoidingView>
 
-        {/* Message Actions Modal (3-dots menu) */}
+        {/* ───── Message Actions Modal ───── renders above all, never clipped */}
         <Modal
           visible={activeMessageMenu !== null}
-          transparent={true}
+          transparent
           animationType="fade"
           onRequestClose={() => setActiveMessageMenu(null)}
         >
           <TouchableOpacity
-            style={styles.messageActionModalBackdrop}
+            style={msgMenuStyles.backdrop}
             activeOpacity={1}
             onPress={() => setActiveMessageMenu(null)}
           >
-            <View style={styles.messageActionModalCard}>
-              <View style={styles.messageActionModalHeader}>
-                <Text style={styles.messageActionModalTitle}>Message Options</Text>
-                <TouchableOpacity onPress={() => setActiveMessageMenu(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <MaterialIcons name="close" size={20} color="#64748b" />
-                </TouchableOpacity>
-              </View>
-
+            <View style={msgMenuStyles.card} onStartShouldSetResponder={() => true}>
               {activeMessageMenu && (() => {
                 const msg = activeMessageMenu.message;
                 const isOwn = activeMessageMenu.isOwn;
                 const isProjectMsg = activeMessageMenu.isProjectMsg;
-                const isDeleted = Boolean(msg.deleted || msg.content === 'This message was deleted');
+                const isDeleted = Boolean(msg.deleted || msg.content === 'This message was deleted' || msg.content === 'This message was unsent');
                 const isProposal = typeof msg.content === 'string' && msg.content.startsWith(PROPOSAL_PREFIX);
 
                 return (
-                  <View style={styles.messageActionOptionsList}>
-                    {/* Reply */}
+                  <>
+                    {!isDeleted && (
+                      <>
+                        <TouchableOpacity
+                          style={msgMenuStyles.option}
+                          onPress={() => { setActiveMessageMenu(null); handleStartReply(msg); }}
+                          activeOpacity={0.7}
+                        >
+                          <View style={msgMenuStyles.iconBox}>
+                            <MaterialIcons name="reply" size={20} color="#166534" />
+                          </View>
+                          <Text style={msgMenuStyles.optionText}>Reply</Text>
+                        </TouchableOpacity>
+                        <View style={msgMenuStyles.divider} />
+                      </>
+                    )}
+
+                    {isOwn && !isDeleted && !isProposal && (
+                      <>
+                        <TouchableOpacity
+                          style={msgMenuStyles.option}
+                          onPress={() => { setActiveMessageMenu(null); handleStartEdit(msg, isProjectMsg); }}
+                          activeOpacity={0.7}
+                        >
+                          <View style={msgMenuStyles.iconBox}>
+                            <MaterialIcons name="edit" size={20} color="#0284c7" />
+                          </View>
+                          <Text style={msgMenuStyles.optionText}>Edit</Text>
+                        </TouchableOpacity>
+                        <View style={msgMenuStyles.divider} />
+                      </>
+                    )}
+
+                    {!isDeleted && msg.content && !isProposal && (
+                      <>
+                        <TouchableOpacity
+                          style={msgMenuStyles.option}
+                          onPress={() => {
+                            setActiveMessageMenu(null);
+                            void copyChatText(msg.content).then(copied => {
+                              Alert.alert(copied ? 'Copied' : 'Copy failed', copied ? 'Message copied to clipboard.' : 'Clipboard is unavailable on this device.');
+                            });
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <View style={msgMenuStyles.iconBox}>
+                            <MaterialIcons name="content-copy" size={20} color="#475569" />
+                          </View>
+                          <Text style={msgMenuStyles.optionText}>Copy</Text>
+                        </TouchableOpacity>
+                        <View style={msgMenuStyles.divider} />
+                      </>
+                    )}
+
                     {!isDeleted && (
                       <TouchableOpacity
-                        style={styles.messageActionOptionItem}
-                        onPress={() => handleStartReply(msg)}
-                        activeOpacity={0.75}
+                        style={[msgMenuStyles.option, msgMenuStyles.optionDanger]}
+                        onPress={() => { setActiveMessageMenu(null); handleUnsendMessage(msg.id, isProjectMsg); }}
+                        activeOpacity={0.7}
                       >
-                        <MaterialIcons name="reply" size={20} color="#166534" />
-                        <Text style={styles.messageActionOptionText}>Reply</Text>
+                        <View style={[msgMenuStyles.iconBox, msgMenuStyles.iconBoxDanger]}>
+                          <MaterialIcons name="undo" size={20} color="#dc2626" />
+                        </View>
+                        <Text style={[msgMenuStyles.optionText, msgMenuStyles.optionTextDanger]}>Unsend</Text>
                       </TouchableOpacity>
                     )}
-
-                    {/* Edit (for sender if not deleted and not proposal) */}
-                    {isOwn && !isDeleted && !isProposal && (
-                      <TouchableOpacity
-                        style={styles.messageActionOptionItem}
-                        onPress={() => handleStartEdit(msg, isProjectMsg)}
-                        activeOpacity={0.75}
-                      >
-                        <MaterialIcons name="edit" size={20} color="#0284c7" />
-                        <Text style={styles.messageActionOptionText}>Edit Message</Text>
-                      </TouchableOpacity>
-                    )}
-
-                    {/* Copy Text */}
-                    {!isDeleted && msg.content ? (
-                      <TouchableOpacity
-                        style={styles.messageActionOptionItem}
-                        onPress={() => {
-                          Clipboard.setString(msg.content);
-                          setActiveMessageMenu(null);
-                          Alert.alert('Copied', 'Message text copied to clipboard.');
-                        }}
-                        activeOpacity={0.75}
-                      >
-                        <MaterialIcons name="content-copy" size={20} color="#475569" />
-                        <Text style={styles.messageActionOptionText}>Copy Text</Text>
-                      </TouchableOpacity>
-                    ) : null}
-
-                    {/* Delete (available for everyone) */}
-                    <TouchableOpacity
-                      style={[styles.messageActionOptionItem, styles.messageActionOptionDanger]}
-                      onPress={() => handleDeleteMessage(msg.id, isProjectMsg)}
-                      activeOpacity={0.75}
-                    >
-                      <MaterialIcons name="delete-outline" size={20} color="#dc2626" />
-                      <Text style={[styles.messageActionOptionText, { color: '#dc2626', fontWeight: '700' }]}>
-                        Delete Message
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
+                  </>
                 );
               })()}
             </View>
           </TouchableOpacity>
         </Modal>
+
+        {/* ───── Unsend Confirmation Modal ───── */}
+        <UnsendConfirmationModal
+          visible={pendingUnsendMessage !== null}
+          onClose={() => setPendingUnsendMessage(null)}
+          onConfirm={confirmUnsendMessage}
+        />
 
       </View>
 
@@ -5151,11 +5484,11 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       {activeProposalCardData && (() => {
         const pd = activeProposalCardData;
         const proposalDetails = pd.proposalDetails || {};
-        
+
         const matchedApp = proposalChats.find(
           item => item.application.id === pd.applicationId || item.application.id === pd.id
         )?.application || null;
-        
+
         const extractedData = {
           proposedTitle: proposalDetails.proposedTitle || pd.proposedTitle || 'Project Proposal',
           proposedDescription: proposalDetails.proposedDescription || pd.proposedDescription,
@@ -5168,14 +5501,14 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
           skillsNeeded: proposalDetails.skillsNeeded || pd.skillsNeeded,
           programModule: proposalDetails.requestedProgramModule || pd.programModule || pd.requestedProgramModule,
         };
-        
+
         const pdStatus: string = pd.status || matchedApp?.status || 'Pending';
         const pdApproved = pdStatus === 'Approved';
         const pdRejected = pdStatus === 'Rejected';
         const pdPending = pdStatus === 'Pending';
         const pdStatusColor = pdApproved ? '#166534' : pdRejected ? '#dc2626' : '#d97706';
         const pdStatusBg = pdApproved ? '#dcfce7' : pdRejected ? '#fee2e2' : '#fef9c3';
-        
+
         const actualStatus = matchedApp?.status || pdStatus;
         const isActuallyPending = actualStatus === 'Pending';
 
@@ -5413,7 +5746,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                   setPendingRejectApp(null);
 
-                  void handleReview(app, 'Rejected', notes);
+                  if (app) {
+                    void handleReview(app, 'Rejected', notes);
+                  }
 
                 }}
 
@@ -5585,7 +5920,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                 style={styles.membersModalClose}
 
-                onPress={() => setShowMembersModal(false)} 
+                onPress={() => setShowMembersModal(false)}
 
                 activeOpacity={0.85}
 
@@ -5619,9 +5954,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                           : member.role === 'Partner'
 
-                          ? styles.memberAvatarPartner
+                            ? styles.memberAvatarPartner
 
-                          : styles.memberAvatarVolunteer,
+                            : styles.memberAvatarVolunteer,
 
                       ]}
 
@@ -5783,6 +6118,14 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         </View>
 
       </Modal>
+
+      {/* ───── Delete Entire Chat Confirmation Modal ───── */}
+      <DeleteChatConfirmationModal
+        visible={pendingDeleteConversation !== null}
+        onClose={() => setPendingDeleteConversation(null)}
+        onConfirm={confirmDeleteConversation}
+        userName={pendingDeleteConversation?.user?.name}
+      />
 
       <View style={styles.layout}>
 
@@ -6278,6 +6621,10 @@ const styles = StyleSheet.create({
 
   sidebarItemHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
 
+  sidebarItemSubtitleRow: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+
+  sidebarItemMenuButton: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center', marginLeft: 4 },
+
   sidebarItemTitle: { fontSize: 13, fontWeight: '800', color: '#1e293b' },
 
   sidebarItemTitleActive: { color: '#166534' },
@@ -6658,7 +7005,7 @@ const styles = StyleSheet.create({
 
   },
 
-  
+
 
   imagePreviewBackdrop: {
 
@@ -6743,16 +7090,64 @@ const styles = StyleSheet.create({
   messageRowOwn: { alignSelf: 'flex-end', alignItems: 'flex-end' },
 
   messageRowOther: { alignSelf: 'flex-start' },
+  groupMessageSenderName: { fontSize: 10, fontWeight: '800', color: '#64748b', marginLeft: 8, marginBottom: 2 },
+  messageBubbleContainer: { flexDirection: 'row', alignItems: 'flex-end', gap: 4 },
+  messageBubbleContainerOwn: { justifyContent: 'flex-end' },
+  messageBubbleContainerOther: { justifyContent: 'flex-start' },
 
   bubble: { padding: 8, borderRadius: 12 },
 
   bubbleOwn: { backgroundColor: '#166534', borderBottomRightRadius: 3 },
 
   bubbleOther: { backgroundColor: '#f1f5f9', borderBottomLeftRadius: 3 },
+  bubbleDeleted: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0' },
 
   bubbleText: { fontSize: 12, lineHeight: 16, color: '#334155' },
 
   bubbleTextOwn: { color: '#fff' },
+  bubbleTextDeleted: { fontSize: 12, fontStyle: 'italic', color: '#94a3b8' },
+  bubbleTextDeletedOwn: { color: '#cbd5e1' },
+  replyQuoteBox: { flexDirection: 'row', gap: 6, minWidth: 150, marginBottom: 6, padding: 6, borderRadius: 8, backgroundColor: '#ffffff' },
+  replyQuoteBoxOwn: { backgroundColor: 'rgba(255,255,255,0.14)' },
+  replyQuoteBoxOther: { backgroundColor: '#e2e8f0' },
+  replyQuoteBar: { width: 3, borderRadius: 2, backgroundColor: '#166534' },
+  replyQuoteBarOwn: { backgroundColor: '#bbf7d0' },
+  replyQuoteBarOther: { backgroundColor: '#166534' },
+  replyQuoteSender: { fontSize: 10, fontWeight: '800', color: '#166534' },
+  replyQuoteSenderOwn: { color: '#dcfce7' },
+  replyQuoteContent: { maxWidth: 220, marginTop: 2, fontSize: 10, color: '#64748b' },
+  replyQuoteContentOwn: { color: '#d1fae5' },
+  messageMenuTrigger: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
+  messageMenuTriggerOwn: { marginLeft: 2 },
+  messageMenuTriggerOther: { marginRight: 2 },
+  inlineMessageMenu: { position: 'absolute', top: 24, width: 130, padding: 4, borderRadius: 8, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e2e8f0', shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 6, elevation: 4, zIndex: 20 },
+  inlineMessageMenuOwn: { right: 0 },
+  inlineMessageMenuOther: { left: 0 },
+  inlineMessageOptionItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, paddingVertical: 8, borderRadius: 6 },
+  inlineMessageOptionDanger: { backgroundColor: '#fef2f2' },
+  inlineMessageOptionText: { fontSize: 11, fontWeight: '600', color: '#334155' },
+  messageTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  messageTimeRowOwn: { justifyContent: 'flex-end' },
+  messageTimeRowOther: { justifyContent: 'flex-start' },
+  messageEditedLabel: { fontSize: 9, color: '#94a3b8', fontStyle: 'italic' },
+  approvedNoticeContainer: { width: '100%', padding: 12, borderRadius: 12, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#bbf7d0' },
+  approvedNoticeHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  approvedNoticeIconCircle: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
+  approvedBadgePill: { alignSelf: 'flex-start', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 999 },
+  approvedBadgeText: { fontSize: 9, fontWeight: '900' },
+  approvedNoticeHeadline: { marginTop: 5, fontSize: 12, lineHeight: 17, fontWeight: '700', color: '#334155' },
+  approvedNoticeButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 12, paddingVertical: 9, borderRadius: 8, backgroundColor: '#166534' },
+  approvedNoticeButtonText: { color: '#ffffff', fontSize: 11, fontWeight: '800' },
+  composerBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: '#f8fafc', borderTopWidth: 1, borderTopColor: '#e2e8f0' },
+  composerBannerIconWrap: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: '#e0f2fe' },
+  composerBannerTitle: { fontSize: 11, fontWeight: '800', color: '#166534' },
+  composerBannerSnippet: { marginTop: 1, fontSize: 10, color: '#64748b' },
+  composerBannerCloseBtn: { padding: 4 },
+  loadingModalOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(15,23,42,0.35)' },
+  loadingModalContent: { alignItems: 'center', gap: 10, padding: 24, borderRadius: 14, backgroundColor: '#ffffff' },
+  loadingModalText: { fontSize: 13, fontWeight: '700', color: '#334155' },
+  memberAvatarInitial: { color: '#166534', fontSize: 13, fontWeight: '900' },
+  memberRole: { marginTop: 2, fontSize: 10, color: '#64748b', fontWeight: '600' },
 
   messageAttachmentList: { gap: 6, marginTop: 8 },
 
@@ -8385,6 +8780,64 @@ const styles = StyleSheet.create({
 
 });
 
+// Message action popup modal styles
+const msgMenuStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 300,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    overflow: 'hidden',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.2,
+    shadowRadius: 24,
+    elevation: 14,
+  },
+  option: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    backgroundColor: '#ffffff',
+  },
+  optionDanger: {
+    backgroundColor: '#fef2f2',
+  },
+  iconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconBoxDanger: {
+    backgroundColor: '#fee2e2',
+  },
+  optionText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1e293b',
+    flex: 1,
+  },
+  optionTextDanger: {
+    color: '#dc2626',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#f1f5f9',
+  },
+});
+
 // Inline proposal draft card styles (separate from main StyleSheet to keep things clean)
 const inlineStyles = StyleSheet.create({
   draftCardWrap: {
@@ -8689,7 +9142,10 @@ const inlineStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    maxWidth: '82%',
+    maxWidth: '92%',
+  },
+  proposalMessageRow: {
+    maxWidth: '100%',
   },
   messageBubbleContainerOwn: {
     flexDirection: 'row-reverse',
@@ -8816,56 +9272,45 @@ const inlineStyles = StyleSheet.create({
   composerBannerCloseBtn: {
     padding: 4,
   },
-  messageActionModalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.45)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  messageActionModalCard: {
-    width: '100%',
-    maxWidth: 320,
+  inlineMessageMenu: {
+    position: 'absolute',
+    top: 24,
+    width: 140,
     backgroundColor: '#ffffff',
-    borderRadius: 20,
-    padding: 16,
+    borderRadius: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 4,
     shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.15,
-    shadowRadius: 20,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    zIndex: 99999,
   },
-  messageActionModalHeader: {
+  inlineMessageMenuOwn: {
+    right: 0,
+  },
+  inlineMessageMenuOther: {
+    left: 0,
+  },
+  inlineMessageOptionItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-    marginBottom: 8,
+    gap: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    borderRadius: 6,
   },
-  messageActionModalTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#0f172a',
+  inlineMessageOptionDanger: {
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    marginTop: 2,
+    paddingTop: 7,
   },
-  messageActionOptionsList: {
-    gap: 4,
-  },
-  messageActionOptionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-  },
-  messageActionOptionDanger: {
-    backgroundColor: '#fef2f2',
-    marginTop: 4,
-  },
-  messageActionOptionText: {
-    fontSize: 14,
+  inlineMessageOptionText: {
+    fontSize: 13,
     fontWeight: '600',
     color: '#334155',
   },

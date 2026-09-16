@@ -5,6 +5,7 @@ $pidDir      = Join-Path $projectRoot '.dev-pids'
 $backendLog  = Join-Path $pidDir 'backend.log'
 $backendErr  = Join-Path $pidDir 'backend.err.log'
 $webLog      = Join-Path $pidDir 'web.log'
+$webErr      = Join-Path $pidDir 'web.err.log'
 
 Write-Host ""
 Write-Host "==========================================="
@@ -24,17 +25,16 @@ foreach ($port in @(8000, 8081)) {
   }
 }
 
-Start-Sleep -Seconds 2
+Start-Sleep -Seconds 1
 
 Write-Host "  Starting backend on port 8000..."
 
 if (Test-Path $backendLog) { Remove-Item $backendLog -Force -ErrorAction SilentlyContinue }
 if (Test-Path $backendErr) { Remove-Item $backendErr -Force -ErrorAction SilentlyContinue }
-if (Test-Path $webLog) { Remove-Item $webLog -Force -ErrorAction SilentlyContinue }
+if (Test-Path $webLog)     { Remove-Item $webLog -Force -ErrorAction SilentlyContinue }
+if (Test-Path $webErr)     { Remove-Item $webErr -Force -ErrorAction SilentlyContinue }
 
-$escapedRoot = $projectRoot.Replace("'", "''")
-$backendCmd  = "Set-Location '$escapedRoot'; npm run backend:stable 2>&1 | Tee-Object -FilePath '$($backendLog.Replace("'", "''"))'"
-$backendProc = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $backendCmd) -PassThru -WindowStyle Hidden
+$backendProc = Start-Process -FilePath 'node.exe' -ArgumentList @('scripts/run-python.js', '-m', 'uvicorn', 'backend.api:app', '--host', '0.0.0.0', '--port', '8000', '--ws', 'websockets') -WorkingDirectory $projectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput $backendLog -RedirectStandardError $backendErr
 
 Set-Content -Path (Join-Path $pidDir 'backend.pid') -Value $backendProc.Id
 Write-Host "  Backend started (PID $($backendProc.Id))"
@@ -66,12 +66,11 @@ if (-not $healthy) {
 }
 
 Write-Host "  Starting web app on port 8081..."
-$webCmd = "Set-Location '$escapedRoot'; npm run web 2>&1 | Tee-Object -FilePath '$($webLog.Replace("'", "''"))'"
-$webProc = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $webCmd) -PassThru -WindowStyle Hidden
+$webProc = Start-Process -FilePath 'node.exe' -ArgumentList @('scripts/run-vite.mjs') -WorkingDirectory $projectRoot -PassThru -WindowStyle Hidden -RedirectStandardOutput $webLog -RedirectStandardError $webErr
 
 Set-Content -Path (Join-Path $pidDir 'web.pid') -Value $webProc.Id
 Write-Host "  Web app started (PID $($webProc.Id))"
-Write-Host "  Waiting for web app to be ready before opening browsers..."
+Write-Host "  Waiting for web app to be ready..."
 
 $webReady = $false
 for ($i = 0; $i -lt 60; $i++) {
@@ -82,18 +81,18 @@ for ($i = 0; $i -lt 60; $i++) {
   }
 
   try {
-    $resp = Invoke-WebRequest -Uri "http://$($env:COMPUTERNAME):8081" -Method Get -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
-    if ($resp.StatusCode -eq 200) {
+    $conn = Test-NetConnection -ComputerName 127.0.0.1 -Port 8081 -WarningAction SilentlyContinue
+    if ($conn.TcpTestSucceeded) {
       $webReady = $true
       Write-Host "  Web app is ready!" -ForegroundColor Green
       Write-Host ""
       Write-Host "  Opening browsers (1 desktop + 1 mobile view)..." -ForegroundColor Cyan
-      Write-Host "    - Desktop Web: http://$($env:COMPUTERNAME):8081" -ForegroundColor Gray
-      Write-Host "    - Mobile Web:  http://$($env:COMPUTERNAME):8081?mode=mobile" -ForegroundColor Gray
+      Write-Host "    - Desktop Web: http://localhost:8081" -ForegroundColor Gray
+      Write-Host "    - Mobile Web:  http://localhost:8081?mode=mobile" -ForegroundColor Gray
       Write-Host ""
-      Start-Process "http://$($env:COMPUTERNAME):8081"
+      Start-Process "http://localhost:8081"
       Start-Sleep -Milliseconds 800
-      Start-Process "http://$($env:COMPUTERNAME):8081?mode=mobile"
+      Start-Process "http://localhost:8081?mode=mobile"
       break
     }
   } catch {
@@ -108,7 +107,7 @@ if (-not $webReady) {
 
 Write-Host ""
 Write-Host "  Volunteer System is running."
-Write-Host "  Desktop Web: http://$($env:COMPUTERNAME):8081"
-Write-Host "  Mobile Web:  http://$($env:COMPUTERNAME):8081?mode=mobile"
+Write-Host "  Desktop Web: http://localhost:8081"
+Write-Host "  Mobile Web:  http://localhost:8081?mode=mobile"
 Write-Host "  Run npm stop to stop backend and web app."
 Write-Host ""
