@@ -7,6 +7,7 @@
 -- ── Drop existing tables to start fresh ─────────────────────
 DROP TABLE IF EXISTS public.messages CASCADE;
 DROP TABLE IF EXISTS public.project_group_messages CASCADE;
+DROP TABLE IF EXISTS public.event_group_messages CASCADE;
 DROP TABLE IF EXISTS public.admin_planning_items CASCADE;
 DROP TABLE IF EXISTS public.admin_planning_calendars CASCADE;
 DROP TABLE IF EXISTS public.volunteer_time_logs CASCADE;
@@ -142,22 +143,8 @@ CREATE TABLE public.programs (
   icon text,
   color text,
   program_id text,
+  tracks jsonb NOT NULL DEFAULT '[]'::jsonb,
   CONSTRAINT programs_pkey PRIMARY KEY (id)
-);
-
--- ── program_tracks ───────────────────────────────────────────
-CREATE TABLE public.program_tracks (
-  id text NOT NULL,
-  title text NOT NULL,
-  description text,
-  icon text,
-  color text,
-  image_url text,
-  sort_order integer NOT NULL DEFAULT 0,
-  is_active boolean NOT NULL DEFAULT true,
-  created_at text,
-  updated_at text,
-  CONSTRAINT program_tracks_pkey PRIMARY KEY (id)
 );
 
 -- ── projects ─────────────────────────────────────────────────
@@ -251,20 +238,6 @@ CREATE TABLE public.status_updates (
   updated_at text,
   source text,
   CONSTRAINT status_updates_pkey PRIMARY KEY (status_updates_id)
-);
-
--- ── volunteer_matches ────────────────────────────────────────
-CREATE TABLE public.volunteer_matches (
-  volunteer_matches_id text NOT NULL,
-  volunteer_id text,
-  project_id text,
-  status text,
-  requested_at text,
-  matched_at text,
-  reviewed_at text,
-  reviewed_by text,
-  hours_contributed double precision NOT NULL,
-  CONSTRAINT volunteer_matches_pkey PRIMARY KEY (volunteer_matches_id)
 );
 
 -- ── volunteer_event_joins ────────────────────────────────────
@@ -385,36 +358,25 @@ CREATE TABLE public.project_group_messages (
   response_to_message_id text,
   response_action text,
   response_to_title text,
-  attachments jsonb NOT NULL DEFAULT '[]'::jsonb
+  attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
+  CONSTRAINT project_group_messages_pkey PRIMARY KEY (id)
 );
 
--- ── admin_planning_calendars ─────────────────────────────────
-CREATE TABLE public.admin_planning_calendars (
-  admin_planning_calendars_id text NOT NULL,
-  name text NOT NULL,
-  color text NOT NULL,
-  description text,
-  planning_items jsonb NOT NULL DEFAULT '[]',
-  created_at text NOT NULL,
-  updated_at text NOT NULL,
-  CONSTRAINT admin_planning_calendars_pkey PRIMARY KEY (admin_planning_calendars_id)
-);
-
--- ── admin_planning_items ─────────────────────────────────────
-CREATE TABLE public.admin_planning_items (
-  admin_planning_items_id text NOT NULL,
-  title text NOT NULL,
-  description text,
-  calendar_id text NOT NULL,
-  linked_project_id text,
-  start_date text NOT NULL,
-  end_date text NOT NULL,
-  location text,
-  participants_label text,
-  created_by text NOT NULL,
-  created_at text NOT NULL,
-  updated_at text NOT NULL,
-  CONSTRAINT admin_planning_items_pkey PRIMARY KEY (admin_planning_items_id)
+-- ── event_group_messages ─────────────────────────────────────
+CREATE TABLE public.event_group_messages (
+  id text NOT NULL,
+  event_id text NOT NULL,
+  sender_id text NOT NULL,
+  content text NOT NULL,
+  timestamp timestamp with time zone NOT NULL,
+  kind text NOT NULL,
+  need_post jsonb,
+  scope_proposal jsonb,
+  response_to_message_id text,
+  response_action text,
+  response_to_title text,
+  attachments jsonb NOT NULL DEFAULT '[]'::jsonb,
+  CONSTRAINT event_group_messages_pkey PRIMARY KEY (id)
 );
 
 -- ── Indexes ──────────────────────────────────────────────────
@@ -423,8 +385,6 @@ CREATE INDEX IF NOT EXISTS idx_messages_sender_id               ON public.messag
 CREATE INDEX IF NOT EXISTS idx_projects_partner_id              ON public.projects(partner_id);
 CREATE INDEX IF NOT EXISTS idx_projects_program_id              ON public.projects(program_id);
 CREATE INDEX IF NOT EXISTS idx_events_partner_id                ON public.events(partner_id);
-CREATE INDEX IF NOT EXISTS idx_volunteer_matches_volunteer      ON public.volunteer_matches(volunteer_id);
-CREATE INDEX IF NOT EXISTS idx_volunteer_matches_project        ON public.volunteer_matches(project_id);
 CREATE INDEX IF NOT EXISTS idx_volunteer_event_joins_project    ON public.volunteer_event_joins(project_id);
 CREATE INDEX IF NOT EXISTS idx_volunteer_event_joins_volunteer  ON public.volunteer_event_joins(volunteer_id);
 CREATE INDEX IF NOT EXISTS idx_volunteer_time_logs_volunteer    ON public.volunteer_time_logs(volunteer_id);
@@ -432,4 +392,6 @@ CREATE INDEX IF NOT EXISTS idx_volunteer_time_logs_project      ON public.volunt
 CREATE INDEX IF NOT EXISTS idx_reports_project_id               ON public.reports(project_id);
 CREATE INDEX IF NOT EXISTS idx_reports_partner_id               ON public.reports(partner_id);
 CREATE INDEX IF NOT EXISTS idx_status_updates_project_id        ON public.status_updates(project_id);
-CREATE INDEX IF NOT EXISTS idx_admin_planning_items_calendar    ON public.admin_planning_items(calendar_id);
+CREATE INDEX IF NOT EXISTS idx_project_group_messages_project   ON public.project_group_messages(project_id);
+CREATE INDEX IF NOT EXISTS idx_event_group_messages_event       ON public.event_group_messages(event_id);
+

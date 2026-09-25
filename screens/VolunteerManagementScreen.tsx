@@ -59,7 +59,11 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
-  const [isReviewingAccount, setIsReviewingAccount] = useState<{ loading: boolean; text: string } | null>(null);
+  const [isReviewingAccount, setIsReviewingAccount] = useState<{
+    status: 'loading' | 'success' | 'rejected' | 'error';
+    title: string;
+    subtitle?: string;
+  } | null>(null);
 
   useEffect(() => {
     if (navigation) {
@@ -67,6 +71,13 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
       navigation.setOptions({ headerShown: showHeader });
     }
   }, [view, navigation]);
+
+  useEffect(() => {
+    if (route?.params?.filter) {
+      setStatusFilter(route.params.filter as any);
+      setView('list');
+    }
+  }, [route?.params?.filter]);
 
   useEffect(() => {
     if (!actionNotice) {
@@ -246,7 +257,11 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
     const previousVolunteers = volunteers;
     const previousSelected = selectedVolunteer;
     try {
-      setIsReviewingAccount({ loading: true, text: 'Approving Volunteer...' });
+      setIsReviewingAccount({
+        status: 'loading',
+        title: 'Approving volunteer',
+        subtitle: 'Please wait a moment...',
+      });
       const updated = {
         ...selectedVolunteer,
         registrationStatus: 'Approved' as const,
@@ -264,13 +279,22 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
         await saveVolunteer(updated);
       }
       void loadVolunteers();
+
+      setIsReviewingAccount({
+        status: 'success',
+        title: 'Approved',
+        subtitle: 'Volunteer approved successfully',
+      });
+      await new Promise(resolve => setTimeout(resolve, 1000));
     } catch (error) {
       setVolunteers(previousVolunteers);
       setSelectedVolunteer(previousSelected);
-      Alert.alert(
-        getRequestErrorTitle(error),
-        getRequestErrorMessage(error, 'Failed to approve volunteer application.')
-      );
+      setIsReviewingAccount({
+        status: 'error',
+        title: 'Approval Failed',
+        subtitle: getRequestErrorMessage(error, 'Failed to approve volunteer application.'),
+      });
+      await new Promise(resolve => setTimeout(resolve, 1500));
     } finally {
       setIsReviewingAccount(null);
     }
@@ -287,7 +311,11 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
     const previousSelected = selectedVolunteer;
     const reason = rejectionReason.trim() || 'Application did not meet requirements.';
     try {
-      setIsReviewingAccount({ loading: true, text: 'Declining Volunteer...' });
+      setIsReviewingAccount({
+        status: 'loading',
+        title: 'Please wait',
+        subtitle: 'Declining volunteer application...',
+      });
       const updated = {
         ...selectedVolunteer,
         registrationStatus: 'Rejected' as const,
@@ -306,13 +334,22 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
         await saveVolunteer(updated);
       }
       void loadVolunteers();
+
+      setIsReviewingAccount({
+        status: 'rejected',
+        title: 'Rejected',
+        subtitle: 'Volunteer application declined',
+      });
+      await new Promise(resolve => setTimeout(resolve, 1000));
     } catch (error) {
       setVolunteers(previousVolunteers);
       setSelectedVolunteer(previousSelected);
-      Alert.alert(
-        getRequestErrorTitle(error),
-        getRequestErrorMessage(error, 'Failed to reject volunteer application.')
-      );
+      setIsReviewingAccount({
+        status: 'error',
+        title: 'Action Failed',
+        subtitle: getRequestErrorMessage(error, 'Failed to reject volunteer application.'),
+      });
+      await new Promise(resolve => setTimeout(resolve, 1500));
     } finally {
       setIsReviewingAccount(null);
     }
@@ -791,6 +828,28 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                     ) : null}
                   </View>
                 </View>
+              </View>
+
+              <View style={styles.applicationGridColumn}>
+                <View style={styles.applicationPanel}>
+                  <View style={styles.applicationPanelHeader}>
+                    <MaterialIcons name="bar-chart" size={16} color="#166534" />
+                    <Text style={styles.applicationPanelTitle}>Activity Overview</Text>
+                  </View>
+                  {[
+                    { label: 'Events Joined', icon: 'event', value: eventsJoinedCount },
+                    { label: 'Photo Reports', icon: 'photo-camera', value: photoReportsCount },
+                    { label: 'Completed Events', icon: 'check-circle', value: completedEventsCount },
+                  ].map(row => (
+                    <View key={row.label} style={styles.applicationOverviewRow}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <MaterialIcons name={row.icon as any} size={16} color="#64748b" style={{ marginRight: 10 }} />
+                        <Text style={styles.applicationOverviewLabel}>{row.label}</Text>
+                      </View>
+                      <Text style={styles.applicationOverviewValue}>{row.value}</Text>
+                    </View>
+                  ))}
+                </View>
 
                 <View style={styles.applicationStatRow}>
                   <View style={styles.applicationStatCard}>
@@ -827,28 +886,6 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                       ))}
                     </View>
                   )}
-                </View>
-              </View>
-
-              <View style={styles.applicationGridColumn}>
-                <View style={styles.applicationPanel}>
-                  <View style={styles.applicationPanelHeader}>
-                    <MaterialIcons name="bar-chart" size={16} color="#166534" />
-                    <Text style={styles.applicationPanelTitle}>Activity Overview</Text>
-                  </View>
-                  {[
-                    { label: 'Events Joined', icon: 'event', value: eventsJoinedCount },
-                    { label: 'Photo Reports', icon: 'photo-camera', value: photoReportsCount },
-                    { label: 'Completed Events', icon: 'check-circle', value: completedEventsCount },
-                  ].map(row => (
-                    <View key={row.label} style={styles.applicationOverviewRow}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                        <MaterialIcons name={row.icon as any} size={16} color="#64748b" style={{ marginRight: 10 }} />
-                        <Text style={styles.applicationOverviewLabel}>{row.label}</Text>
-                      </View>
-                      <Text style={styles.applicationOverviewValue}>{row.value}</Text>
-                    </View>
-                  ))}
                 </View>
               </View>
             </View>
@@ -1077,46 +1114,6 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                     ) : null}
                   </View>
                 </View>
-
-                <View style={styles.applicationStatRow}>
-                  <View style={styles.applicationStatCard}>
-                    <MaterialIcons name="event" size={20} color="#166534" />
-                    <Text style={styles.applicationStatValue}>{eventsJoinedCount}</Text>
-                    <Text style={styles.applicationStatLabel}>Events Joined</Text>
-                    <Text style={[styles.applicationStatLabel, { color: '#94a3b8' }]}>Total records</Text>
-                  </View>
-                  <View style={styles.applicationStatCard}>
-                    <MaterialIcons name="photo-camera" size={20} color="#166534" />
-                    <Text style={styles.applicationStatValue}>{photoReportsCount}</Text>
-                    <Text style={styles.applicationStatLabel}>Photo Reports</Text>
-                    <Text style={[styles.applicationStatLabel, { color: '#94a3b8' }]}>Total records</Text>
-                  </View>
-                  <View style={styles.applicationStatCard}>
-                    <MaterialIcons name="check-circle" size={20} color="#166534" />
-                    <Text style={styles.applicationStatValue}>{completedEventsCount}</Text>
-                    <Text style={styles.applicationStatLabel}>Completed Events</Text>
-                    <Text style={[styles.applicationStatLabel, { color: '#94a3b8' }]}>Total records</Text>
-                  </View>
-                </View>
-
-                <View style={styles.applicationPanel}>
-                  <View style={styles.applicationPanelHeader}>
-                    <MaterialIcons name="event" size={16} color="#166534" />
-                    <Text style={styles.applicationPanelTitle}>Events Joined</Text>
-                  </View>
-                  <Text style={styles.applicationStatValue}>{eventsJoinedCount}</Text>
-                  {eventsJoinedCount === 0 ? (
-                    <Text style={styles.applicationAvailableEmpty}>None yet</Text>
-                  ) : (
-                    <View style={{ marginTop: 8, gap: 6 }}>
-                      {joinedEvents.slice(0, 3).map(projectEntry => (
-                        <View key={projectEntry.id} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <Text style={[styles.applicationAvailableItem, { flex: 1 }]}>{projectEntry.title}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-                </View>
               </View>
 
               {/* Right column */}
@@ -1141,6 +1138,27 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                   ))}
                 </View>
 
+                <View style={styles.applicationStatRow}>
+                  <View style={styles.applicationStatCard}>
+                    <MaterialIcons name="event" size={20} color="#166534" />
+                    <Text style={styles.applicationStatValue}>{eventsJoinedCount}</Text>
+                    <Text style={styles.applicationStatLabel}>Events Joined</Text>
+                    <Text style={[styles.applicationStatLabel, { color: '#94a3b8' }]}>Total records</Text>
+                  </View>
+                  <View style={styles.applicationStatCard}>
+                    <MaterialIcons name="photo-camera" size={20} color="#166534" />
+                    <Text style={styles.applicationStatValue}>{photoReportsCount}</Text>
+                    <Text style={styles.applicationStatLabel}>Photo Reports</Text>
+                    <Text style={[styles.applicationStatLabel, { color: '#94a3b8' }]}>Total records</Text>
+                  </View>
+                  <View style={styles.applicationStatCard}>
+                    <MaterialIcons name="check-circle" size={20} color="#166534" />
+                    <Text style={styles.applicationStatValue}>{completedEventsCount}</Text>
+                    <Text style={styles.applicationStatLabel}>Completed Events</Text>
+                    <Text style={[styles.applicationStatLabel, { color: '#94a3b8' }]}>Total records</Text>
+                  </View>
+                </View>
+
                 {/* Events Joined */}
                 <View style={styles.applicationPanel}>
                   <View style={styles.applicationPanelHeader}>
@@ -1148,6 +1166,7 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
                     <Text style={styles.applicationPanelTitle}>Events Joined</Text>
                     <Text style={[styles.applicationInfoLabel, { marginLeft: 'auto' }]}>{joinedEvents.length} total</Text>
                   </View>
+                  <Text style={styles.applicationStatValue}>{eventsJoinedCount}</Text>
                   {joinedEvents.length === 0 ? (
                     <Text style={styles.applicationAvailableEmpty}>None yet</Text>
                   ) : (
@@ -1436,16 +1455,73 @@ export default function VolunteerManagementScreen({ navigation, route }: any) {
         contentContainerStyle={styles.listContent}
       />
 
-      {/* Review Account Loading Modal */}
+      {/* Review Account Loading & Status Feedback Modal Card */}
       {isReviewingAccount && (
         <Modal transparent visible animationType="fade">
-          <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.45)', justifyContent: 'center', alignItems: 'center', zIndex: 99999 }}>
-            <View style={{ backgroundColor: '#ffffff', padding: 28, borderRadius: 18, alignItems: 'center', gap: 14, minWidth: 240, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 16, elevation: 10 }}>
-              <ActivityIndicator size="large" color="#166534" />
-              <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>
-                {isReviewingAccount.text}
+          <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 99999 }}>
+            <View style={{
+              backgroundColor: '#ffffff',
+              paddingVertical: 28,
+              paddingHorizontal: 32,
+              borderRadius: 20,
+              alignItems: 'center',
+              gap: 12,
+              minWidth: 260,
+              maxWidth: 340,
+              shadowColor: '#0f172a',
+              shadowOffset: { width: 0, height: 10 },
+              shadowOpacity: 0.22,
+              shadowRadius: 20,
+              elevation: 25,
+              borderWidth: 1.5,
+              borderColor:
+                isReviewingAccount.status === 'success'
+                  ? '#86efac'
+                  : isReviewingAccount.status === 'rejected'
+                    ? '#fca5a5'
+                    : isReviewingAccount.status === 'error'
+                      ? '#f87171'
+                      : '#e2e8f0',
+            }}>
+              {isReviewingAccount.status === 'loading' ? (
+                <View style={{ width: 58, height: 58, borderRadius: 29, backgroundColor: '#f0fdf4', justifyContent: 'center', alignItems: 'center', marginBottom: 2 }}>
+                  <ActivityIndicator size="large" color="#166534" />
+                </View>
+              ) : isReviewingAccount.status === 'success' ? (
+                <View style={{ width: 58, height: 58, borderRadius: 29, backgroundColor: '#dcfce7', justifyContent: 'center', alignItems: 'center', marginBottom: 2 }}>
+                  <MaterialIcons name="check-circle" size={42} color="#16a34a" />
+                </View>
+              ) : isReviewingAccount.status === 'rejected' ? (
+                <View style={{ width: 58, height: 58, borderRadius: 29, backgroundColor: '#fee2e2', justifyContent: 'center', alignItems: 'center', marginBottom: 2 }}>
+                  <MaterialIcons name="cancel" size={42} color="#dc2626" />
+                </View>
+              ) : (
+                <View style={{ width: 58, height: 58, borderRadius: 29, backgroundColor: '#fee2e2', justifyContent: 'center', alignItems: 'center', marginBottom: 2 }}>
+                  <MaterialIcons name="error-outline" size={42} color="#dc2626" />
+                </View>
+              )}
+
+              <Text style={{
+                fontSize: 18,
+                fontWeight: '800',
+                color:
+                  isReviewingAccount.status === 'success'
+                    ? '#15803d'
+                    : isReviewingAccount.status === 'rejected'
+                      ? '#dc2626'
+                      : isReviewingAccount.status === 'error'
+                        ? '#b91c1c'
+                        : '#0f172a',
+                textAlign: 'center',
+              }}>
+                {isReviewingAccount.title}
               </Text>
-              <Text style={{ fontSize: 12, color: '#64748b' }}>Please wait a moment</Text>
+
+              {isReviewingAccount.subtitle ? (
+                <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center', lineHeight: 18 }}>
+                  {isReviewingAccount.subtitle}
+                </Text>
+              ) : null}
             </View>
           </View>
         </Modal>

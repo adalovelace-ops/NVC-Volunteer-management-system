@@ -48,6 +48,22 @@ type MapContentProps = {
   onVolunteerPress?: (volunteerId: string) => void;
 };
 
+function formatMapEventDate(startDate?: string, endDate?: string): string {
+  if (!startDate) return '';
+  try {
+    const s = new Date(startDate);
+    if (isNaN(s.getTime())) return startDate;
+    const sStr = s.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    if (!endDate) return sStr;
+    const e = new Date(endDate);
+    if (isNaN(e.getTime()) || s.getTime() === e.getTime()) return sStr;
+    const eStr = e.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return `${sStr} - ${eStr}`;
+  } catch {
+    return `${startDate}${endDate ? ` - ${endDate}` : ''}`;
+  }
+}
+
 const MapContent = React.memo<MapContentProps>(
   ({ displayProjects, mapRegion, nativeMapType, onSelectProject, partnerAccounts, volunteerAccounts, onPartnerPress, onVolunteerPress }) => (
     <MapView
@@ -621,8 +637,8 @@ export default function VolunteerImpactMap({
             {selectedProject.startDate ? (
               <View style={styles.detailInfoItem}>
                 <MaterialIcons name="event" size={16} color="#166534" />
-                <Text style={styles.detailDateText}>
-                  {selectedProject.startDate}{selectedProject.endDate ? ` - ${selectedProject.endDate}` : ''}
+                <Text style={styles.detailDateText} numberOfLines={1}>
+                  {formatMapEventDate(selectedProject.startDate, selectedProject.endDate)}
                 </Text>
               </View>
             ) : null}
@@ -911,18 +927,24 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
+    maxWidth: '100%',
+    overflow: 'hidden',
   },
   detailCardHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     marginBottom: 8,
+    width: '100%',
+    minWidth: 0,
   },
   detailTagRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 6,
     marginBottom: 6,
+    maxWidth: '100%',
   },
   detailTypeTag: {
     paddingHorizontal: 6,
@@ -968,37 +990,52 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
     color: '#0f172a',
+    minWidth: 0,
+    flexShrink: 1,
   },
   detailInfoGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
     marginVertical: 8,
+    gap: 8,
+    width: '100%',
+    minWidth: 0,
   },
   detailInfoItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 6,
+    width: '100%',
+    minWidth: 0,
   },
   detailAddress: {
     fontSize: 12,
     color: '#334155',
+    flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
   },
   detailDateText: {
     fontSize: 12,
     color: '#475569',
     fontWeight: '600',
+    flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
   },
   detailVolunteersText: {
     fontSize: 12,
     color: '#166534',
     fontWeight: '600',
+    flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
   },
   detailDescription: {
     marginTop: 4,
     fontSize: 12,
     lineHeight: 17,
     color: '#64748b',
+    minWidth: 0,
+    flexShrink: 1,
   },
   menuBackdrop: {
     flex: 1,

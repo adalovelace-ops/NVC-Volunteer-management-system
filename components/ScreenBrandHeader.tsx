@@ -145,8 +145,8 @@ export default function ScreenBrandHeader({
       items.push({
         id: `volunteer-request-${request.id}`,
         type: 'volunteer-request',
-        title: request.projectTitle || 'New volunteer request',
-        subtitle: `${request.volunteerName || request.volunteerId || 'Volunteer'} requested to join`,
+        title: `Volunteer Application: ${request.volunteerName || 'Volunteer'}`,
+        subtitle: `Applied to join "${request.projectTitle || 'Event'}"`,
         timestamp: formatTimestamp(request.requestedAt || request.matchedAt),
         data: request,
       });
@@ -163,7 +163,11 @@ export default function ScreenBrandHeader({
     if (navigation) {
       switch (item.type) {
         case 'approval':
-          navigation.navigate('Users');
+          if (item.data?.role === 'volunteer') {
+            navigation.navigate('Volunteers', { filter: 'Pending' });
+          } else {
+            navigation.navigate('Users');
+          }
           break;
         case 'message':
           navigation.navigate('Messages', {
@@ -183,6 +187,7 @@ export default function ScreenBrandHeader({
         case 'volunteer-request':
           navigation.navigate('Projects', {
             projectId: item.data?.projectId,
+            openApplicationsModal: true,
           });
           break;
       }

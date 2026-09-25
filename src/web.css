@@ -1,3 +1,38 @@
+@font-face {
+  font-family: 'Nunito';
+  src: url('../assets/fonts/Nunito-Light.ttf') format('truetype');
+  font-weight: 300;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Nunito';
+  src: url('../assets/fonts/Nunito-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Nunito';
+  src: url('../assets/fonts/Nunito-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Nunito';
+  src: url('../assets/fonts/Nunito-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Nunito';
+  src: url('../assets/fonts/Nunito-ExtraBold.ttf') format('truetype');
+  font-weight: 800;
+  font-style: normal;
+}
+
 html,
 body,
 #root {
@@ -37,4 +72,43 @@ select {
 * {
   box-sizing: border-box;
   font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* Volunteer-side overall font override - forces Nunito on volunteer view */
+body.volunteer-side-active,
+body.volunteer-side-active #root,
+body.volunteer-side-active #root *:not(.rnv-icon):not([class*="rnv-icon"]):not([style*="MaterialIcons"]):not([style*="MaterialCommunityIcons"]):not([style*="Ionicons"]),
+body.volunteer-side-active input,
+body.volunteer-side-active textarea,
+body.volunteer-side-active button,
+body.volunteer-side-active select,
+body.volunteer-side-active [dir="auto"]:not(.rnv-icon):not([class*="rnv-icon"]):not([style*="MaterialIcons"]):not([style*="MaterialCommunityIcons"]):not([style*="Ionicons"]),
+body.volunteer-side-active div:not(#root):has([role="dialog"]) *:not(.rnv-icon):not([class*="rnv-icon"]):not([style*="MaterialIcons"]):not([style*="MaterialCommunityIcons"]):not([style*="Ionicons"]),
+[data-theme="volunteer"],
+[data-theme="volunteer"] *:not(.rnv-icon):not([class*="rnv-icon"]):not([style*="MaterialIcons"]):not([style*="MaterialCommunityIcons"]):not([style*="Ionicons"]),
+.volunteer-side-active,
+.volunteer-side-active *:not(.rnv-icon):not([class*="rnv-icon"]):not([style*="MaterialIcons"]):not([style*="MaterialCommunityIcons"]):not([style*="Ionicons"]) {
+  font-family: 'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+/* Preserve icon fonts */
+.rnv-icon-MaterialIcons,
+[style*="font-family: MaterialIcons"],
+[style*="font-family: 'MaterialIcons'"],
+[style*="font-family:\"MaterialIcons\""] {
+  font-family: MaterialIcons !important;
+}
+
+.rnv-icon-MaterialCommunityIcons,
+[style*="font-family: MaterialCommunityIcons"],
+[style*="font-family: 'MaterialCommunityIcons'"],
+[style*="font-family:\"MaterialCommunityIcons\""] {
+  font-family: MaterialCommunityIcons !important;
+}
+
+.rnv-icon-Ionicons,
+[style*="font-family: Ionicons"],
+[style*="font-family: 'Ionicons'"],
+[style*="font-family:\"Ionicons\""] {
+  font-family: Ionicons !important;
 }

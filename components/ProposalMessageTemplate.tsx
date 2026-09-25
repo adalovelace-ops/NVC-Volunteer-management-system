@@ -8,6 +8,7 @@ interface Props {
   application: PartnerProjectApplication;
   onEdit?: (app: PartnerProjectApplication) => void;
   onSubmit?: (app: PartnerProjectApplication) => void;
+  onReject?: (app: PartnerProjectApplication) => void;
   onOpenAttachment?: (url: string) => void;
   onViewProjects?: (app: PartnerProjectApplication) => void;
   isAdmin?: boolean;
@@ -51,14 +52,17 @@ function truncateFileName(fileName: string, maxLength: number = 22): string {
   return `${fileName.slice(0, maxLength - 3)}...`;
 }
 
-export default function ProposalMessageTemplate({ application, onEdit, onSubmit, onOpenAttachment, onViewProjects, isAdmin, isOwner, isSubmitting }: Props) {
+export default function ProposalMessageTemplate({ application, onEdit, onSubmit, onReject, onOpenAttachment, onViewProjects, isAdmin, isOwner, isSubmitting }: Props) {
   const { width } = useWindowDimensions();
-  const isMobile = width < 520;
+  const isMobile = width < 768;
   const d: any = (application as any).proposalDetails || {};
   const requestedModule = d.requestedProgramModule || 'Nutrition';
   const title = d.proposedTitle || 'Nutrition Program - Mingo Production and Feeding Initiative';
   const description = d.proposedDescription || 'Sourcing from local farmers, we manufacture nutritious food products to fill hungry stomachs. Our flagship product, Mingo, is used in our feeding program for undernourished children.';
   const targetLocation = d.proposedLocation || 'Negros Island Region (NIR)';
+  const communityNeed = d.communityNeed || (application as any).communityNeed || (!d.proposedTitle ? 'High prevalence of malnutrition and food insecurity among children in vulnerable coastal and farming communities.' : '');
+  const expectedOutcome = d.expectedDeliverables || d.expectedOutcome || (application as any).expectedDeliverables || (application as any).expectedOutcome || (!d.proposedTitle ? 'Daily supplementary feeding reaching over 500 children with measurable nutritional improvements within 6 months.' : '');
+  const partnerName = application.partnerName || (application as any).proposedByName || (d as any).partnerName || '';
   // City/Municipality: try to parse from proposedLocation, fallback to Bacolod City as spec
   let cityValue = 'Bacolod City';
   if (d.proposedLocation && String(d.proposedLocation).includes(',')) {
@@ -85,7 +89,7 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
   const docName = docUrl ? getFileName(docUrl, 'Nutrition Program Proposal.pdf') : 'Nutrition Program Proposal.pdf';
 
   // Status badge: DRAFT for Pending, else Approved/Rejected/Submitted
-  const rawStatus = (application.status || 'Pending').toLowerCase();
+  const rawStatus = (application.status || (d as any).status || 'Pending').toLowerCase();
   let badgeText = 'DRAFT';
   let badgeBg = '#EDE9FE';
   let badgeColor = '#7C3AED';
@@ -97,9 +101,14 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
     badgeText = 'Rejected';
     badgeBg = '#FEE2E2';
     badgeColor = '#DC2626';
+  } else if (rawStatus === 'resubmitted') {
+    badgeText = 'Resubmitted';
+    badgeBg = '#DBEAFE';
+    badgeColor = '#1D4ED8';
   } else if (rawStatus === 'submitted' || rawStatus === 'pending') {
-    // keep DRAFT for pending per spec, but if you want "Submitted" uncomment:
-    // badgeText = 'Pending';
+    badgeText = 'Pending';
+    badgeBg = '#FEF3C7';
+    badgeColor = '#B45309';
   }
 
   const handleOpen = (url: string) => {
@@ -139,6 +148,18 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
           <Text style={styles.approvedProjectDescription} numberOfLines={2}>
             {description}
           </Text>
+          {communityNeed ? (
+            <View style={styles.statusDetailBlock}>
+              <Text style={styles.statusDetailLabel}>Community Need:</Text>
+              <Text style={styles.statusDetailText} numberOfLines={2}>{communityNeed}</Text>
+            </View>
+          ) : null}
+          {expectedOutcome ? (
+            <View style={styles.statusDetailBlock}>
+              <Text style={styles.statusDetailLabel}>Expected Outcome:</Text>
+              <Text style={styles.statusDetailText} numberOfLines={2}>{expectedOutcome}</Text>
+            </View>
+          ) : null}
           <View style={styles.approvedMetaRow}>
             <View style={styles.approvedMetaItem}>
               <MaterialIcons name="calendar-today" size={12} color="#166534" />
@@ -207,6 +228,18 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
           <Text style={styles.approvedProjectDescription} numberOfLines={2}>
             {description}
           </Text>
+          {communityNeed ? (
+            <View style={styles.statusDetailBlock}>
+              <Text style={styles.statusDetailLabel}>Community Need:</Text>
+              <Text style={styles.statusDetailText} numberOfLines={2}>{communityNeed}</Text>
+            </View>
+          ) : null}
+          {expectedOutcome ? (
+            <View style={styles.statusDetailBlock}>
+              <Text style={styles.statusDetailLabel}>Expected Outcome:</Text>
+              <Text style={styles.statusDetailText} numberOfLines={2}>{expectedOutcome}</Text>
+            </View>
+          ) : null}
           <View style={styles.approvedMetaRow}>
             <View style={styles.approvedMetaItem}>
               <MaterialIcons name="calendar-today" size={12} color="#64748b" />
@@ -232,7 +265,7 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
     );
   }
 
-  if (isResubmitted) {
+  if (isResubmitted && !isAdmin) {
     return (
       <View style={[styles.approvedCardContainer, { borderColor: '#bfdbfe' }]}>
         <View style={styles.approvedCardHeader}>
@@ -257,6 +290,18 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
           <Text style={styles.approvedProjectDescription} numberOfLines={2}>
             {description}
           </Text>
+          {communityNeed ? (
+            <View style={styles.statusDetailBlock}>
+              <Text style={styles.statusDetailLabel}>Community Need:</Text>
+              <Text style={styles.statusDetailText} numberOfLines={2}>{communityNeed}</Text>
+            </View>
+          ) : null}
+          {expectedOutcome ? (
+            <View style={styles.statusDetailBlock}>
+              <Text style={styles.statusDetailLabel}>Expected Outcome:</Text>
+              <Text style={styles.statusDetailText} numberOfLines={2}>{expectedOutcome}</Text>
+            </View>
+          ) : null}
           <View style={styles.approvedMetaRow}>
             <View style={styles.approvedMetaItem}>
               <MaterialIcons name="calendar-today" size={12} color="#2563eb" />
@@ -316,6 +361,18 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
           <Text style={styles.approvedProjectDescription} numberOfLines={2}>
             {description}
           </Text>
+          {communityNeed ? (
+            <View style={styles.statusDetailBlock}>
+              <Text style={styles.statusDetailLabel}>Community Need:</Text>
+              <Text style={styles.statusDetailText} numberOfLines={2}>{communityNeed}</Text>
+            </View>
+          ) : null}
+          {expectedOutcome ? (
+            <View style={styles.statusDetailBlock}>
+              <Text style={styles.statusDetailLabel}>Expected Outcome:</Text>
+              <Text style={styles.statusDetailText} numberOfLines={2}>{expectedOutcome}</Text>
+            </View>
+          ) : null}
           <View style={styles.approvedMetaRow}>
             <View style={styles.approvedMetaItem}>
               <MaterialIcons name="calendar-today" size={12} color="#64748b" />
@@ -335,7 +392,7 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
           activeOpacity={0.85}
         >
           <MaterialIcons name="edit" size={16} color="#ffffff" style={{ marginRight: 6 }} />
-          <Text style={styles.viewProjectsButtonText}>Edit & Resubmit Proposal</Text>
+          <Text style={styles.viewProjectsButtonText}>Revise & Resubmit Proposal</Text>
         </TouchableOpacity>
       </View>
     );
@@ -392,8 +449,16 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
             <Text style={[styles.value, styles.valueBold]}>{title}</Text>
           </View>
           <View style={styles.field}>
-            <Text style={styles.label}>Detailed Description</Text>
+            <Text style={styles.label}>Project Description</Text>
             <Text style={styles.value}>{description}</Text>
+          </View>
+          <View style={styles.field}>
+            <Text style={styles.label}>Community Need</Text>
+            <Text style={styles.value}>{communityNeed || 'N/A'}</Text>
+          </View>
+          <View style={styles.field}>
+            <Text style={styles.label}>Expected Outcome</Text>
+            <Text style={styles.value}>{expectedOutcome || 'N/A'}</Text>
           </View>
           <View style={styles.field}>
             <Text style={styles.label}>Target Location</Text>
@@ -402,6 +467,12 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
         </View>
         {/* Right column */}
         <View style={[styles.col, isMobile && styles.colMobile]}>
+          {partnerName ? (
+            <View style={styles.field}>
+              <Text style={styles.label}>Partner</Text>
+              <Text style={[styles.value, styles.valueBold]}>{partnerName}</Text>
+            </View>
+          ) : null}
           <View style={styles.field}>
             <Text style={styles.label}>Start Date</Text>
             <View style={styles.dateRow}>
@@ -435,7 +506,7 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
                 <MaterialIcons name="image" size={20} color="#94A3B8" />
               </View>
             )}
-            <View style={[styles.attachMeta, { marginRight: 40 }]}>
+            <View style={styles.attachMeta}>
               <Text style={styles.attachName} numberOfLines={1} ellipsizeMode="middle">
                 {truncateFileName(photoName, 20)}
               </Text>
@@ -453,7 +524,7 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
             <View style={styles.pdfIconBox}>
               <MaterialIcons name="picture-as-pdf" size={22} color="#DC2626" />
             </View>
-            <View style={[styles.attachMeta, { marginRight: 40 }]}>
+            <View style={styles.attachMeta}>
               <Text style={styles.attachName} numberOfLines={1} ellipsizeMode="middle">
                 {truncateFileName(docName, 20)}
               </Text>
@@ -476,14 +547,14 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
           <Text style={styles.editText}>Edit</Text>
         </TouchableOpacity>
 
-        {isAdmin && application.status === 'Pending' ? (
+        {isAdmin && (application.status === 'Pending' || application.status === 'Resubmitted') ? (
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <TouchableOpacity
-              style={[styles.submitBtn, { backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0' }]}
-              onPress={() => onEdit?.(application)}
+              style={[styles.submitBtn, { backgroundColor: '#fee2e2', borderWidth: 1, borderColor: '#fca5a5' }]}
+              onPress={() => onReject ? onReject(application) : onEdit?.(application)}
               activeOpacity={0.85}
             >
-              <Text style={[styles.submitText, { color: '#64748B' }]}>Reject</Text>
+              <Text style={[styles.submitText, { color: '#dc2626' }]}>Reject</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.submitBtn, { backgroundColor: '#16A34A', opacity: isSubmitting ? 0.7 : 1 }]}
@@ -596,6 +667,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#212529',
     lineHeight: 16,
+    flexShrink: 1,
   },
   valueBold: {
     fontWeight: '700',
@@ -612,6 +684,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 7,
     marginTop: 2,
+    flexWrap: 'wrap',
+    gap: 4,
   },
   attachRow: {
     flexDirection: 'row',
@@ -876,5 +950,19 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: '#92400e',
     marginTop: 2,
+  },
+  statusDetailBlock: {
+    marginTop: 4,
+    gap: 1,
+  },
+  statusDetailLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  statusDetailText: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#475569',
   },
 });

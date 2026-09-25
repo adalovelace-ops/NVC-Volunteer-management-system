@@ -157,6 +157,13 @@ export default function VolunteerProjectDetailsScreen({
   const handleJoinEvent = async () => {
     if (!user?.id || !project) return;
     try {
+      const currentJoined = Math.max(project.volunteers?.length || 0, project.joinedUserIds?.length || 0);
+      const slots = project.volunteersNeeded !== undefined && project.volunteersNeeded !== null ? project.volunteersNeeded : 30;
+      if (slots > 0 && currentJoined >= slots) {
+        Alert.alert('Event Full', 'This event has reached its volunteer capacity. All slots are filled.');
+        return;
+      }
+
       setLoadingAction('join');
       await requestVolunteerProjectJoin(project.id, user.id);
       Alert.alert('Success', `Successfully requested to join "${project.title}"!`);
@@ -171,6 +178,13 @@ export default function VolunteerProjectDetailsScreen({
   const handleReapplyEvent = async () => {
     if (!user?.id || !project) return;
     try {
+      const currentJoined = Math.max(project.volunteers?.length || 0, project.joinedUserIds?.length || 0);
+      const slots = project.volunteersNeeded !== undefined && project.volunteersNeeded !== null ? project.volunteersNeeded : 30;
+      if (slots > 0 && currentJoined >= slots) {
+        Alert.alert('Event Full', 'This event has reached its volunteer capacity. All slots are filled.');
+        return;
+      }
+
       setLoadingAction('reapply');
       await requestVolunteerProjectJoin(project.id, user.id);
       Alert.alert('Application Submitted', `Your application for "${project.title}" has been re-submitted for review!`);
@@ -209,8 +223,9 @@ export default function VolunteerProjectDetailsScreen({
 
   const partnerInfo = partners.find((p) => p.id === project.partnerId) || null;
 
-  const joinedCount = project.volunteers?.length || 0;
-  const totalSlots = project.volunteersNeeded || 30;
+  const joinedCount = Math.max(project.volunteers?.length || 0, project.joinedUserIds?.length || 0);
+  const totalSlots = project.volunteersNeeded !== undefined && project.volunteersNeeded !== null ? project.volunteersNeeded : 30;
+  const isEventFull = totalSlots > 0 && joinedCount >= totalSlots;
 
   const formatEventDate = (start: string, end: string) => {
     if (!start) return 'TBD';
@@ -242,6 +257,14 @@ export default function VolunteerProjectDetailsScreen({
       );
     }
     if (isRejected) {
+      if (isEventFull) {
+        return (
+          <View style={[styles.joinBtn, { backgroundColor: '#fee2e2', borderColor: '#fca5a5' }, styleProps]}>
+            <MaterialIcons name="block" size={18} color="#dc2626" style={{ marginRight: 6 }} />
+            <Text style={[styles.joinBtnText, { color: '#dc2626' }]}>Event Full</Text>
+          </View>
+        );
+      }
       return (
         <TouchableOpacity
           style={[styles.joinBtn, styles.joinBtnReapply, styleProps]}
@@ -286,6 +309,15 @@ export default function VolunteerProjectDetailsScreen({
         </View>
       );
     }
+    if (isEventFull) {
+      return (
+        <View style={[styles.joinBtn, { backgroundColor: '#fee2e2', borderColor: '#fca5a5' }, styleProps]}>
+          <MaterialIcons name="block" size={18} color="#dc2626" style={{ marginRight: 6 }} />
+          <Text style={[styles.joinBtnText, { color: '#dc2626' }]}>Event Full</Text>
+        </View>
+      );
+    }
+
     return (
       <TouchableOpacity
         style={[styles.joinBtn, styleProps]}
@@ -400,10 +432,10 @@ export default function VolunteerProjectDetailsScreen({
 
         <View style={styles.overviewGrid}>
           <View style={[styles.overviewCell, !isDesktop && { width: '47%', minWidth: 100 }]} {...({} as any)}>
-            <MaterialIcons name="group" size={20} color="#166534" style={{ marginBottom: 6 }} />
+            <MaterialIcons name="group" size={20} color={isEventFull ? '#dc2626' : '#166534'} style={{ marginBottom: 6 }} />
             <Text style={styles.cellLabel}>Volunteer Slots</Text>
-            <Text style={styles.cellValue}>{`${joinedCount} / ${totalSlots}`}</Text>
-            <Text style={styles.cellSub}>filled</Text>
+            <Text style={[styles.cellValue, isEventFull && { color: '#dc2626' }]}>{`${joinedCount} / ${totalSlots}`}</Text>
+            <Text style={[styles.cellSub, isEventFull && { color: '#dc2626', fontWeight: '700' }]}>{isEventFull ? 'Event full' : 'filled'}</Text>
           </View>
 
           <View style={[styles.overviewCell, !isDesktop && { width: '47%', minWidth: 100 }]} {...({} as any)}>
@@ -499,18 +531,6 @@ export default function VolunteerProjectDetailsScreen({
             </View>
           ))}
         </View>
-
-        <Text style={styles.skillsHeading}>Required Skills</Text>
-        <View style={styles.skillsContainer}>
-          {(project.skillsNeeded && project.skillsNeeded.length > 0
-            ? project.skillsNeeded
-            : ['Community Outreach', 'Event Support']
-          ).map((skill) => (
-            <View key={skill} style={styles.skillPill} {...({} as any)}>
-              <Text style={styles.skillPillText}>{skill}</Text>
-            </View>
-          ))}
-        </View>
       </View>
 
       {/* Application Card */}
@@ -523,7 +543,9 @@ export default function VolunteerProjectDetailsScreen({
         </View>
 
         <Text style={styles.appSlotsLabel}>Volunteer Slots</Text>
-        <Text style={styles.appSlotsValue}>{`${joinedCount} / ${totalSlots} filled`}</Text>
+        <Text style={[styles.appSlotsValue, isEventFull && { color: '#dc2626' }]}>
+          {isEventFull ? `Event full (${joinedCount} / ${totalSlots} filled)` : `${joinedCount} / ${totalSlots} filled`}
+        </Text>
 
         {isRejected && (
           <View style={styles.declinedNoticeCard}>
@@ -622,27 +644,6 @@ export default function VolunteerProjectDetailsScreen({
         <Text style={styles.reminderCardText}>
           You will receive a reminder 1 day before the event.
         </Text>
-      </View>
-
-      {/* Need Help Card */}
-      <View style={styles.rightCard}>
-        <View style={styles.rightCardHeaderRow} {...({} as any)}>
-          <MaterialIcons name="help-outline" size={18} color="#1e293b" />
-          <Text style={styles.rightCardHeaderTitle}>Need Help?</Text>
-        </View>
-        <Text style={styles.reminderCardText}>
-          Learn more about volunteering and event guidelines.
-        </Text>
-        <TouchableOpacity
-          style={styles.outlineBtn}
-          activeOpacity={0.8}
-          onPress={() => Alert.alert('Guide', 'Opening volunteer guidelines...')}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text style={styles.outlineBtnText}>View Guide</Text>
-            <MaterialIcons name="open-in-new" size={14} color="#475569" />
-          </View>
-        </TouchableOpacity>
       </View>
     </View>
   );

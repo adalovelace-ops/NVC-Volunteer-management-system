@@ -552,7 +552,7 @@ export default function MappingScreen({ navigation }: any) {
       new Map(
         mappedProjects.map(project => [
           project.id,
-          getProjectVolunteerMapEntries(project, volunteers, volunteerJoinRecords, projects),
+          getProjectVolunteerMapEntries(project, volunteers, volunteerJoinRecords),
         ])
       ),
     [mappedProjects, volunteers, volunteerJoinRecords, projects]
@@ -967,9 +967,7 @@ export default function MappingScreen({ navigation }: any) {
           'volunteerProfile',
           'volunteerMatches',
           'programTracks',
-        ],
-        false,
-        false, // map markers don't need project images
+        ]
       );
       const allPartners = await getAllPartners();
       const mapSourceProjects = withImpactMapFallbackProjects(
@@ -1544,7 +1542,9 @@ export default function MappingScreen({ navigation }: any) {
                   const parentProject = selectedProject.parentProjectId
                     ? projects.find(project => project.id === selectedProject.parentProjectId)
                     : undefined;
-                  const projectImageSource = getPrimaryProjectImageSource(selectedProject, parentProject);
+                  const projectImageSource =
+                    getPrimaryProjectImageSource(selectedProject) ||
+                    (parentProject ? getPrimaryProjectImageSource(parentProject) : undefined);
                   if (!projectImageSource) {
                     return null;
                   }

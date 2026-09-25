@@ -11,6 +11,7 @@ import {
   TextInput,
   Switch,
   Image,
+  ActivityIndicator,
   type ImageStyle,
 } from 'react-native';
 import { Text } from '../components/Text';

@@ -81,7 +81,7 @@ import {
 
 } from '../models/types';
 
-import { isImageMediaUri, pickImageFromDevice, pickDocumentFromDevice } from '../utils/media';
+import { isImageMediaUri, pickImageFromDevice, pickDocumentFromDevice, getAttachmentLabel, openAttachmentUri } from '../utils/media';
 
 import { navigateToAvailableRoute } from '../utils/navigation';
 
@@ -349,69 +349,67 @@ function getProgramModuleIcon(module: AdvocacyFocus): keyof typeof MaterialIcons
 
 
 function LazyDateTimePicker(props: any) {
-
   if (Platform.OS === 'web') {
+    const dateStr =
+      props.value instanceof Date && !Number.isNaN(props.value.getTime())
+        ? formatDateValue(props.value)
+        : typeof props.value === 'string'
+        ? props.value
+        : '';
+
+    const minStr =
+      props.minimumDate instanceof Date && !Number.isNaN(props.minimumDate.getTime())
+        ? formatDateValue(props.minimumDate)
+        : typeof props.minimumDate === 'string'
+        ? props.minimumDate
+        : undefined;
+
+    const maxStr =
+      props.maximumDate instanceof Date && !Number.isNaN(props.maximumDate.getTime())
+        ? formatDateValue(props.maximumDate)
+        : typeof props.maximumDate === 'string'
+        ? props.maximumDate
+        : undefined;
 
     return (
-
       <View style={{ marginTop: 10 }}>
-
         <input
-
           type="date"
-
-          value={props.value instanceof Date ? props.value.toISOString().split('T')[0] : ''}
-
-          min={props.minimumDate instanceof Date ? props.minimumDate.toISOString().split('T')[0] : undefined}
-
-          max={props.maximumDate instanceof Date ? props.maximumDate.toISOString().split('T')[0] : undefined}
-
-          onChange={event => {
-
+          value={dateStr}
+          min={minStr}
+          max={maxStr}
+          onChange={(event) => {
+            const val = event.target.value;
+            if (!val) return;
             if (props.onChange) {
-
-              props.onChange({ type: 'set' }, new Date(event.target.value));
-
+              const [y, mo, d] = val.split('-').map(Number);
+              props.onChange({ type: 'set' }, new Date(y, mo - 1, d));
             }
-
           }}
-
+          onClick={(e) => {
+            try {
+              (e.target as any).showPicker?.();
+            } catch {}
+          }}
           style={{
-
             width: '100%',
-
             padding: '12px',
-
             borderRadius: '10px',
-
             border: '1px solid #dbe2ea',
-
             fontSize: '14px',
-
             fontFamily: 'inherit',
-
             color: '#0f172a',
-
             backgroundColor: '#fff',
-
             cursor: 'pointer',
-
+            boxSizing: 'border-box',
           }}
-
         />
-
       </View>
-
     );
-
   }
 
-
-
   const DateTimePickerComponent = require('@react-native-community/datetimepicker').default;
-
   return <DateTimePickerComponent {...props} />;
-
 }
 
 
@@ -504,7 +502,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
   const [proposalDatePickerMode, setProposalDatePickerMode] = useState<'startDate' | 'endDate'>('startDate');
 
-  const [selectedProposalDate, setSelectedProposalDate] = useState(new Date());
+  const [selectedProposalDate, setSelectedProposalDate] = useState<Date | null>(new Date());
 
 
 
@@ -859,7 +857,26 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
     setActiveProposalProgramId(programId || null);
 
-    setProposalForm(createEmptyProposalForm(module));
+    const existingApp = programApplicationByModule.get(module);
+    if (existingApp?.proposalDetails) {
+      const pd = existingApp.proposalDetails;
+      setProposalForm({
+        requestedProgramModule: module,
+        proposedTitle: pd.proposedTitle || '',
+        proposedDescription: pd.proposedDescription || '',
+        proposedStartDate: pd.proposedStartDate || '',
+        proposedEndDate: pd.proposedEndDate || '',
+        proposedLocation: pd.proposedLocation || '',
+        skillsNeeded: pd.skillsNeeded || [],
+        communityNeed: pd.communityNeed || '',
+        expectedDeliverables: pd.expectedDeliverables || '',
+        photoAttachment: (pd.attachments?.find(a => a.type === 'image')?.url) || (pd as any).photoAttachment || '',
+        documentAttachment: (pd.attachments?.find(a => a.type === 'document')?.url) || '',
+        attachmentUrl: (pd as any).attachmentUrl || '',
+      });
+    } else {
+      setProposalForm(createEmptyProposalForm(module));
+    }
 
     setSelectedProposalSkillOption('');
 
@@ -1179,7 +1196,7 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
     setProposalDatePickerMode(mode);
 
-    setSelectedProposalDate(parsedDate || new Date());
+    setSelectedProposalDate(parsedDate || null);
 
     setShowProposalDatePicker(true);
 
@@ -1354,11 +1371,19 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
       setActionProjectId(proposalProjectId);
 
+      const existingApp = programApplicationByModule.get(selectedModule);
+      const isRevision = existingApp?.status === 'Rejected' || existingApp?.status === 'Revision Requested' || existingApp?.status === 'Needs Revision';
+      const enrichedProposalDetails = {
+        ...proposalDetails,
+        applicationId: existingApp?.id,
+        isResubmission: isRevision,
+      };
+
       await submitPartnerProgramProposal(proposalProjectId, user, {
 
         programModule: selectedModule,
 
-        proposalDetails,
+        proposalDetails: enrichedProposalDetails,
 
       });
 
@@ -1970,123 +1995,122 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
                 <View style={styles.formRow}>
 
                   <View style={[styles.formGroup, { flex: 1 }]}>
-
                     <Text style={styles.formLabel}>Start Date</Text>
-
-                    <TouchableOpacity
-
-                      style={styles.pickerTrigger}
-
-                      onPress={() => openProposalDatePicker('startDate')}
-
-                    >
-
-                      <MaterialIcons name="calendar-today" size={18} color="#166534" />
-
-                      <Text style={[styles.pickerTriggerText, !proposalForm.proposedStartDate && styles.pickerPlaceholder]}>
-
-                        {proposalForm.proposedStartDate || 'Select date'}
-
-                      </Text>
-
-                    </TouchableOpacity>
-
-                    {showProposalDatePicker && proposalDatePickerMode === 'startDate' ? (
-
+                    {Platform.OS === 'web' ? (
+                      <input
+                        type="date"
+                        value={proposalForm.proposedStartDate || ''}
+                        onChange={(e) => updateProposalForm({ proposedStartDate: e.target.value })}
+                        onClick={(e) => {
+                          try {
+                            (e.target as any).showPicker?.();
+                          } catch {}
+                        }}
+                        style={{
+                          width: '100%',
+                          backgroundColor: '#f8fafc',
+                          border: '1px solid #dbe2ea',
+                          borderRadius: '14px',
+                          padding: '13px 16px',
+                          fontSize: '14px',
+                          color: '#0f172a',
+                          fontFamily: 'inherit',
+                          outline: 'none',
+                          cursor: 'pointer',
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                    ) : (
                       <>
-
-                        <LazyDateTimePicker
-
-                          value={selectedProposalDate}
-
-                          mode="date"
-
-                          display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
-
-                          onChange={handleProposalDateChange}
-
-                          maximumDate={parseDateValue(proposalForm.proposedEndDate) || undefined}
-
-                        />
-
-                        {Platform.OS === 'ios' ? (
-
-                          <View style={styles.iosDatePickerActions}>
-
-                            <TouchableOpacity onPress={() => setShowProposalDatePicker(false)}>
-
-                              <Text style={styles.iosDatePickerButton}>Done</Text>
-
-                            </TouchableOpacity>
-
-                          </View>
-
+                        <TouchableOpacity
+                          style={styles.pickerTrigger}
+                          onPress={() => openProposalDatePicker('startDate')}
+                        >
+                          <MaterialIcons name="calendar-today" size={18} color="#166534" />
+                          <Text style={[styles.pickerTriggerText, !proposalForm.proposedStartDate && styles.pickerPlaceholder]}>
+                            {proposalForm.proposedStartDate || 'Select date'}
+                          </Text>
+                        </TouchableOpacity>
+                        {showProposalDatePicker && proposalDatePickerMode === 'startDate' ? (
+                          <>
+                            <LazyDateTimePicker
+                              value={selectedProposalDate}
+                              mode="date"
+                              display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
+                              onChange={handleProposalDateChange}
+                              maximumDate={parseDateValue(proposalForm.proposedEndDate) || undefined}
+                            />
+                            {Platform.OS === 'ios' ? (
+                              <View style={styles.iosDatePickerActions}>
+                                <TouchableOpacity onPress={() => setShowProposalDatePicker(false)}>
+                                  <Text style={styles.iosDatePickerButton}>Done</Text>
+                                </TouchableOpacity>
+                              </View>
+                            ) : null}
+                          </>
                         ) : null}
-
                       </>
-
-                    ) : null}
-
+                    )}
                   </View>
 
                   <View style={[styles.formGroup, { flex: 1 }]}>
-
                     <Text style={styles.formLabel}>End Date</Text>
-
-                    <TouchableOpacity
-
-                      style={styles.pickerTrigger}
-
-                      onPress={() => openProposalDatePicker('endDate')}
-
-                    >
-
-                      <MaterialIcons name="calendar-today" size={18} color="#166534" />
-
-                      <Text style={[styles.pickerTriggerText, !proposalForm.proposedEndDate && styles.pickerPlaceholder]}>
-
-                        {proposalForm.proposedEndDate || 'Select date'}
-
-                      </Text>
-
-                    </TouchableOpacity>
-
-                    {showProposalDatePicker && proposalDatePickerMode === 'endDate' ? (
-
+                    {Platform.OS === 'web' ? (
+                      <input
+                        type="date"
+                        value={proposalForm.proposedEndDate || ''}
+                        min={proposalForm.proposedStartDate || undefined}
+                        onChange={(e) => updateProposalForm({ proposedEndDate: e.target.value })}
+                        onClick={(e) => {
+                          try {
+                            (e.target as any).showPicker?.();
+                          } catch {}
+                        }}
+                        style={{
+                          width: '100%',
+                          backgroundColor: '#f8fafc',
+                          border: '1px solid #dbe2ea',
+                          borderRadius: '14px',
+                          padding: '13px 16px',
+                          fontSize: '14px',
+                          color: '#0f172a',
+                          fontFamily: 'inherit',
+                          outline: 'none',
+                          cursor: 'pointer',
+                          boxSizing: 'border-box',
+                        }}
+                      />
+                    ) : (
                       <>
-
-                        <LazyDateTimePicker
-
-                          value={selectedProposalDate}
-
-                          mode="date"
-
-                          display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
-
-                          onChange={handleProposalDateChange}
-
-                          minimumDate={parseDateValue(proposalForm.proposedStartDate) || undefined}
-
-                        />
-
-                        {Platform.OS === 'ios' ? (
-
-                          <View style={styles.iosDatePickerActions}>
-
-                            <TouchableOpacity onPress={() => setShowProposalDatePicker(false)}>
-
-                              <Text style={styles.iosDatePickerButton}>Done</Text>
-
-                            </TouchableOpacity>
-
-                          </View>
-
+                        <TouchableOpacity
+                          style={styles.pickerTrigger}
+                          onPress={() => openProposalDatePicker('endDate')}
+                        >
+                          <MaterialIcons name="calendar-today" size={18} color="#166534" />
+                          <Text style={[styles.pickerTriggerText, !proposalForm.proposedEndDate && styles.pickerPlaceholder]}>
+                            {proposalForm.proposedEndDate || 'Select date'}
+                          </Text>
+                        </TouchableOpacity>
+                        {showProposalDatePicker && proposalDatePickerMode === 'endDate' ? (
+                          <>
+                            <LazyDateTimePicker
+                              value={selectedProposalDate}
+                              mode="date"
+                              display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
+                              onChange={handleProposalDateChange}
+                              minimumDate={parseDateValue(proposalForm.proposedStartDate) || undefined}
+                            />
+                            {Platform.OS === 'ios' ? (
+                              <View style={styles.iosDatePickerActions}>
+                                <TouchableOpacity onPress={() => setShowProposalDatePicker(false)}>
+                                  <Text style={styles.iosDatePickerButton}>Done</Text>
+                                </TouchableOpacity>
+                              </View>
+                            ) : null}
+                          </>
                         ) : null}
-
                       </>
-
-                    ) : null}
-
+                    )}
                   </View>
 
                 </View>
@@ -2217,17 +2241,32 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
                     <View style={styles.documentPreviewContainer}>
 
-                      <View style={styles.documentPreviewContent}>
+                      <TouchableOpacity
+                        style={styles.documentPreviewContent}
+                        onPress={async () => {
+                          try {
+                            await openAttachmentUri(proposalForm.documentAttachment);
+                          } catch (err: any) {
+                            Alert.alert('Unable to Open Document', err?.message || 'Failed to open document.');
+                          }
+                        }}
+                      >
 
                         <MaterialIcons name="insert-drive-file" size={32} color="#10b981" />
 
-                        <Text style={styles.documentPreviewText} numberOfLines={1}>
+                        <View style={{ flex: 1 }}>
 
-                          {proposalForm.documentAttachment.split('/').pop() || 'Document attached'}
+                          <Text style={[styles.documentPreviewText, { color: '#047857', fontWeight: '700' }]} numberOfLines={1}>
 
-                        </Text>
+                            {getAttachmentLabel(proposalForm.documentAttachment, 'Document attached')}
 
-                      </View>
+                          </Text>
+
+                          <Text style={{ fontSize: 11, color: '#10b981' }}>Click to preview document</Text>
+
+                        </View>
+
+                      </TouchableOpacity>
 
                       <TouchableOpacity style={styles.documentRemoveButton} onPress={handleRemoveProposalDocument}>
 

@@ -89,8 +89,16 @@ export function getGoogleCalendarEventTemplateUrl({
   startDate?: string | Date;
   endDate?: string | Date;
 }): string {
-  const startStr = formatGoogleCalendarDate(startDate);
-  const endStr = formatGoogleCalendarDate(endDate || (startDate ? new Date(new Date(startDate).getTime() + 2 * 3600 * 1000) : null));
+  const startDateObj = startDate ? new Date(startDate) : new Date();
+  const validStartDate = isNaN(startDateObj.getTime()) ? new Date() : startDateObj;
+
+  let endDateObj = endDate ? new Date(endDate) : null;
+  if (!endDateObj || isNaN(endDateObj.getTime()) || endDateObj.getTime() <= validStartDate.getTime()) {
+    endDateObj = new Date(validStartDate.getTime() + 2 * 3600 * 1000);
+  }
+
+  const startStr = formatGoogleCalendarDate(validStartDate);
+  const endStr = formatGoogleCalendarDate(endDateObj);
 
   return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
     title

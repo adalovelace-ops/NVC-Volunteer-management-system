@@ -142,12 +142,12 @@ export default function UserManagementScreen() {
     setSelectedUser(null);
   };
 
-  const openAddModal = (initialRole?: UserRole) => {
+  const openAddModal = (initialRole: UserRole = 'admin') => {
     setNameDraft('');
     setEmailDraft('');
     setPhoneDraft('');
     setPasswordDraft('Password123!');
-    setRoleDraft(initialRole || (accountFilter === 'admin' ? 'admin' : accountFilter === 'partner' ? 'partner' : 'volunteer'));
+    setRoleDraft(initialRole);
     setUserTypeDraft('Adult');
     setPillarsDraft([]);
     setShowAddModal(true);
@@ -399,10 +399,6 @@ export default function UserManagementScreen() {
             <TouchableOpacity style={styles.primaryAddAdminButton} onPress={() => openAddModal('admin')} activeOpacity={0.85}>
               <MaterialIcons name="shield" size={18} color="#ffffff" />
               <Text style={styles.primaryAddButtonText}>Add Admin</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.primaryAddButton} onPress={() => openAddModal()} activeOpacity={0.85}>
-              <MaterialIcons name="add" size={20} color="#ffffff" />
-              <Text style={styles.primaryAddButtonText}>Add New User</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondaryExportButton} onPress={handleExportCSV} activeOpacity={0.85}>
               <MaterialIcons name="file-download" size={18} color="#475569" />

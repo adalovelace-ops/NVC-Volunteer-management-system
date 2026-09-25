@@ -116,64 +116,86 @@ const QUICK_EMOJIS = ['😊', '😂', '❤️', '👍', '👏', '🙏', '😍', 
 
 
 
-function LazyDateTimePicker(props: any) {
+function formatDateValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
+function parseDateValue(value?: string | null): Date | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [y, m, d] = trimmed.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+  const d = new Date(trimmed);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function LazyDateTimePicker(props: any) {
   if (Platform.OS === 'web') {
+    const dateStr =
+      props.value instanceof Date && !Number.isNaN(props.value.getTime())
+        ? formatDateValue(props.value)
+        : typeof props.value === 'string'
+        ? props.value
+        : '';
+
+    const minStr =
+      props.minimumDate instanceof Date && !Number.isNaN(props.minimumDate.getTime())
+        ? formatDateValue(props.minimumDate)
+        : typeof props.minimumDate === 'string'
+        ? props.minimumDate
+        : undefined;
+
+    const maxStr =
+      props.maximumDate instanceof Date && !Number.isNaN(props.maximumDate.getTime())
+        ? formatDateValue(props.maximumDate)
+        : typeof props.maximumDate === 'string'
+        ? props.maximumDate
+        : undefined;
 
     return (
-
       <View style={{ marginTop: 10 }}>
-
         <input
-
           type="date"
-
-          value={props.value instanceof Date ? props.value.toISOString().split('T')[0] : ''}
-
+          value={dateStr}
+          min={minStr}
+          max={maxStr}
           onChange={(e) => {
-
+            const val = e.target.value;
+            if (!val) return;
             if (props.onChange) {
-
-              props.onChange({ type: 'set' }, new Date(e.target.value));
-
+              const [y, mo, d] = val.split('-').map(Number);
+              props.onChange({ type: 'set' }, new Date(y, mo - 1, d));
             }
-
           }}
-
+          onClick={(e) => {
+            try {
+              (e.target as any).showPicker?.();
+            } catch {}
+          }}
           style={{
-
             width: '100%',
-
             padding: '12px',
-
             borderRadius: '10px',
-
             border: '1px solid #e2e8f0',
-
             fontSize: '14px',
-
             fontFamily: 'inherit',
-
             color: '#1e293b',
-
             backgroundColor: '#fff',
-
-            cursor: 'pointer'
-
+            cursor: 'pointer',
+            boxSizing: 'border-box',
           }}
-
         />
-
       </View>
-
     );
-
   }
 
   const DateTimePickerComponent = require('@react-native-community/datetimepicker').default;
-
   return <DateTimePickerComponent {...props} />;
-
 }
 
 
@@ -431,37 +453,35 @@ async function copyChatText(content: string): Promise<boolean> {
 
 
 function formatProposalDate(value?: string): string {
-
   const normalizedValue = String(value || '').trim();
-
   if (!normalizedValue) {
-
     return 'Not provided';
-
   }
-
-
-
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalizedValue)) {
+    const [y, m, d] = normalizedValue.split('-').map(Number);
+    const localDate = new Date(y, m - 1, d);
+    return localDate.toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+  }
   const parsedDate = new Date(normalizedValue);
-
   if (Number.isNaN(parsedDate.getTime())) {
-
     return normalizedValue;
-
   }
-
-
-
   return parsedDate.toLocaleDateString(undefined, {
-
     year: 'numeric',
-
     month: 'long',
-
     day: 'numeric',
-
   });
+}
 
+function safeTimeStr(timestamp: string | undefined | null): string {
+  if (!timestamp) return '';
+  const d = new Date(timestamp);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 
@@ -1099,9 +1119,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
             .sort((left, right) => {
 
-              const leftRank = left.status === 'Pending' ? 0 : 1;
+              const leftRank = left.status === 'Pending' || left.status === 'Resubmitted' ? 0 : 1;
 
-              const rightRank = right.status === 'Pending' ? 0 : 1;
+              const rightRank = right.status === 'Pending' || right.status === 'Resubmitted' ? 0 : 1;
 
               if (leftRank !== rightRank) {
 
@@ -1109,7 +1129,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
               }
 
-              return new Date(right.requestedAt).getTime() - new Date(left.requestedAt).getTime();
+              return new Date(right.requestedAt || 0).getTime() - new Date(left.requestedAt || 0).getTime();
 
             })
 
@@ -1459,7 +1479,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
 
-  const pendingProposalChats = proposalChats.filter(item => item.application.status === 'Pending');
+  const pendingProposalChats = proposalChats.filter(item => item.application.status === 'Pending' || item.application.status === 'Resubmitted');
 
 
 
@@ -1573,11 +1593,32 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       if (user?.role === 'partner') {
         setInlineDraftModule(newProposalModule || 'Nutrition');
         setInlineDraftProjectId(newProposalProjectId || 'new');
-        setInlineDraftProposal(createEmptyProposalForm(newProposalTitle || ''));
+        let initialForm = createEmptyProposalForm(newProposalTitle || '');
+        let initialDocAttachment = '';
+        if (requestedProposalId) {
+          const existing = proposalChats.find(p => p.application.id === requestedProposalId);
+          if (existing?.application) {
+            const pd = (existing.application.proposalDetails || {}) as any;
+            initialForm = {
+              proposedTitle: pd.proposedTitle || (existing.application as any).proposedTitle || newProposalTitle || '',
+              proposedDescription: pd.proposedDescription || '',
+              proposedStartDate: pd.proposedStartDate || '',
+              proposedEndDate: pd.proposedEndDate || '',
+              proposedLocation: pd.proposedLocation || '',
+              proposedVolunteersNeeded: String(pd.proposedVolunteersNeeded ?? ''),
+              communityNeed: pd.communityNeed || '',
+              expectedDeliverables: pd.expectedDeliverables || '',
+              photoAttachment: (pd.attachments?.find((a: any) => a.type === 'image')?.url) || (pd as any).photoAttachment || '',
+              applicationId: existing.application.id,
+            } as any;
+            initialDocAttachment = (pd.attachments?.find((a: any) => a.type === 'document')?.url) || '';
+          }
+        }
+        setInlineDraftProposal(initialForm);
         setInlineRegionCode('');
         setInlineCityCode('');
         setInlineFilteredCities([]);
-        setInlineDraftDocAttachment('');
+        setInlineDraftDocAttachment(initialDocAttachment);
         setProposalIntent(null);
         setProposalRevisionMode(false);
       } else {
@@ -1660,13 +1701,13 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       proposedVolunteersNeeded: Number(draftCopy.proposedVolunteersNeeded) || 0,
       requestedProgramModule: (draftModule as AdvocacyFocus) || 'Nutrition',
       targetProjectId: draftProjectId !== 'new' ? draftProjectId : undefined,
-      status: 'Pending',
+      status: 'Resubmitted',
       proposedById: user.id,
       proposedByName: user.name,
       timestamp: new Date().toISOString(),
-      attachments,
+      attachments: attachments.map(a => a.url.startsWith('data:') ? { ...a, url: '' } : a),
     };
-    const targetRecipientId = selectedUser?.id || '';
+    const targetRecipientId = selectedUser?.id || allUsers.find(u => u.role === 'admin')?.id || '';
     if (targetRecipientId) {
       const optimisticMsg: Message = {
         id: tempProposalId,
@@ -1694,6 +1735,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
           requestedProgramModule: (draftModule as AdvocacyFocus) || 'Nutrition',
           targetProjectId: draftProjectId !== 'new' ? draftProjectId : undefined,
           isResubmission: true,
+          applicationId: (draftCopy as any).applicationId,
           attachments,
         } as any,
       });
@@ -1723,7 +1765,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       communityNeed: pd.communityNeed || '',
       expectedDeliverables: pd.expectedDeliverables || '',
       photoAttachment: (pd.attachments?.find((a: any) => a.type === 'image')?.url) || pd.photoAttachment || '',
-    });
+      applicationId: app.id || app.applicationId || pd.applicationId || undefined,
+    } as any);
     const docUrl = (pd.attachments?.find((a: any) => a.type === 'document')?.url) || '';
     setInlineDraftDocAttachment(docUrl);
     // Try to hydrate region/city pickers from composed address if possible
@@ -1756,7 +1799,15 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
               try {
                 const msgApp = JSON.parse(msg.content.replace(PROPOSAL_PREFIX, ''));
                 if (msgApp.id === app.id || msg.id === app.id || msgApp.applicationId === app.id) {
-                  const updatedApp = { ...msgApp, status: 'Approved' };
+                  const updatedApp = {
+                    ...msgApp,
+                    status: 'Approved',
+                    proposalDetails: reviewed.proposalDetails || msgApp.proposalDetails,
+                    reviewNotes: reviewed.reviewNotes,
+                    reviewedAt: reviewed.reviewedAt,
+                    reviewedBy: reviewed.reviewedBy,
+                    projectId: reviewed.projectId || msgApp.projectId,
+                  };
                   return { ...msg, content: PROPOSAL_PREFIX + JSON.stringify(updatedApp) };
                 }
               } catch (_) { }
@@ -2678,7 +2729,14 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
             try {
               const msgApp = JSON.parse(msg.content.replace(PROPOSAL_PREFIX, ''));
               if (msgApp.id === reviewedApplication.id || msgApp.applicationId === reviewedApplication.id || msg.id === reviewedApplication.id) {
-                const updatedApp = { ...msgApp, status: reviewedApplication.status };
+                const updatedApp = {
+                  ...msgApp,
+                  status: reviewedApplication.status,
+                  proposalDetails: reviewedApplication.proposalDetails || msgApp.proposalDetails,
+                  reviewNotes: reviewedApplication.reviewNotes,
+                  reviewedAt: reviewedApplication.reviewedAt,
+                  reviewedBy: reviewedApplication.reviewedBy,
+                };
                 return { ...msg, content: PROPOSAL_PREFIX + JSON.stringify(updatedApp) };
               }
             } catch (e) {
@@ -2936,13 +2994,12 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sectionTabs} contentContainerStyle={styles.sectionTabsContent}>
-        {['messages', 'updates', 'projects'].map(section => {
-          const isUpdates = section === 'updates';
-          const label = section === 'messages' ? 'Messages' : section === 'updates' ? 'Updates' : 'Event Group Chat';
+        {(isPartner ? ['messages', 'contacts', 'projects', 'proposals'] : ['messages', 'contacts', 'projects']).map(section => {
+          const label = section === 'messages' ? 'Messages' : section === 'contacts' ? 'Contacts' : section === 'proposals' ? 'Proposals' : 'Event Group Chat';
           return (
             <TouchableOpacity
               key={section}
-              onPress={() => !isUpdates && setActiveSection(section as any)}
+              onPress={() => setActiveSection(section as any)}
               style={[
                 styles.sectionTab,
                 activeSection === section && styles.sectionTabActive
@@ -3097,7 +3154,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
               {pendingProposalCount > 0
 
-                ? `Project Proposals • ${pendingProposalCount} pending`
+                ? `Project Proposals • ${pendingProposalCount} needs review`
 
                 : 'Project Proposals'}
 
@@ -3131,9 +3188,13 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                         ? '#dc2626'
 
-                        : '#f59e0b',
+                        : p.application.status === 'Resubmitted'
 
-                  badge: p.application.status === 'Pending' ? 1 : (p.application.status === 'Rejected' ? 1 : undefined),
+                          ? '#1d4ed8'
+
+                          : '#f59e0b',
+
+                  badge: p.application.status === 'Pending' || p.application.status === 'Resubmitted' ? 1 : (p.application.status === 'Rejected' ? 1 : undefined),
 
                 }
 
@@ -3326,93 +3387,107 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                 <View style={[styles.formGroup, { flex: 1 }]}>
 
                   <Text style={styles.formLabel}>Start Date</Text>
-
-                  <TouchableOpacity
-
-                    style={styles.pickerTrigger}
-
-                    onPress={() => setShowStartDatePicker(true)}
-
-                  >
-
-                    <MaterialIcons name="calendar-today" size={18} color="#166534" />
-
-                    <Text style={[styles.pickerTriggerText, !proposalForm.proposedStartDate && styles.pickerPlaceholder]}>
-
-                      {proposalForm.proposedStartDate || 'Select date'}
-
-                    </Text>
-
-                  </TouchableOpacity>
-
-                  {showStartDatePicker && (
-
-                    <LazyDateTimePicker
-
-                      value={proposalForm.proposedStartDate ? new Date(proposalForm.proposedStartDate) : new Date()}
-
-                      mode="date"
-
-                      display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
-
-                      onChange={(event: any, date?: Date) => {
-
-                        setShowStartDatePicker(false);
-
-                        if (date) setProposalForm(f => ({ ...f, proposedStartDate: date.toISOString().split('T')[0] }));
-
+                  {Platform.OS === 'web' ? (
+                    <input
+                      type="date"
+                      value={proposalForm.proposedStartDate || ''}
+                      onChange={(e) => setProposalForm(f => ({ ...f, proposedStartDate: e.target.value }))}
+                      onClick={(e) => {
+                        try {
+                          (e.target as any).showPicker?.();
+                        } catch {}
                       }}
-
+                      style={{
+                        width: '100%',
+                        backgroundColor: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '14px',
+                        padding: '13px 16px',
+                        fontSize: '14px',
+                        color: proposalForm.proposedStartDate ? '#0f172a' : '#94a3b8',
+                        fontFamily: 'inherit',
+                        outline: 'none',
+                        cursor: 'pointer',
+                        boxSizing: 'border-box',
+                      }}
                     />
-
+                  ) : (
+                    <>
+                      <TouchableOpacity
+                        style={styles.pickerTrigger}
+                        onPress={() => setShowStartDatePicker(true)}
+                      >
+                        <MaterialIcons name="calendar-today" size={18} color="#166534" />
+                        <Text style={[styles.pickerTriggerText, !proposalForm.proposedStartDate && styles.pickerPlaceholder]}>
+                          {proposalForm.proposedStartDate || 'Select date'}
+                        </Text>
+                      </TouchableOpacity>
+                      {showStartDatePicker && (
+                        <LazyDateTimePicker
+                          value={proposalForm.proposedStartDate ? parseDateValue(proposalForm.proposedStartDate) || new Date() : new Date()}
+                          mode="date"
+                          display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
+                          onChange={(_: any, date?: Date) => {
+                            setShowStartDatePicker(false);
+                            if (date) setProposalForm(f => ({ ...f, proposedStartDate: formatDateValue(date) }));
+                          }}
+                        />
+                      )}
+                    </>
                   )}
-
                 </View>
 
                 <View style={[styles.formGroup, { flex: 1 }]}>
-
                   <Text style={styles.formLabel}>End Date</Text>
-
-                  <TouchableOpacity
-
-                    style={styles.pickerTrigger}
-
-                    onPress={() => setShowEndDatePicker(true)}
-
-                  >
-
-                    <MaterialIcons name="calendar-today" size={18} color="#166534" />
-
-                    <Text style={[styles.pickerTriggerText, !proposalForm.proposedEndDate && styles.pickerPlaceholder]}>
-
-                      {proposalForm.proposedEndDate || 'Select date'}
-
-                    </Text>
-
-                  </TouchableOpacity>
-
-                  {showEndDatePicker && (
-
-                    <LazyDateTimePicker
-
-                      value={proposalForm.proposedEndDate ? new Date(proposalForm.proposedEndDate) : new Date()}
-
-                      mode="date"
-
-                      display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
-
-                      onChange={(event: any, date?: Date) => {
-
-                        setShowEndDatePicker(false);
-
-                        if (date) setProposalForm(f => ({ ...f, proposedEndDate: date.toISOString().split('T')[0] }));
-
+                  {Platform.OS === 'web' ? (
+                    <input
+                      type="date"
+                      value={proposalForm.proposedEndDate || ''}
+                      min={proposalForm.proposedStartDate || undefined}
+                      onChange={(e) => setProposalForm(f => ({ ...f, proposedEndDate: e.target.value }))}
+                      onClick={(e) => {
+                        try {
+                          (e.target as any).showPicker?.();
+                        } catch {}
                       }}
-
+                      style={{
+                        width: '100%',
+                        backgroundColor: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '14px',
+                        padding: '13px 16px',
+                        fontSize: '14px',
+                        color: proposalForm.proposedEndDate ? '#0f172a' : '#94a3b8',
+                        fontFamily: 'inherit',
+                        outline: 'none',
+                        cursor: 'pointer',
+                        boxSizing: 'border-box',
+                      }}
                     />
-
+                  ) : (
+                    <>
+                      <TouchableOpacity
+                        style={styles.pickerTrigger}
+                        onPress={() => setShowEndDatePicker(true)}
+                      >
+                        <MaterialIcons name="calendar-today" size={18} color="#166534" />
+                        <Text style={[styles.pickerTriggerText, !proposalForm.proposedEndDate && styles.pickerPlaceholder]}>
+                          {proposalForm.proposedEndDate || 'Select date'}
+                        </Text>
+                      </TouchableOpacity>
+                      {showEndDatePicker && (
+                        <LazyDateTimePicker
+                          value={proposalForm.proposedEndDate ? parseDateValue(proposalForm.proposedEndDate) || new Date() : new Date()}
+                          mode="date"
+                          display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
+                          onChange={(_: any, date?: Date) => {
+                            setShowEndDatePicker(false);
+                            if (date) setProposalForm(f => ({ ...f, proposedEndDate: formatDateValue(date) }));
+                          }}
+                        />
+                      )}
+                    </>
                   )}
-
                 </View>
 
               </View>
@@ -3601,10 +3676,10 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
               <View style={styles.statusBanner}>
 
-                <MaterialIcons name="info" size={20} color={app.status === 'Approved' ? '#166534' : '#f59e0b'} />
+                <MaterialIcons name="info" size={20} color={app.status === 'Approved' ? '#166534' : app.status === 'Rejected' ? '#dc2626' : app.status === 'Resubmitted' ? '#1d4ed8' : '#f59e0b'} />
 
                 <View style={{ flexDirection: 'column' }}>
-                  <Text style={[styles.statusText, { color: app.status === 'Approved' ? '#166534' : '#f59e0b' }]}>
+                  <Text style={[styles.statusText, { color: app.status === 'Approved' ? '#166534' : app.status === 'Rejected' ? '#dc2626' : app.status === 'Resubmitted' ? '#1d4ed8' : '#f59e0b' }]}>
                     Current Status: {app.status}
                   </Text>
                   {(app.proposalDetails?.targetProjectTitle || app.proposalDetails?.requestedProgramModule) && (
@@ -3834,14 +3909,14 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                 </View>
               )}
 
-              {user?.role === 'partner' && (app.status === 'Revision Requested' || app.status === 'Needs Revision') && (
+              {user?.role === 'partner' && (app.status === 'Revision Requested' || app.status === 'Needs Revision' || app.status === 'Rejected') && (
                 <View style={{ marginTop: 16 }}>
                   <TouchableOpacity
-                    style={[styles.actionBtn, styles.approveBtn, { backgroundColor: '#d97706', width: '100%', justifyContent: 'center' }]}
+                    style={[styles.actionBtn, styles.approveBtn, { backgroundColor: app.status === 'Rejected' ? '#dc2626' : '#d97706', width: '100%', justifyContent: 'center' }]}
                     onPress={() => handleEditProposalFromMessage(app)}
                   >
                     <MaterialIcons name="edit" size={16} color="#fff" style={{ marginRight: 6 }} />
-                    <Text style={styles.actionBtnText}>Edit & Resubmit Proposal</Text>
+                    <Text style={styles.actionBtnText}>Revise & Resubmit Proposal</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -4276,22 +4351,103 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                   }
                   const isAdminView = user?.role === 'admin';
                   const isOwner = Boolean((application.proposedById && application.proposedById === user?.id) || (application.partnerUserId && application.partnerUserId === user?.id) || isOwn);
+
+                  // Cross-reference with live proposalChats to get latest proposal data
+                  const appId = application.id || application.applicationId || m.id;
+                  const appPartnerId = application.partnerUserId || application.proposedById || '';
+                  const appProjectId = application.projectId || application.targetProjectId || '';
+                  const liveMatch = proposalChats.find(item => {
+                    const liveApp = item.application;
+                    if (liveApp.id === appId) return true;
+                    // Match by partner + project combination
+                    if (appPartnerId && appProjectId && liveApp.partnerUserId === appPartnerId && liveApp.projectId === appProjectId) return true;
+                    // Match by partner + program module
+                    const msgModule = application.requestedProgramModule || application.programModule || application.proposalDetails?.requestedProgramModule || '';
+                    if (appPartnerId && msgModule && liveApp.partnerUserId === appPartnerId && item.programModule === msgModule) return true;
+                    return false;
+                  });
+                  const liveApp = liveMatch?.application;
+
                   const templateApp: PartnerProjectApplication = {
-                    id: application.id || m.id,
-                    projectId: application.projectId || application.targetProjectId || 'new',
-                    partnerUserId: application.partnerUserId || application.proposedById || '',
-                    partnerName: application.partnerName || application.proposedByName || user?.name || 'Partner',
-                    partnerEmail: application.partnerEmail || '',
-                    status: (application.status === 'Proposed' ? 'Pending' : application.status) as any || 'Pending',
-                    requestedAt: application.timestamp || application.requestedAt || m.timestamp,
-                    proposalDetails: application.proposalDetails || {},
-                    reviewNotes: application.reviewNotes,
+                    id: liveApp?.id || application.id || m.id,
+                    projectId: liveApp?.projectId || application.projectId || application.targetProjectId || 'new',
+                    partnerUserId: liveApp?.partnerUserId || application.partnerUserId || application.proposedById || '',
+                    partnerName: liveApp?.partnerName || application.partnerName || application.proposedByName || user?.name || 'Partner',
+                    partnerEmail: liveApp?.partnerEmail || application.partnerEmail || '',
+                    status: (liveApp?.status || (application.status === 'Proposed' ? 'Pending' : application.status) || 'Pending') as any,
+                    requestedAt: liveApp?.requestedAt || application.timestamp || application.requestedAt || m.timestamp,
+                    proposalDetails: liveApp?.proposalDetails || application.proposalDetails || {},
+                    reviewNotes: liveApp?.reviewNotes ?? application.reviewNotes,
                   } as any;
 
                   return (
                     <View key={`proposal-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther, styles.proposalMessageRow]}>
-                      <View style={[styles.messageBubbleContainer, isOwn ? styles.messageBubbleContainerOwn : styles.messageBubbleContainerOther]}>
-                        <View style={{ maxWidth: '100%', flexShrink: 1 }}>
+                      <View style={[styles.messageBubbleContainer, isOwn ? styles.messageBubbleContainerOwn : styles.messageBubbleContainerOther, { width: '100%', maxWidth: '100%' }]}>
+                        {/* Three dots action button on the left for own messages */}
+                        {isOwn && (
+                          <View style={{ position: 'relative', zIndex: activeMessageMenu?.message?.id === m.id ? 99999 : 1, flexShrink: 0 }}>
+                            <TouchableOpacity
+                              style={[styles.messageMenuTrigger, styles.messageMenuTriggerOwn]}
+                              onPress={() => setActiveMessageMenu(activeMessageMenu?.message?.id === m.id ? null : { message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
+                              activeOpacity={0.7}
+                            >
+                              <MaterialIcons name="more-vert" size={16} color={activeMessageMenu?.message?.id === m.id ? '#166534' : '#94a3b8'} />
+                            </TouchableOpacity>
+
+                            {activeMessageMenu?.message?.id === m.id && (
+                              <View style={[styles.inlineMessageMenu, styles.inlineMessageMenuOwn]}>
+                                {(isOwner || isAdminView) && (
+                                  <TouchableOpacity
+                                    style={styles.inlineMessageOptionItem}
+                                    onPress={() => {
+                                      setActiveMessageMenu(null);
+                                      handleEditProposalFromMessage(templateApp);
+                                    }}
+                                    activeOpacity={0.75}
+                                  >
+                                    <MaterialIcons name="edit" size={16} color="#0284c7" />
+                                    <Text style={styles.inlineMessageOptionText}>Edit</Text>
+                                  </TouchableOpacity>
+                                )}
+
+                                {templateApp.projectId && templateApp.projectId !== 'new' && (
+                                  <TouchableOpacity
+                                    style={styles.inlineMessageOptionItem}
+                                    onPress={() => {
+                                      setActiveMessageMenu(null);
+                                      navigateToAvailableRoute(
+                                        navigation,
+                                        'Projects',
+                                        { projectId: templateApp.projectId, programSuiteView: 'projects' },
+                                        { routeName: 'Projects', params: { projectId: templateApp.projectId, programSuiteView: 'projects' } }
+                                      );
+                                    }}
+                                    activeOpacity={0.75}
+                                  >
+                                    <MaterialIcons name="folder-open" size={16} color="#166534" />
+                                    <Text style={styles.inlineMessageOptionText}>Projects</Text>
+                                  </TouchableOpacity>
+                                )}
+
+                                <TouchableOpacity
+                                  style={[styles.inlineMessageOptionItem, styles.inlineMessageOptionDanger]}
+                                  onPress={() => {
+                                    setActiveMessageMenu(null);
+                                    handleDeleteMessage(m.id, Boolean(selectedProjectChat));
+                                  }}
+                                  activeOpacity={0.75}
+                                >
+                                  <MaterialIcons name="delete-outline" size={16} color="#dc2626" />
+                                  <Text style={[styles.inlineMessageOptionText, { color: '#dc2626', fontWeight: '700' }]}>
+                                    Delete
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
+                          </View>
+                        )}
+
+                        <View style={{ flex: 1, minWidth: 0, maxWidth: '100%' }}>
                           <ProposalMessageTemplate
                             application={templateApp}
                             isAdmin={isAdminView}
@@ -4299,6 +4455,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                             isSubmitting={isSubmittingInlineDraft}
                             onEdit={(app) => handleEditProposalFromMessage(app)}
                             onSubmit={(app) => handleSubmitProposalFromMessage(app)}
+                            onReject={(app) => handleRejectWithNotes(app)}
                             onViewProjects={(app) => {
                               navigateToAvailableRoute(
                                 navigation,
@@ -4313,71 +4470,73 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                           />
                         </View>
 
-                        {/* Three dots action button & inline popup menu for proposal card */}
-                        <View style={{ position: 'relative', zIndex: activeMessageMenu?.message?.id === m.id ? 99999 : 1 }}>
-                          <TouchableOpacity
-                            style={[styles.messageMenuTrigger, isOwn ? styles.messageMenuTriggerOwn : styles.messageMenuTriggerOther]}
-                            onPress={() => setActiveMessageMenu(activeMessageMenu?.message?.id === m.id ? null : { message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
-                            activeOpacity={0.7}
-                          >
-                            <MaterialIcons name="more-vert" size={16} color={activeMessageMenu?.message?.id === m.id ? '#166534' : '#94a3b8'} />
-                          </TouchableOpacity>
+                        {/* Three dots action button on the right for other's messages */}
+                        {!isOwn && (
+                          <View style={{ position: 'relative', zIndex: activeMessageMenu?.message?.id === m.id ? 99999 : 1, flexShrink: 0 }}>
+                            <TouchableOpacity
+                              style={[styles.messageMenuTrigger, styles.messageMenuTriggerOther]}
+                              onPress={() => setActiveMessageMenu(activeMessageMenu?.message?.id === m.id ? null : { message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
+                              activeOpacity={0.7}
+                            >
+                              <MaterialIcons name="more-vert" size={16} color={activeMessageMenu?.message?.id === m.id ? '#166534' : '#94a3b8'} />
+                            </TouchableOpacity>
 
-                          {activeMessageMenu?.message?.id === m.id && (
-                            <View style={[styles.inlineMessageMenu, isOwn ? styles.inlineMessageMenuOwn : styles.inlineMessageMenuOther]}>
-                              {(isOwner || isAdminView) && (
+                            {activeMessageMenu?.message?.id === m.id && (
+                              <View style={[styles.inlineMessageMenu, styles.inlineMessageMenuOther]}>
+                                {(isOwner || isAdminView) && (
+                                  <TouchableOpacity
+                                    style={styles.inlineMessageOptionItem}
+                                    onPress={() => {
+                                      setActiveMessageMenu(null);
+                                      handleEditProposalFromMessage(templateApp);
+                                    }}
+                                    activeOpacity={0.75}
+                                  >
+                                    <MaterialIcons name="edit" size={16} color="#0284c7" />
+                                    <Text style={styles.inlineMessageOptionText}>Edit</Text>
+                                  </TouchableOpacity>
+                                )}
+
+                                {templateApp.projectId && templateApp.projectId !== 'new' && (
+                                  <TouchableOpacity
+                                    style={styles.inlineMessageOptionItem}
+                                    onPress={() => {
+                                      setActiveMessageMenu(null);
+                                      navigateToAvailableRoute(
+                                        navigation,
+                                        'Projects',
+                                        { projectId: templateApp.projectId, programSuiteView: 'projects' },
+                                        { routeName: 'Projects', params: { projectId: templateApp.projectId, programSuiteView: 'projects' } }
+                                      );
+                                    }}
+                                    activeOpacity={0.75}
+                                  >
+                                    <MaterialIcons name="folder-open" size={16} color="#166534" />
+                                    <Text style={styles.inlineMessageOptionText}>Projects</Text>
+                                  </TouchableOpacity>
+                                )}
+
                                 <TouchableOpacity
-                                  style={styles.inlineMessageOptionItem}
+                                  style={[styles.inlineMessageOptionItem, styles.inlineMessageOptionDanger]}
                                   onPress={() => {
                                     setActiveMessageMenu(null);
-                                    handleEditProposalFromMessage(templateApp);
+                                    handleDeleteMessage(m.id, Boolean(selectedProjectChat));
                                   }}
                                   activeOpacity={0.75}
                                 >
-                                  <MaterialIcons name="edit" size={16} color="#0284c7" />
-                                  <Text style={styles.inlineMessageOptionText}>Edit</Text>
+                                  <MaterialIcons name="delete-outline" size={16} color="#dc2626" />
+                                  <Text style={[styles.inlineMessageOptionText, { color: '#dc2626', fontWeight: '700' }]}>
+                                    Delete
+                                  </Text>
                                 </TouchableOpacity>
-                              )}
-
-                              {templateApp.projectId && templateApp.projectId !== 'new' && (
-                                <TouchableOpacity
-                                  style={styles.inlineMessageOptionItem}
-                                  onPress={() => {
-                                    setActiveMessageMenu(null);
-                                    navigateToAvailableRoute(
-                                      navigation,
-                                      'Projects',
-                                      { projectId: templateApp.projectId, programSuiteView: 'projects' },
-                                      { routeName: 'Projects', params: { projectId: templateApp.projectId, programSuiteView: 'projects' } }
-                                    );
-                                  }}
-                                  activeOpacity={0.75}
-                                >
-                                  <MaterialIcons name="folder-open" size={16} color="#166534" />
-                                  <Text style={styles.inlineMessageOptionText}>Projects</Text>
-                                </TouchableOpacity>
-                              )}
-
-                              <TouchableOpacity
-                                style={[styles.inlineMessageOptionItem, styles.inlineMessageOptionDanger]}
-                                onPress={() => {
-                                  setActiveMessageMenu(null);
-                                  handleDeleteMessage(m.id, Boolean(selectedProjectChat));
-                                }}
-                                activeOpacity={0.75}
-                              >
-                                <MaterialIcons name="delete-outline" size={16} color="#dc2626" />
-                                <Text style={[styles.inlineMessageOptionText, { color: '#dc2626', fontWeight: '700' }]}>
-                                  Delete
-                                </Text>
-                              </TouchableOpacity>
-                            </View>
-                          )}
-                        </View>
+                              </View>
+                            )}
+                          </View>
+                        )}
                       </View>
 
                       <Text style={styles.messageTime}>
-                        {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {safeTimeStr(m.timestamp)}
                       </Text>
                     </View>
                   );
@@ -4407,113 +4566,166 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
                   const appStatus = matchingChat?.application?.status;
                   const isApproved = appStatus === 'Approved' || m.content.toLowerCase().includes('has been approved');
+                  const isRejected = appStatus === 'Rejected' || m.content.toLowerCase().includes('was rejected') || m.content.toLowerCase().includes('has been rejected');
                   const isRevisionRequested = appStatus === 'Revision Requested' || appStatus === 'Needs Revision' || m.content.toLowerCase().includes('requires revision');
                   const isResubmitted = appStatus === 'Resubmitted' || m.content.toLowerCase().includes('has been resubmitted');
                   const displayTitle = matchingChat?.projectTitle || extractedTarget || 'Program Proposal';
                   const targetProjectId = matchingChat?.application?.projectId || 'all';
 
-                  const badgeBg = isApproved ? '#dcfce7' : isRevisionRequested ? '#fef3c7' : isResubmitted ? '#dbeafe' : '#fef3c7';
-                  const badgeColor = isApproved ? '#166534' : isRevisionRequested ? '#b45309' : isResubmitted ? '#1d4ed8' : '#b45309';
-                  const badgeText = isApproved ? 'APPROVED' : isRevisionRequested ? 'NEEDS REVISION' : isResubmitted ? 'RESUBMITTED' : 'PENDING REVIEW';
-                  const iconName = isApproved ? 'check-circle' : isRevisionRequested ? 'edit-note' : isResubmitted ? 'update' : 'schedule';
+                  const badgeBg = isApproved ? '#dcfce7' : isRejected ? '#fee2e2' : isRevisionRequested ? '#fef3c7' : isResubmitted ? '#dbeafe' : '#fef3c7';
+                  const badgeColor = isApproved ? '#166534' : isRejected ? '#dc2626' : isRevisionRequested ? '#b45309' : isResubmitted ? '#1d4ed8' : '#b45309';
+                  const badgeText = isApproved ? 'APPROVED' : isRejected ? 'REJECTED' : isRevisionRequested ? 'NEEDS REVISION' : isResubmitted ? 'RESUBMITTED' : 'PENDING REVIEW';
+                  const iconName = isApproved ? 'check-circle' : isRejected ? 'cancel' : isRevisionRequested ? 'edit-note' : isResubmitted ? 'update' : 'schedule';
 
                   return (
-                    <View key={`proposal-notice-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther]}>
-                      <View style={[styles.messageBubbleContainer, isOwn ? styles.messageBubbleContainerOwn : styles.messageBubbleContainerOther]}>
-                        <View style={[styles.approvedNoticeContainer, isRevisionRequested && { borderColor: '#fed7aa' }, isResubmitted && { borderColor: '#bfdbfe' }]}>
-                          <View style={styles.approvedNoticeHeader}>
-                            <View style={[styles.approvedNoticeIconCircle, { backgroundColor: badgeBg }]}>
-                              <MaterialIcons
-                                name={iconName as any}
-                                size={22}
-                                color={badgeColor}
-                              />
-                            </View>
-                            <View style={{ flex: 1 }}>
-                              <View style={[styles.approvedBadgePill, { backgroundColor: badgeBg }]}>
-                                <Text style={[styles.approvedBadgeText, { color: badgeColor }]}>
-                                  {badgeText}
+                    <View key={`proposal-notice-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther, styles.proposalMessageRow]}>
+                      <View style={[styles.messageBubbleContainer, isOwn ? styles.messageBubbleContainerOwn : styles.messageBubbleContainerOther, { width: '100%', maxWidth: '100%' }]}>
+                        {/* Three dots action button on the left for own messages */}
+                        {isOwn && (
+                          <View style={{ position: 'relative', zIndex: activeMessageMenu?.message?.id === m.id ? 99999 : 1, flexShrink: 0 }}>
+                            <TouchableOpacity
+                              style={[styles.messageMenuTrigger, styles.messageMenuTriggerOwn]}
+                              onPress={() => setActiveMessageMenu(activeMessageMenu?.message?.id === m.id ? null : { message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
+                              activeOpacity={0.7}
+                            >
+                              <MaterialIcons name="more-vert" size={16} color={activeMessageMenu?.message?.id === m.id ? '#166534' : '#94a3b8'} />
+                            </TouchableOpacity>
+
+                            {activeMessageMenu?.message?.id === m.id && (
+                              <View style={[styles.inlineMessageMenu, styles.inlineMessageMenuOwn]}>
+                                <TouchableOpacity
+                                  style={[styles.inlineMessageOptionItem, styles.inlineMessageOptionDanger]}
+                                  onPress={() => {
+                                    setActiveMessageMenu(null);
+                                    handleDeleteMessage(m.id, Boolean(selectedProjectChat));
+                                  }}
+                                  activeOpacity={0.75}
+                                >
+                                  <MaterialIcons name="delete-outline" size={16} color="#dc2626" />
+                                  <Text style={[styles.inlineMessageOptionText, { color: '#dc2626', fontWeight: '700' }]}>
+                                    Delete
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
+                          </View>
+                        )}
+
+                        <View style={{ flex: 1, minWidth: 0, maxWidth: '100%' }}>
+                          <View style={[styles.approvedNoticeContainer, isRevisionRequested && { borderColor: '#fed7aa' }, isRejected && { borderColor: '#fecaca' }, isResubmitted && { borderColor: '#bfdbfe' }]}>
+                            <View style={styles.approvedNoticeHeader}>
+                              <View style={[styles.approvedNoticeIconCircle, { backgroundColor: badgeBg }]}>
+                                <MaterialIcons
+                                  name={iconName as any}
+                                  size={22}
+                                  color={badgeColor}
+                                />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <View style={[styles.approvedBadgePill, { backgroundColor: badgeBg }]}>
+                                  <Text style={[styles.approvedBadgeText, { color: badgeColor }]}>
+                                    {badgeText}
+                                  </Text>
+                                </View>
+                                <Text style={styles.approvedNoticeHeadline}>
+                                  {isApproved
+                                    ? `Your proposal for "${displayTitle}" has been submitted and has been approved`
+                                    : isRejected
+                                    ? `Your proposal for "${displayTitle}" was rejected`
+                                    : isRevisionRequested
+                                    ? `Your proposal for "${displayTitle}" requires revision`
+                                    : isResubmitted
+                                    ? `Your proposal for "${displayTitle}" was resubmitted for review`
+                                    : `Your proposal for "${displayTitle}" is pending review`}
                                 </Text>
                               </View>
-                              <Text style={styles.approvedNoticeHeadline}>
-                                {isApproved
-                                  ? `Your proposal for "${displayTitle}" has been submitted and has been approved`
-                                  : isRevisionRequested
-                                    ? `Revision Requested for "${displayTitle}". Please edit and resubmit.`
-                                    : isResubmitted
-                                      ? `Your revised proposal for "${displayTitle}" has been submitted and is pending admin review.`
-                                      : `Your proposal for "${displayTitle}" has been submitted and is pending admin review.`}
-                              </Text>
                             </View>
-                          </View>
 
-                          {isApproved && (
-                            <TouchableOpacity
-                              style={styles.approvedNoticeButton}
-                              onPress={() => {
-                                navigateToAvailableRoute(
-                                  navigation,
-                                  'Projects',
-                                  { projectId: targetProjectId, programSuiteView: 'projects' },
-                                  { routeName: 'Projects', params: { projectId: targetProjectId, programSuiteView: 'projects' } }
-                                );
-                              }}
-                              activeOpacity={0.85}
-                            >
-                              <MaterialIcons name="folder-special" size={18} color="#ffffff" style={{ marginRight: 6 }} />
-                              <Text style={styles.approvedNoticeButtonText}>View my Projects</Text>
-                              <MaterialIcons name="arrow-forward" size={16} color="#ffffff" style={{ marginLeft: 4 }} />
-                            </TouchableOpacity>
-                          )}
+                            {isRejected && matchingChat?.application?.reviewNotes ? (
+                              <View style={{ marginTop: 8, padding: 8, backgroundColor: '#fef2f2', borderRadius: 8, borderWidth: 1, borderColor: '#fecaca' }}>
+                                <Text style={{ fontSize: 10, fontWeight: '700', color: '#991b1b', marginBottom: 2 }}>Rejection Reason</Text>
+                                <Text style={{ fontSize: 12, color: '#7f1d1d', lineHeight: 16 }}>{matchingChat.application.reviewNotes}</Text>
+                              </View>
+                            ) : null}
 
-                          {isRevisionRequested && (
-                            <TouchableOpacity
-                              style={[styles.approvedNoticeButton, { backgroundColor: '#d97706' }]}
-                              onPress={() => {
-                                if (matchingChat?.application) {
-                                  handleEditProposalFromMessage(matchingChat.application);
-                                }
-                              }}
-                              activeOpacity={0.85}
-                            >
-                              <MaterialIcons name="edit" size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                              <Text style={styles.approvedNoticeButtonText}>Edit & Resubmit Proposal</Text>
-                            </TouchableOpacity>
-                          )}
-                        </View>
+                            {isRevisionRequested && matchingChat?.application?.reviewNotes ? (
+                              <View style={{ marginTop: 8, padding: 8, backgroundColor: '#fffbeb', borderRadius: 8, borderWidth: 1, borderColor: '#fed7aa' }}>
+                                <Text style={{ fontSize: 10, fontWeight: '700', color: '#92400e', marginBottom: 2 }}>Revision Notes from Admin</Text>
+                                <Text style={{ fontSize: 12, color: '#78350f', lineHeight: 16 }}>{matchingChat.application.reviewNotes}</Text>
+                              </View>
+                            ) : null}
 
-                        {/* Three dots action button & inline popup menu for proposal notice */}
-                        <View style={{ position: 'relative', zIndex: activeMessageMenu?.message?.id === m.id ? 99999 : 1 }}>
-                          <TouchableOpacity
-                            style={[styles.messageMenuTrigger, isOwn ? styles.messageMenuTriggerOwn : styles.messageMenuTriggerOther]}
-                            onPress={() => setActiveMessageMenu(activeMessageMenu?.message?.id === m.id ? null : { message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
-                            activeOpacity={0.7}
-                          >
-                            <MaterialIcons name="more-vert" size={16} color={activeMessageMenu?.message?.id === m.id ? '#166534' : '#94a3b8'} />
-                          </TouchableOpacity>
-
-                          {activeMessageMenu?.message?.id === m.id && (
-                            <View style={[styles.inlineMessageMenu, isOwn ? styles.inlineMessageMenuOwn : styles.inlineMessageMenuOther]}>
+                            {isApproved && (
                               <TouchableOpacity
-                                style={[styles.inlineMessageOptionItem, styles.inlineMessageOptionDanger]}
+                                style={styles.approvedNoticeButton}
                                 onPress={() => {
-                                  setActiveMessageMenu(null);
-                                  handleDeleteMessage(m.id, Boolean(selectedProjectChat));
+                                  navigateToAvailableRoute(
+                                    navigation,
+                                    'Projects',
+                                    { projectId: targetProjectId, programSuiteView: 'projects' },
+                                    { routeName: 'Projects', params: { projectId: targetProjectId, programSuiteView: 'projects' } }
+                                  );
                                 }}
-                                activeOpacity={0.75}
+                                activeOpacity={0.85}
                               >
-                                <MaterialIcons name="delete-outline" size={16} color="#dc2626" />
-                                <Text style={[styles.inlineMessageOptionText, { color: '#dc2626', fontWeight: '700' }]}>
-                                  Delete
-                                </Text>
+                                <MaterialIcons name="folder-special" size={18} color="#ffffff" style={{ marginRight: 6 }} />
+                                <Text style={styles.approvedNoticeButtonText}>View my Projects</Text>
+                                <MaterialIcons name="arrow-forward" size={16} color="#ffffff" style={{ marginLeft: 4 }} />
                               </TouchableOpacity>
-                            </View>
-                          )}
+                            )}
+
+                            {(isRevisionRequested || isRejected) && (
+                              <TouchableOpacity
+                                style={[styles.approvedNoticeButton, { backgroundColor: isRejected ? '#dc2626' : '#d97706' }]}
+                                onPress={() => {
+                                  const targetApp = matchingChat?.application || proposalChats.find(p => p.application.partnerUserId === user?.id || p.application.id === m.id)?.application;
+                                  if (targetApp) {
+                                    handleEditProposalFromMessage(targetApp);
+                                  }
+                                }}
+                                activeOpacity={0.85}
+                              >
+                                <MaterialIcons name="edit" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                                <Text style={styles.approvedNoticeButtonText}>{isRejected ? 'Revise & Resubmit Proposal' : 'Edit & Resubmit Proposal'}</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
                         </View>
+
+                        {/* Three dots action button on the right for other's messages */}
+                        {!isOwn && (
+                          <View style={{ position: 'relative', zIndex: activeMessageMenu?.message?.id === m.id ? 99999 : 1, flexShrink: 0 }}>
+                            <TouchableOpacity
+                              style={[styles.messageMenuTrigger, styles.messageMenuTriggerOther]}
+                              onPress={() => setActiveMessageMenu(activeMessageMenu?.message?.id === m.id ? null : { message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
+                              activeOpacity={0.7}
+                            >
+                              <MaterialIcons name="more-vert" size={16} color={activeMessageMenu?.message?.id === m.id ? '#166534' : '#94a3b8'} />
+                            </TouchableOpacity>
+
+                            {activeMessageMenu?.message?.id === m.id && (
+                              <View style={[styles.inlineMessageMenu, styles.inlineMessageMenuOther]}>
+                                <TouchableOpacity
+                                  style={[styles.inlineMessageOptionItem, styles.inlineMessageOptionDanger]}
+                                  onPress={() => {
+                                    setActiveMessageMenu(null);
+                                    handleDeleteMessage(m.id, Boolean(selectedProjectChat));
+                                  }}
+                                  activeOpacity={0.75}
+                                >
+                                  <MaterialIcons name="delete-outline" size={16} color="#dc2626" />
+                                  <Text style={[styles.inlineMessageOptionText, { color: '#dc2626', fontWeight: '700' }]}>
+                                    Delete
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
+                          </View>
+                        )}
                       </View>
 
                       <Text style={styles.messageTime}>
-                        {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {safeTimeStr(m.timestamp)}
                       </Text>
                     </View>
                   );
@@ -4524,14 +4736,102 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                 const isEdited = Boolean(m.edited);
                 const senderName = isOwn ? 'You' : (allUsers.find(u => u.id === m.senderId)?.name || selectedUser?.name || 'User');
 
+                const renderMessageMenuTrigger = () => (
+                  <View style={{ position: 'relative', zIndex: activeMessageMenu?.message?.id === m.id ? 9999 : 1, flexShrink: 0 }}>
+                    <TouchableOpacity
+                      style={[styles.messageMenuTrigger, isOwn ? styles.messageMenuTriggerOwn : styles.messageMenuTriggerOther]}
+                      onPress={() => setActiveMessageMenu(activeMessageMenu?.message?.id === m.id ? null : { message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
+                      activeOpacity={0.7}
+                    >
+                      <MaterialIcons name="more-vert" size={16} color={activeMessageMenu?.message?.id === m.id ? '#166534' : '#94a3b8'} />
+                    </TouchableOpacity>
+
+                    {activeMessageMenu?.message?.id === m.id && (() => {
+                      const isMsgDeleted = Boolean(m.deleted || m.content === 'This message was deleted' || m.content === 'This message was unsent');
+                      const isProposal = typeof m.content === 'string' && m.content.startsWith(PROPOSAL_PREFIX);
+                      const isProjectMsg = Boolean(selectedProjectChat);
+
+                      return (
+                        <View style={[styles.inlineMessageMenu, isOwn ? styles.inlineMessageMenuOwn : styles.inlineMessageMenuOther]}>
+                          {/* Reply */}
+                          {!isMsgDeleted && (
+                            <TouchableOpacity
+                              style={styles.inlineMessageOptionItem}
+                              onPress={() => {
+                                setActiveMessageMenu(null);
+                                handleStartReply(m);
+                              }}
+                              activeOpacity={0.75}
+                            >
+                              <MaterialIcons name="reply" size={16} color="#166534" />
+                              <Text style={styles.inlineMessageOptionText}>Reply</Text>
+                            </TouchableOpacity>
+                          )}
+
+                          {/* Edit (for sender if not deleted and not proposal) */}
+                          {isOwn && !isMsgDeleted && !isProposal && (
+                            <TouchableOpacity
+                              style={styles.inlineMessageOptionItem}
+                              onPress={() => {
+                                setActiveMessageMenu(null);
+                                handleStartEdit(m, isProjectMsg);
+                              }}
+                              activeOpacity={0.75}
+                            >
+                              <MaterialIcons name="edit" size={16} color="#0284c7" />
+                              <Text style={styles.inlineMessageOptionText}>Edit</Text>
+                            </TouchableOpacity>
+                          )}
+
+                          {/* Copy Text */}
+                          {!isMsgDeleted && m.content ? (
+                            <TouchableOpacity
+                              style={styles.inlineMessageOptionItem}
+                              onPress={async () => {
+                                setActiveMessageMenu(null);
+                                const copied = await copyChatText(m.content);
+                                Alert.alert(copied ? 'Copied' : 'Copy failed', copied ? 'Message text copied to clipboard.' : 'Clipboard is unavailable on this device.');
+                              }}
+                              activeOpacity={0.75}
+                            >
+                              <MaterialIcons name="content-copy" size={16} color="#475569" />
+                              <Text style={styles.inlineMessageOptionText}>Copy</Text>
+                            </TouchableOpacity>
+                          ) : null}
+
+                          {/* Unsend */}
+                          {isOwn && !isMsgDeleted && (
+                            <TouchableOpacity
+                              style={[styles.inlineMessageOptionItem, styles.inlineMessageOptionDanger]}
+                              onPress={() => {
+                                setActiveMessageMenu(null);
+                                handleUnsendMessage(m.id, isProjectMsg);
+                              }}
+                              activeOpacity={0.75}
+                            >
+                              <MaterialIcons name="undo" size={16} color="#dc2626" />
+                              <Text style={[styles.inlineMessageOptionText, { color: '#dc2626', fontWeight: '700' }]}>
+                                Unsend
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      );
+                    })()}
+                  </View>
+                );
+
                 return (
-                  <View key={`msg-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther]}>
+                  <View key={`msg-${m.id}-${i}`} style={[styles.messageRow, isOwn ? styles.messageRowOwn : styles.messageRowOther, !isWide && { maxWidth: '92%' }]}>
                     {/* Sender Name in Group Chat */}
                     {selectedProjectChat && !isOwn && (
                       <Text style={styles.groupMessageSenderName}>{senderName}</Text>
                     )}
 
                     <View style={[styles.messageBubbleContainer, isOwn ? styles.messageBubbleContainerOwn : styles.messageBubbleContainerOther]}>
+                      {/* Three dots action button on the left for own messages */}
+                      {isOwn && !isDeleted && renderMessageMenuTrigger()}
+
                       <TouchableOpacity
                         style={[
                           styles.bubble,
@@ -4546,7 +4846,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                         {Boolean(m.replyToContent) && !isDeleted && (
                           <View style={[styles.replyQuoteBox, isOwn ? styles.replyQuoteBoxOwn : styles.replyQuoteBoxOther]}>
                             <View style={[styles.replyQuoteBar, isOwn ? styles.replyQuoteBarOwn : styles.replyQuoteBarOther]} />
-                            <View style={{ flex: 1 }}>
+                            <View style={{ flex: 1, minWidth: 0 }}>
                               <Text style={[styles.replyQuoteSender, isOwn && styles.replyQuoteSenderOwn]} numberOfLines={1}>
                                 {m.replyToSenderName || 'User'}
                               </Text>
@@ -4613,91 +4913,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                         ) : null}
                       </TouchableOpacity>
 
-                      {/* Three dots action button & inline popup menu */}
-                      {!isDeleted && (
-                        <View style={{ position: 'relative', zIndex: activeMessageMenu?.message?.id === m.id ? 9999 : 1 }}>
-                          <TouchableOpacity
-                            style={[styles.messageMenuTrigger, isOwn ? styles.messageMenuTriggerOwn : styles.messageMenuTriggerOther]}
-                            onPress={() => setActiveMessageMenu(activeMessageMenu?.message?.id === m.id ? null : { message: m, isOwn, isProjectMsg: Boolean(selectedProjectChat) })}
-                            activeOpacity={0.7}
-                          >
-                            <MaterialIcons name="more-vert" size={16} color={activeMessageMenu?.message?.id === m.id ? '#166534' : '#94a3b8'} />
-                          </TouchableOpacity>
-
-                          {activeMessageMenu?.message?.id === m.id && (() => {
-                            const isDeleted = Boolean(m.deleted || m.content === 'This message was deleted' || m.content === 'This message was unsent');
-                            const isProposal = typeof m.content === 'string' && m.content.startsWith(PROPOSAL_PREFIX);
-                            const isProjectMsg = Boolean(selectedProjectChat);
-
-                            return (
-                              <View style={[styles.inlineMessageMenu, isOwn ? styles.inlineMessageMenuOwn : styles.inlineMessageMenuOther]}>
-                                {/* Reply */}
-                                {!isDeleted && (
-                                  <TouchableOpacity
-                                    style={styles.inlineMessageOptionItem}
-                                    onPress={() => {
-                                      setActiveMessageMenu(null);
-                                      handleStartReply(m);
-                                    }}
-                                    activeOpacity={0.75}
-                                  >
-                                    <MaterialIcons name="reply" size={16} color="#166534" />
-                                    <Text style={styles.inlineMessageOptionText}>Reply</Text>
-                                  </TouchableOpacity>
-                                )}
-
-                                {/* Edit (for sender if not deleted and not proposal) */}
-                                {isOwn && !isDeleted && !isProposal && (
-                                  <TouchableOpacity
-                                    style={styles.inlineMessageOptionItem}
-                                    onPress={() => {
-                                      setActiveMessageMenu(null);
-                                      handleStartEdit(m, isProjectMsg);
-                                    }}
-                                    activeOpacity={0.75}
-                                  >
-                                    <MaterialIcons name="edit" size={16} color="#0284c7" />
-                                    <Text style={styles.inlineMessageOptionText}>Edit</Text>
-                                  </TouchableOpacity>
-                                )}
-
-                                {/* Copy Text */}
-                                {!isDeleted && m.content ? (
-                                  <TouchableOpacity
-                                    style={styles.inlineMessageOptionItem}
-                                    onPress={async () => {
-                                      setActiveMessageMenu(null);
-                                      const copied = await copyChatText(m.content);
-                                      Alert.alert(copied ? 'Copied' : 'Copy failed', copied ? 'Message text copied to clipboard.' : 'Clipboard is unavailable on this device.');
-                                    }}
-                                    activeOpacity={0.75}
-                                  >
-                                    <MaterialIcons name="content-copy" size={16} color="#475569" />
-                                    <Text style={styles.inlineMessageOptionText}>Copy</Text>
-                                  </TouchableOpacity>
-                                ) : null}
-
-                                {/* Unsend */}
-                                {!isDeleted && (
-                                  <TouchableOpacity
-                                    style={[styles.inlineMessageOptionItem, styles.inlineMessageOptionDanger]}
-                                    onPress={() => {
-                                      setActiveMessageMenu(null);
-                                      handleUnsendMessage(m.id, isProjectMsg);
-                                    }}
-                                    activeOpacity={0.75}
-                                  >
-                                    <MaterialIcons name="undo" size={16} color="#dc2626" />
-                                    <Text style={[styles.inlineMessageOptionText, { color: '#dc2626', fontWeight: '700' }]}>
-                                      Unsend
-                                    </Text>
-                                  </TouchableOpacity>
-                                )}
-                              </View>
-                            );
-                          })()}
-                        </View>
-                      )}
+                      {/* Three dots action button on the right for other's messages */}
+                      {!isOwn && !isDeleted && renderMessageMenuTrigger()}
                     </View>
 
                     {/* Timestamp & Edited Indicator */}
@@ -4706,7 +4923,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                         <Text style={styles.messageEditedLabel}>(edited)</Text>
                       )}
                       <Text style={styles.messageTime}>
-                        {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {safeTimeStr(m.timestamp)}
                       </Text>
                     </View>
                   </View>
@@ -4733,6 +4950,10 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
           {/* Inline Draft Proposal Card – shown at bottom of messages list (partner or admin) */}
           {inlineDraftProposal && (isPartner || user?.role === 'admin') ? (() => {
             const draft = inlineDraftProposal;
+            const rejectingApp = proposalChats.find(p => p.application.id === (draft as any).applicationId)?.application;
+            const isRejectedRevision = rejectingApp?.status === 'Rejected' || (draft as any).status === 'Rejected';
+            const isNeedsRevision = rejectingApp?.status === 'Revision Requested' || rejectingApp?.status === 'Needs Revision';
+            const adminFeedback = rejectingApp?.reviewNotes || (draft as any).reviewNotes;
             const getDocName = (uri: string) => {
               if (!uri) return '';
               const clean = uri.split('?')[0];
@@ -4756,13 +4977,40 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                       <MaterialIcons name="description" size={22} color="#166534" />
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={inlineStyles.draftCardTitle}>Project Specifications</Text>
+                      <Text style={inlineStyles.draftCardTitle}>
+                        {isRejectedRevision ? 'Revise Rejected Proposal' : isNeedsRevision ? 'Revise Proposal' : 'Project Specifications'}
+                      </Text>
                       <Text style={inlineStyles.draftCardSub}>Provide details for the {inlineDraftModule} program.</Text>
                     </View>
-                    <View style={inlineStyles.draftBadge}>
-                      <Text style={inlineStyles.draftBadgeText}>DRAFT</Text>
+                    <View style={[inlineStyles.draftBadge, isRejectedRevision && { backgroundColor: '#fee2e2' }, isNeedsRevision && { backgroundColor: '#fef3c7' }]}>
+                      <Text style={[inlineStyles.draftBadgeText, isRejectedRevision && { color: '#dc2626' }, isNeedsRevision && { color: '#b45309' }]}>
+                        {isRejectedRevision ? 'REVISING' : isNeedsRevision ? 'REVISION' : 'DRAFT'}
+                      </Text>
                     </View>
                   </View>
+
+                  {/* Rejection / Revision reason banner */}
+                  {isRejectedRevision ? (
+                    <View style={{ backgroundColor: '#fef2f2', borderColor: '#fecaca', borderWidth: 1, borderRadius: 8, padding: 10, marginHorizontal: 12, marginTop: 4, marginBottom: 8 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                        <MaterialIcons name="error-outline" size={16} color="#dc2626" />
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#dc2626', textTransform: 'uppercase' }}>Proposal Rejected — Please Revise</Text>
+                      </View>
+                      <Text style={{ fontSize: 12, color: '#991b1b', lineHeight: 16 }}>
+                        {adminFeedback || 'The proposal was not approved. You can revise the project details, community need, and expected outcome below and resubmit.'}
+                      </Text>
+                    </View>
+                  ) : isNeedsRevision ? (
+                    <View style={{ backgroundColor: '#fffbeb', borderColor: '#fed7aa', borderWidth: 1, borderRadius: 8, padding: 10, marginHorizontal: 12, marginTop: 4, marginBottom: 8 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                        <MaterialIcons name="feedback" size={16} color="#d97706" />
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#b45309', textTransform: 'uppercase' }}>Revision Requested</Text>
+                      </View>
+                      <Text style={{ fontSize: 12, color: '#92400e', lineHeight: 16 }}>
+                        {adminFeedback || 'Please update the requested details below and resubmit.'}
+                      </Text>
+                    </View>
+                  ) : null}
 
                   <ScrollView style={{ maxHeight: 480 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
                     <View style={inlineStyles.draftCardBody}>
@@ -4848,35 +5096,63 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                             </View>
                             <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
                               <Text style={inlineStyles.draftLabel}>Start Date</Text>
-                              <TouchableOpacity
-                                style={inlineStyles.draftDateBtn}
-                                onPress={() => setInlineStartDatePicker(true)}
-                              >
-                                <MaterialIcons name="calendar-today" size={15} color="#475569" />
-                                <Text style={[inlineStyles.draftDateText, !draft.proposedStartDate && { color: '#94a3b8' }]}>
-                                  {draft.proposedStartDate ? formatProposalDate(draft.proposedStartDate) : 'Select date'}
-                                </Text>
-                              </TouchableOpacity>
-                              {inlineStartDatePicker && (
-                                <LazyDateTimePicker
-                                  value={draft.proposedStartDate ? new Date(draft.proposedStartDate) : new Date()}
-                                  mode="date"
-                                  display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
-                                  onChange={(_: any, date?: Date) => {
-                                    setInlineStartDatePicker(false);
-                                    if (date) setInlineDraftProposal(p => p ? { ...p, proposedStartDate: date.toISOString().split('T')[0] } : p);
+                              {Platform.OS === 'web' ? (
+                                <input
+                                  type="date"
+                                  value={draft.proposedStartDate || ''}
+                                  onChange={(e) => setInlineDraftProposal(p => p ? { ...p, proposedStartDate: e.target.value } : p)}
+                                  onClick={(e) => {
+                                    try {
+                                      (e.target as any).showPicker?.();
+                                    } catch {}
+                                  }}
+                                  style={{
+                                    width: '100%',
+                                    backgroundColor: '#f8fafc',
+                                    border: '1px solid #e2e8f0',
+                                    borderRadius: '8px',
+                                    padding: '7px 10px',
+                                    fontSize: '12px',
+                                    color: '#1e293b',
+                                    fontFamily: 'inherit',
+                                    outline: 'none',
+                                    cursor: 'pointer',
+                                    boxSizing: 'border-box',
                                   }}
                                 />
+                              ) : (
+                                <>
+                                  <TouchableOpacity
+                                    style={inlineStyles.draftDateBtn}
+                                    onPress={() => setInlineStartDatePicker(true)}
+                                  >
+                                    <MaterialIcons name="calendar-today" size={15} color="#475569" />
+                                    <Text style={[inlineStyles.draftDateText, !draft.proposedStartDate && { color: '#94a3b8' }]}>
+                                      {draft.proposedStartDate ? formatProposalDate(draft.proposedStartDate) : 'Select date'}
+                                    </Text>
+                                  </TouchableOpacity>
+                                  {inlineStartDatePicker && (
+                                    <LazyDateTimePicker
+                                      value={draft.proposedStartDate ? parseDateValue(draft.proposedStartDate) || new Date() : new Date()}
+                                      mode="date"
+                                      display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
+                                      onChange={(_: any, date?: Date) => {
+                                        setInlineStartDatePicker(false);
+                                        if (date) setInlineDraftProposal(p => p ? { ...p, proposedStartDate: formatDateValue(date) } : p);
+                                      }}
+                                    />
+                                  )}
+                                </>
                               )}
                             </View>
                           </View>
                         );
                       })()}
 
-                      {/* Row 2: Detailed Description + End Date */}
+                      {/* Row 2: Project Description + End Date */}
                       <View style={[inlineStyles.draftRow, !isWide && inlineStyles.draftRowMobile]}>
                         <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
-                          <Text style={inlineStyles.draftLabel}>Detailed Description</Text>
+                          <Text style={inlineStyles.draftLabel}>Project Description</Text>
                           <TextInput
                             style={[inlineStyles.draftInput, { height: 80, textAlignVertical: 'top' }]}
                             multiline
@@ -4888,26 +5164,81 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                         </View>
                         <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
                           <Text style={inlineStyles.draftLabel}>End Date</Text>
-                          <TouchableOpacity
-                            style={inlineStyles.draftDateBtn}
-                            onPress={() => setInlineEndDatePicker(true)}
-                          >
-                            <MaterialIcons name="calendar-today" size={15} color="#475569" />
-                            <Text style={[inlineStyles.draftDateText, !draft.proposedEndDate && { color: '#94a3b8' }]}>
-                              {draft.proposedEndDate ? formatProposalDate(draft.proposedEndDate) : 'Select date'}
-                            </Text>
-                          </TouchableOpacity>
-                          {inlineEndDatePicker && (
-                            <LazyDateTimePicker
-                              value={draft.proposedEndDate ? new Date(draft.proposedEndDate) : new Date()}
-                              mode="date"
-                              display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
-                              onChange={(_: any, date?: Date) => {
-                                setInlineEndDatePicker(false);
-                                if (date) setInlineDraftProposal(p => p ? { ...p, proposedEndDate: date.toISOString().split('T')[0] } : p);
+                          {Platform.OS === 'web' ? (
+                            <input
+                              type="date"
+                              value={draft.proposedEndDate || ''}
+                              min={draft.proposedStartDate || undefined}
+                              onChange={(e) => setInlineDraftProposal(p => p ? { ...p, proposedEndDate: e.target.value } : p)}
+                              onClick={(e) => {
+                                try {
+                                  (e.target as any).showPicker?.();
+                                } catch {}
+                              }}
+                              style={{
+                                width: '100%',
+                                backgroundColor: '#f8fafc',
+                                border: '1px solid #e2e8f0',
+                                borderRadius: '8px',
+                                padding: '7px 10px',
+                                fontSize: '12px',
+                                color: '#1e293b',
+                                fontFamily: 'inherit',
+                                outline: 'none',
+                                cursor: 'pointer',
+                                boxSizing: 'border-box',
                               }}
                             />
+                          ) : (
+                            <>
+                              <TouchableOpacity
+                                style={inlineStyles.draftDateBtn}
+                                onPress={() => setInlineEndDatePicker(true)}
+                              >
+                                <MaterialIcons name="calendar-today" size={15} color="#475569" />
+                                <Text style={[inlineStyles.draftDateText, !draft.proposedEndDate && { color: '#94a3b8' }]}>
+                                  {draft.proposedEndDate ? formatProposalDate(draft.proposedEndDate) : 'Select date'}
+                                </Text>
+                              </TouchableOpacity>
+                              {inlineEndDatePicker && (
+                                <LazyDateTimePicker
+                                  value={draft.proposedEndDate ? parseDateValue(draft.proposedEndDate) || new Date() : new Date()}
+                                  mode="date"
+                                  display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
+                                  onChange={(_: any, date?: Date) => {
+                                    setInlineEndDatePicker(false);
+                                    if (date) setInlineDraftProposal(p => p ? { ...p, proposedEndDate: formatDateValue(date) } : p);
+                                  }}
+                                />
+                              )}
+                            </>
                           )}
+                        </View>
+                      </View>
+
+                      {/* Row 2b: Community Need + Expected Outcome */}
+                      <View style={[inlineStyles.draftRow, !isWide && inlineStyles.draftRowMobile]}>
+                        <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
+                          <Text style={inlineStyles.draftLabel}>Community Need</Text>
+                          <TextInput
+                            style={[inlineStyles.draftInput, { height: 70, textAlignVertical: 'top' }]}
+                            multiline
+                            value={draft.communityNeed}
+                            onChangeText={t => setInlineDraftProposal(p => p ? { ...p, communityNeed: t } : p)}
+                            placeholder="Describe the urgent community need..."
+                            placeholderTextColor="#94a3b8"
+                          />
+                        </View>
+                        <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
+                          <Text style={inlineStyles.draftLabel}>Expected Outcome</Text>
+                          <TextInput
+                            style={[inlineStyles.draftInput, { height: 70, textAlignVertical: 'top' }]}
+                            multiline
+                            value={draft.expectedDeliverables}
+                            onChangeText={t => setInlineDraftProposal(p => p ? { ...p, expectedDeliverables: t } : p)}
+                            placeholder="Expected results, deliverables, metrics..."
+                            placeholderTextColor="#94a3b8"
+                          />
                         </View>
                       </View>
 
@@ -5030,7 +5361,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                         <MaterialIcons name="send" size={16} color="#fff" />
                       )}
                       <Text style={inlineStyles.draftSubmitBtnText}>
-                        {isSubmittingInlineDraft ? 'Submitting...' : 'Submit Proposal'}
+                        {isSubmittingInlineDraft ? 'Submitting...' : (isRejectedRevision || isNeedsRevision) ? 'Resubmit Revised Proposal' : 'Submit Proposal'}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -7080,34 +7411,53 @@ const styles = StyleSheet.create({
 
 
   messagesList: { flex: 1 },
-
   messagesListContent: { padding: 10, gap: 8 },
-
-  messageRow: { maxWidth: '85%', gap: 4 },
-
+  messageRow: { maxWidth: '88%', gap: 4 },
   proposalMessageRow: { maxWidth: '100%', width: '100%', alignSelf: 'stretch' },
-
   messageRowOwn: { alignSelf: 'flex-end', alignItems: 'flex-end' },
-
   messageRowOther: { alignSelf: 'flex-start' },
   groupMessageSenderName: { fontSize: 10, fontWeight: '800', color: '#64748b', marginLeft: 8, marginBottom: 2 },
-  messageBubbleContainer: { flexDirection: 'row', alignItems: 'flex-end', gap: 4 },
+  messageBubbleContainer: { flexDirection: 'row', alignItems: 'flex-end', gap: 4, maxWidth: '100%', minWidth: 0 },
   messageBubbleContainerOwn: { justifyContent: 'flex-end' },
   messageBubbleContainerOther: { justifyContent: 'flex-start' },
-
-  bubble: { padding: 8, borderRadius: 12 },
-
+  bubble: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 14,
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: '100%',
+  },
   bubbleOwn: { backgroundColor: '#166534', borderBottomRightRadius: 3 },
-
   bubbleOther: { backgroundColor: '#f1f5f9', borderBottomLeftRadius: 3 },
   bubbleDeleted: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0' },
-
-  bubbleText: { fontSize: 12, lineHeight: 16, color: '#334155' },
-
+  bubbleText: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#334155',
+    flexShrink: 1,
+    ...Platform.select({
+      web: {
+        wordBreak: 'break-word',
+        overflowWrap: 'anywhere',
+      } as any,
+      default: {},
+    }),
+  },
   bubbleTextOwn: { color: '#fff' },
   bubbleTextDeleted: { fontSize: 12, fontStyle: 'italic', color: '#94a3b8' },
   bubbleTextDeletedOwn: { color: '#cbd5e1' },
-  replyQuoteBox: { flexDirection: 'row', gap: 6, minWidth: 150, marginBottom: 6, padding: 6, borderRadius: 8, backgroundColor: '#ffffff' },
+  replyQuoteBox: {
+    flexDirection: 'row',
+    gap: 6,
+    minWidth: 120,
+    maxWidth: '100%',
+    flexShrink: 1,
+    marginBottom: 6,
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+  },
   replyQuoteBoxOwn: { backgroundColor: 'rgba(255,255,255,0.14)' },
   replyQuoteBoxOther: { backgroundColor: '#e2e8f0' },
   replyQuoteBar: { width: 3, borderRadius: 2, backgroundColor: '#166534' },
@@ -7115,14 +7465,28 @@ const styles = StyleSheet.create({
   replyQuoteBarOther: { backgroundColor: '#166534' },
   replyQuoteSender: { fontSize: 10, fontWeight: '800', color: '#166534' },
   replyQuoteSenderOwn: { color: '#dcfce7' },
-  replyQuoteContent: { maxWidth: 220, marginTop: 2, fontSize: 10, color: '#64748b' },
+  replyQuoteContent: { maxWidth: 200, marginTop: 2, fontSize: 10, color: '#64748b' },
   replyQuoteContentOwn: { color: '#d1fae5' },
   messageMenuTrigger: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
-  messageMenuTriggerOwn: { marginLeft: 2 },
-  messageMenuTriggerOther: { marginRight: 2 },
-  inlineMessageMenu: { position: 'absolute', top: 24, width: 130, padding: 4, borderRadius: 8, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e2e8f0', shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 6, elevation: 4, zIndex: 20 },
-  inlineMessageMenuOwn: { right: 0 },
-  inlineMessageMenuOther: { left: 0 },
+  messageMenuTriggerOwn: { marginRight: 2 },
+  messageMenuTriggerOther: { marginLeft: 2 },
+  inlineMessageMenu: {
+    position: 'absolute',
+    top: 24,
+    width: 130,
+    padding: 4,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 4,
+    zIndex: 20,
+  },
+  inlineMessageMenuOwn: { left: 0 },
+  inlineMessageMenuOther: { right: 0 },
   inlineMessageOptionItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, paddingVertical: 8, borderRadius: 6 },
   inlineMessageOptionDanger: { backgroundColor: '#fef2f2' },
   inlineMessageOptionText: { fontSize: 11, fontWeight: '600', color: '#334155' },
@@ -7148,31 +7512,19 @@ const styles = StyleSheet.create({
   loadingModalText: { fontSize: 13, fontWeight: '700', color: '#334155' },
   memberAvatarInitial: { color: '#166534', fontSize: 13, fontWeight: '900' },
   memberRole: { marginTop: 2, fontSize: 10, color: '#64748b', fontWeight: '600' },
-
-  messageAttachmentList: { gap: 6, marginTop: 8 },
-
+  messageAttachmentList: { gap: 6, marginTop: 8, maxWidth: '100%' },
   messageAttachmentCard: {
-
-    minWidth: 160,
-
-    maxWidth: 240,
-
+    minWidth: 140,
+    maxWidth: 220,
+    width: '100%',
     borderRadius: 12,
-
     backgroundColor: '#ffffff',
-
     borderWidth: 1,
-
     borderColor: '#e2e8f0',
-
     overflow: 'hidden',
-
   },
-
   messageAttachmentCardOwn: {
-
     backgroundColor: 'rgba(255,255,255,0.12)',
-
     borderColor: 'rgba(255,255,255,0.2)',
 
   },

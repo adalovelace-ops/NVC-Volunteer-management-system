@@ -48,32 +48,15 @@ export default function VolunteerNavigator() {
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
-    if (Platform.OS === 'web') {
-      return;
+    if (typeof document !== 'undefined') {
+      document.body.classList.add('volunteer-side-active');
+      document.body.setAttribute('data-theme', 'volunteer');
     }
-
-    const previousTextDefaultProps = (Text as any).defaultProps;
-    const previousTextInputDefaultProps = (TextInput as any).defaultProps;
-
-    (Text as any).defaultProps = {
-      ...(previousTextDefaultProps || {}),
-      style: [
-        (previousTextDefaultProps as any)?.style,
-        { fontFamily: 'Nunito' },
-      ],
-    };
-
-    (TextInput as any).defaultProps = {
-      ...(previousTextInputDefaultProps || {}),
-      style: [
-        previousTextInputDefaultProps?.style,
-        { fontFamily: 'Nunito' },
-      ],
-    };
-
     return () => {
-      (Text as any).defaultProps = previousTextDefaultProps;
-      (TextInput as any).defaultProps = previousTextInputDefaultProps;
+      if (typeof document !== 'undefined') {
+        document.body.classList.remove('volunteer-side-active');
+        document.body.removeAttribute('data-theme');
+      }
     };
   }, []);
 
@@ -115,39 +98,43 @@ export default function VolunteerNavigator() {
   }, [unreadMessages, user?.id]);
 
   return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: route.name !== 'Messages',
-        header: ({ options, navigation }) => (
-          <ScreenBrandHeader
-            title={options.title || route.name}
-            navigation={navigation}
-            userId={user?.id}
-            notificationCount={unreadMessages.length}
-            unreadMessages={unreadMessages}
-            onNotificationOpen={handleNotificationsSeen}
-          />
-        ),
-        tabBarIcon: ({ color, size }) => (
-          <View style={{ marginBottom: 6 }}>
-            <MaterialIcons name={getIconName(route.name as keyof VolunteerTabParamList)} size={size} color={color} />
-          </View>
-        ),
-        tabBarActiveTintColor: '#4CAF50',
-        tabBarInactiveTintColor: '#999',
-        tabBarShowLabel: false,
-        tabBarItemStyle: { paddingTop: 6, paddingBottom: 8 },
-        tabBarStyle: { backgroundColor: '#fff', borderTopColor: '#eee', paddingBottom: Math.max(insets.bottom, 12), height: 56 + Math.max(insets.bottom, 12) },
-      })}
-    >
-      <Tab.Screen name="Home" component={VolunteerHomeScreen} options={{ title: 'Home', headerShown: false }} />
-      <Tab.Screen name="Dashboard" component={VolunteerDashboardScreen} options={{ title: 'Volunteer Dashboard' }} />
-      <Tab.Screen name="Events" component={VolunteerEventsScreen} options={{ title: 'Events' }} />
-      <Tab.Screen name="ProjectDetails" component={VolunteerProjectDetailsScreen} options={{ title: 'Project Details', tabBarButton: () => null }} />
-      <Tab.Screen name="Tasks" component={VolunteerTasksScreen} options={{ title: 'My Tasks' }} />
-      <Tab.Screen name="Messages" component={CommunicationHubScreen} options={{ title: 'Messages', tabBarBadge: messageUnreadCount > 0 ? messageUnreadCount : undefined }} />
-      <Tab.Screen name="Reports" component={VolunteerReportsScreen} options={{ title: 'My Reports' }} />
-      <Tab.Screen name="Profile" component={ProfileScreen} options={{ title: 'My Profile' }} />
-    </Tab.Navigator>
+    <View style={{ flex: 1 }} {...({ 'data-theme': 'volunteer', className: 'volunteer-side-active' } as any)}>
+      <Tab.Navigator
+        screenOptions={({ route }) => ({
+          headerShown: route.name !== 'Messages',
+          headerTitleStyle: { fontFamily: 'Nunito', fontWeight: '700' },
+          header: ({ options, navigation }) => (
+            <ScreenBrandHeader
+              title={options.title || route.name}
+              navigation={navigation}
+              userId={user?.id}
+              notificationCount={unreadMessages.length}
+              unreadMessages={unreadMessages}
+              onNotificationOpen={handleNotificationsSeen}
+            />
+          ),
+          tabBarIcon: ({ color, size }) => (
+            <View style={{ marginBottom: 6 }}>
+              <MaterialIcons name={getIconName(route.name as keyof VolunteerTabParamList)} size={size} color={color} />
+            </View>
+          ),
+          tabBarActiveTintColor: '#4CAF50',
+          tabBarInactiveTintColor: '#999',
+          tabBarShowLabel: false,
+          tabBarItemStyle: { paddingTop: 6, paddingBottom: 8 },
+          tabBarLabelStyle: { fontFamily: 'Nunito', fontWeight: '600' },
+          tabBarStyle: { backgroundColor: '#fff', borderTopColor: '#eee', paddingBottom: Math.max(insets.bottom, 12), height: 56 + Math.max(insets.bottom, 12) },
+        })}
+      >
+        <Tab.Screen name="Home" component={VolunteerHomeScreen} options={{ title: 'Home', headerShown: false }} />
+        <Tab.Screen name="Dashboard" component={VolunteerDashboardScreen} options={{ title: 'Volunteer Dashboard' }} />
+        <Tab.Screen name="Events" component={VolunteerEventsScreen} options={{ title: 'Events' }} />
+        <Tab.Screen name="ProjectDetails" component={VolunteerProjectDetailsScreen} options={{ title: 'Project Details', tabBarButton: () => null }} />
+        <Tab.Screen name="Tasks" component={VolunteerTasksScreen} options={{ title: 'My Tasks' }} />
+        <Tab.Screen name="Messages" component={CommunicationHubScreen} options={{ title: 'Messages', tabBarBadge: messageUnreadCount > 0 ? messageUnreadCount : undefined }} />
+        <Tab.Screen name="Reports" component={VolunteerReportsScreen} options={{ title: 'My Reports' }} />
+        <Tab.Screen name="Profile" component={ProfileScreen} options={{ title: 'My Profile' }} />
+      </Tab.Navigator>
+    </View>
   );
 }

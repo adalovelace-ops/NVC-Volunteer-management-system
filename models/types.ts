@@ -25,6 +25,25 @@ export interface AppSettings {
   startupScreen: 'Dashboard' | 'Projects' | 'Reports' | 'Messages';
 }
 
+export const CONSENT_VERSION = 'signup-consent-v1';
+
+export const CONSENT_TEXT = {
+  volunteer:
+    'I consent to NVC collecting and using the information I provide to create my volunteer account, review my application, coordinate volunteer activities, contact me about opportunities, and maintain participation records. I understand that approval may be required before I can join activities.',
+  partner:
+    'I consent to NVC collecting and using the organization and contact information I provide to review this partnership application, verify registration details, coordinate collaboration, contact our organization, and maintain partnership records.',
+  socialMedia:
+    'I understand that social-media information is optional. If I provide it, I consent to NVC using it to identify and contact me or our organization for legitimate volunteer or partnership coordination. I may leave these fields blank.',
+  internalSharing:
+    'I understand that my submitted information may be accessed by authorized NVC administrators and relevant project coordinators only when needed for application review, coordination, safety, or reporting.',
+};
+
+export type SignupConsent = {
+  accepted: boolean;
+  acceptedAt?: string;
+  version: string;
+};
+
 // Represents an application account that can sign in to the system.
 export interface User {
   id: string;
@@ -41,6 +60,7 @@ export interface User {
   approvedAt?: string; // When the account was approved
   rejectionReason?: string; // Reason if rejected
   createdAt: string;
+  consent?: SignupConsent;
   partnerRegistration?: {
     organizationName: string;
     stakeholderName: string;
@@ -71,6 +91,8 @@ export interface User {
     skills?: string[];
     affiliations?: { organization: string; position: string }[];
   };
+  organization?: string;
+  partnerApplication?: any;
 }
 
 // Represents a partner organization profile submitted to the system.
@@ -100,6 +122,12 @@ export interface Partner {
   credentialsUnlockedAt?: string;
   createdAt: string;
   registrationDocuments?: string[]; // URLs to documents
+  userId?: string;
+  contactPerson?: string;
+  location?: string;
+  facebookUrl?: string;
+  messengerLink?: string;
+  consent?: SignupConsent;
 }
 
 export interface ProjectInternalTask {
@@ -209,7 +237,9 @@ export interface Project {
     url: string;
     type: 'image' | 'document';
     description?: string;
+    name?: string;
   }[];
+  attachmentUrl?: string;
   createdAt: string;
   updatedAt: string;
   statusUpdates: StatusUpdate[];
@@ -282,6 +312,8 @@ export interface Volunteer {
   reviewedBy?: string;
   reviewedAt?: string;
   credentialsUnlockedAt?: string;
+  facebookUrl?: string;
+  messengerLink?: string;
   createdAt: string;
 }
 
@@ -300,6 +332,12 @@ export interface VolunteerTimeLog {
   attendanceCheckedByName?: string;
   completionPhoto?: string;
   completionReport?: string;
+  safeguardingStatus?: 'pending' | 'approved' | 'flagged';
+  safeguardingReviewedAt?: string;
+  safeguardingReviewedBy?: string;
+  safeguardingReviewedByName?: string;
+  safeguardingFlagReason?: string;
+  safeguardingActionTaken?: string;
 }
 
 // Represents a direct message between two users.
@@ -439,6 +477,10 @@ export interface PartnerProjectApplication {
   reviewedBy?: string;
   validIdPhoto?: string;
   reviewNotes?: string;
+  projectTitle?: string;
+  partnerId?: string;
+  contactEmail?: string;
+  contactPhone?: string;
 }
 
 // Represents a partner-submitted operational or impact report for a project.

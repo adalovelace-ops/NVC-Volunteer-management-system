@@ -24,6 +24,7 @@ import type { Project, VolunteerTimeLog, VolunteerProjectJoinRecord, Volunteer }
 import { buildTextPdf, downloadPdfFile } from '../utils/pdfDownload';
 import { getAttachmentUris, isImageMediaUri } from '../utils/media';
 import { exportVolunteerReportPdf, buildVolunteerReportData } from '../utils/volunteerReportTemplate';
+import Svg, { Circle, Path, G } from 'react-native-svg';
 
 function initialsPartner(name: string) {
   const parts = (name || 'U').trim().split(/\s+/).filter(Boolean);
@@ -177,9 +178,9 @@ export function VolunteerReportsDashboard({
         projectKind: 'event',
         category: project?.category,
         metrics: {
-          volunteerHours: log.totalHours || (log.timeOut && log.timeIn ? Math.max(0.5, Math.round(((new Date(log.timeOut).getTime() - new Date(log.timeIn).getTime()) / 3600000) * 10) / 10) : 1),
+          volunteerHours: (log as any).totalHours || (log.timeOut && log.timeIn ? Math.max(0.5, Math.round(((new Date(log.timeOut).getTime() - new Date(log.timeIn).getTime()) / 3600000) * 10) / 10) : 1),
         },
-        attachments: [{ id: `att-${log.id}`, url: photo, name: `${photoKindLabel}.jpg`, type: 'image' }],
+        attachments: [{ url: photo, description: `${photoKindLabel}.jpg`, type: 'image' }],
         mediaFile: photo,
         status: (log as any).status === 'Approved' ? 'Approved' : 'Submitted',
         submittedAt: dateStr,
@@ -617,20 +618,22 @@ export function VolunteerReportsDashboard({
           )}
         </View>
 
-        {/* Tips Box */}
-        <View style={styles.tipsCard}>
-          <View style={styles.tipsIconWrap}>
-            <MaterialIcons name="lightbulb-outline" size={20} color="#3F7A54" />
-          </View>
-          <View style={styles.tipsContent}>
-            <Text style={styles.tipsTitle}>Reporting Tips</Text>
-            <View style={styles.tipsBulletContainer}>
-              <Text style={styles.tipsBulletRow}>•  Upload photos from the event.</Text>
-              <Text style={styles.tipsBulletRow}>•  Describe your activities clearly.</Text>
-              <Text style={styles.tipsBulletRow}>•  Submit within 48 hours after the event.</Text>
+        {/* Tips Box - Volunteers only */}
+        {!isAdminView && (!authUser || authUser?.role === 'volunteer') && (
+          <View style={styles.tipsCard}>
+            <View style={styles.tipsIconWrap}>
+              <MaterialIcons name="lightbulb-outline" size={20} color="#3F7A54" />
+            </View>
+            <View style={styles.tipsContent}>
+              <Text style={styles.tipsTitle}>Reporting Tips</Text>
+              <View style={styles.tipsBulletContainer}>
+                <Text style={styles.tipsBulletRow}>•  Upload photos from the event.</Text>
+                <Text style={styles.tipsBulletRow}>•  Describe your activities clearly.</Text>
+                <Text style={styles.tipsBulletRow}>•  Submit within 48 hours after the event.</Text>
+              </View>
             </View>
           </View>
-        </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -775,8 +778,6 @@ export function PartnerReportsDashboard({
       ? 'Program Coordinator'
       : user?.role === 'volunteer'
       ? 'Volunteer'
-      : user?.role
-      ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
       : 'Program Coordinator';
 
   const submittedByName =
@@ -785,19 +786,10 @@ export function PartnerReportsDashboard({
       : (user?.name || user?.email || '—');
 
   const submittedByRole =
-    (activeReport?.submitterRole && activeReport.submitterRole !== '—')
+    (activeReport?.submitterRole && (activeReport.submitterRole as any) !== '—')
       ? activeReport.submitterRole
       : userRoleTitle;
 
-  const submitterInitials =
-    submittedByName && submittedByName !== '—'
-      ? submittedByName
-          .split(' ')
-          .map(w => w[0])
-          .join('')
-          .slice(0, 2)
-          .toUpperCase()
-      : '—';
   const reportStatus = activeReport?.status || (hasQuarterReport ? 'Submitted' : 'Draft');
 
   // Quarterly Stats - 0 and — when no report for the quarter
@@ -978,7 +970,7 @@ export function PartnerReportsDashboard({
         submittedBy: (submittedByName && submittedByName !== '—' && submittedByName !== 'Program Coordinator')
           ? submittedByName
           : accountUserName,
-        position: (submittedByRole && submittedByRole !== '—') ? submittedByRole : userRoleTitle,
+        position: (submittedByRole && (submittedByRole as any) !== '—') ? String(submittedByRole) : userRoleTitle,
         volunteers,
         projects,
         timeLogs: volunteerTimeLogs,
@@ -1137,41 +1129,6 @@ export function PartnerReportsDashboard({
               </View>
             </View>
 
-            {/* Divider */}
-            <View style={{ width: 1, height: 32, backgroundColor: '#e2e8f0' }} />
-
-            {/* Submitted On */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <MaterialIcons name="schedule" size={20} color="#64748b" />
-              <View>
-                <Text style={{ fontSize: 11, fontWeight: '600', color: '#94a3b8' }}>Submitted On</Text>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e293b' }}>{submittedOn}</Text>
-              </View>
-            </View>
-
-            {/* Divider */}
-            <View style={{ width: 1, height: 32, backgroundColor: '#e2e8f0' }} />
-
-            {/* Submitted By */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <View
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 16,
-                  backgroundColor: '#FDE68A',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <Text style={{ fontSize: 11, fontWeight: '800', color: '#78350F' }}>{submitterInitials}</Text>
-              </View>
-              <View>
-                <Text style={{ fontSize: 10, fontWeight: '600', color: '#94a3b8' }}>Submitted By</Text>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e293b' }}>{submittedByName}</Text>
-                <Text style={{ fontSize: 10, color: '#64748b' }}>{submittedByRole}</Text>
-              </View>
-            </View>
 
             {/* Actions */}
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

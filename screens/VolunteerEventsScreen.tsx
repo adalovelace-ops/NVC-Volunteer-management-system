@@ -270,12 +270,27 @@ export default function VolunteerEventsScreen() {
       return;
     }
     try {
+      const totalSlots = event.volunteersNeeded !== undefined && event.volunteersNeeded !== null ? event.volunteersNeeded : 20;
+      const joinedCount = Math.max(event.volunteers?.length || 0, event.joinedUserIds?.length || 0);
+      if (totalSlots > 0 && joinedCount >= totalSlots) {
+        Alert.alert('Event Full', 'This event has reached its volunteer capacity. All slots are filled.');
+        return;
+      }
+
       setLoadingEventId(event.id);
+      // Check if this is a reapply (previously declined match)
+      const existingMatch = volunteerMatches.find(m => m.projectId === event.id);
+      const isReapply = existingMatch?.status === 'Rejected';
       if (event.id.startsWith('planner-item-') || event.id.startsWith('gcal-')) {
         await saveEvent(event);
       }
       await requestVolunteerProjectJoin(event.id, user.id);
-      Alert.alert('Success', `Successfully requested to join "${event.title}"!`);
+      Alert.alert(
+        isReapply ? 'Reapplication Submitted' : 'Success',
+        isReapply
+          ? `Your reapplication for "${event.title}" has been submitted. The admin will review it shortly.`
+          : `Successfully requested to join "${event.title}"!`
+      );
       await loadData();
     } catch (err) {
       Alert.alert('Error', getRequestErrorMessage(err, 'Failed to request join event'));
@@ -302,6 +317,12 @@ export default function VolunteerEventsScreen() {
     if (match?.status === 'Rejected') return { label: 'Declined', color: '#B0432B', joinable: false };
     if (match?.status === 'Matched' || isJoined) return { label: 'Joined', color: '#3F7A54', joinable: false };
     if (match?.status === 'Completed') return { label: 'Completed', color: '#5B564C', joinable: false };
+
+    const totalSlots = event.volunteersNeeded !== undefined && event.volunteersNeeded !== null ? event.volunteersNeeded : 20;
+    const joinedCount = Math.max(event.volunteers?.length || 0, event.joinedUserIds?.length || 0);
+    if (totalSlots > 0 && joinedCount >= totalSlots) {
+      return { label: 'Event Full', color: '#dc2626', joinable: false };
+    }
     
     return { label: 'Open', color: '#3F7A54', joinable: true };
   };
@@ -409,19 +430,19 @@ export default function VolunteerEventsScreen() {
         const isJoined = (e.joinedUserIds || []).includes(user?.id || '') ||
           (volunteerProfile && e.volunteers ? e.volunteers.includes(volunteerProfile.id) : false);
         const match = volunteerMatches.find(m => m.projectId === e.id);
-        return isJoined || match?.status === 'Requested' || match?.status === 'Matched';
+        return isJoined || match?.status === 'Requested' || match?.status === 'Matched' || match?.status === 'Rejected';
       });
     }
     return filteredEvents;
   }, [filteredEvents, activeTab, volunteerMatches, volunteerProfile, user]);
 
   const applicationCount = useMemo(() => {
-    // Only count applications for events that currently exist and are not deleted
+    // Count all events with any kind of application status (including declined)
     return filteredEvents.filter(e => {
       const isJoined = (e.joinedUserIds || []).includes(user?.id || '') ||
         (volunteerProfile && e.volunteers ? e.volunteers.includes(volunteerProfile.id) : false);
       const match = volunteerMatches.find(m => m.projectId === e.id);
-      return isJoined || match?.status === 'Requested' || match?.status === 'Matched';
+      return isJoined || match?.status === 'Requested' || match?.status === 'Matched' || match?.status === 'Rejected';
     }).length;
   }, [filteredEvents, volunteerMatches, volunteerProfile, user]);
 
@@ -445,8 +466,9 @@ export default function VolunteerEventsScreen() {
 
   const renderEventItem = ({ item }: { item: Project }) => {
     const status = getEventStatus(item);
-    const joinedCount = item.volunteers?.length || 0;
-    const totalSlots = item.volunteersNeeded || 20;
+    const joinedCount = Math.max(item.volunteers?.length || 0, item.joinedUserIds?.length || 0);
+    const totalSlots = item.volunteersNeeded !== undefined && item.volunteersNeeded !== null ? item.volunteersNeeded : 20;
+    const isFull = totalSlots > 0 && joinedCount >= totalSlots;
 
     let imageUrl = item.imageUrl;
     if (!imageUrl && item.parentProjectId) {
@@ -500,12 +522,30 @@ export default function VolunteerEventsScreen() {
 
           {/* Status & Slots row */}
           <View style={styles.slotsRow}>
-            <View style={[styles.statusBadge, { backgroundColor: status.label === 'Open' ? '#e6f4ea' : status.label === 'Pending' ? '#fef7e0' : '#f1f3f4' }]}>
-              <Text style={[styles.statusBadgeText, { color: status.label === 'Open' ? '#137333' : status.label === 'Pending' ? '#b06000' : '#3c4043' }]}>
+            <View style={[styles.statusBadge, {
+              backgroundColor:
+                status.label === 'Open' ? '#e6f4ea' :
+                status.label === 'Event Full' ? '#fee2e2' :
+                status.label === 'Pending' ? '#fef7e0' :
+                status.label === 'Declined' ? '#fdecea' :
+                status.label === 'Joined' ? '#e8f5e9' :
+                '#f1f3f4'
+            }]}>
+              <Text style={[styles.statusBadgeText, {
+                color:
+                  status.label === 'Open' ? '#137333' :
+                  status.label === 'Event Full' ? '#dc2626' :
+                  status.label === 'Pending' ? '#b06000' :
+                  status.label === 'Declined' ? '#c62828' :
+                  status.label === 'Joined' ? '#2e7d32' :
+                  '#3c4043'
+              }]}>
                 {status.label}
               </Text>
             </View>
-            <Text style={styles.slotsText}>{joinedCount}/{totalSlots} slots</Text>
+            <Text style={[styles.slotsText, isFull && { color: '#dc2626', fontWeight: '700' }]}>
+              {isFull ? `Event full (${joinedCount}/${totalSlots})` : `${joinedCount}/${totalSlots} slots`}
+            </Text>
           </View>
 
           {/* Volunteer Requirements row */}
@@ -546,10 +586,52 @@ export default function VolunteerEventsScreen() {
                 <Text style={styles.joinBtnText}>Join Event</Text>
               )}
             </TouchableOpacity>
+          ) : status.label === 'Declined' ? (
+            /* Declined: show declined label + reapply button */
+            <View style={{ gap: 6 }}>
+              <View style={[styles.joinBtn, { backgroundColor: '#fdecea', borderWidth: 0 }]}>
+                <MaterialIcons name="cancel" size={14} color="#c62828" style={{ marginRight: 4 }} />
+                <Text style={[styles.joinBtnText, { color: '#c62828' }]}>Application Declined</Text>
+              </View>
+              {isFull ? (
+                <View style={[styles.joinBtn, { backgroundColor: '#fee2e2', borderWidth: 0 }]}>
+                  <Text style={[styles.joinBtnText, { color: '#dc2626' }]}>Event Full</Text>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.joinBtn, { backgroundColor: '#1F3A2E' }]}
+                  onPress={() => handleJoinEvent(item)}
+                  disabled={loadingEventId === item.id}
+                >
+                  {loadingEventId === item.id ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <>
+                      <MaterialIcons name="refresh" size={14} color="#fff" style={{ marginRight: 4 }} />
+                      <Text style={styles.joinBtnText}>Reapply</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
           ) : (
             <View style={{ flexDirection: 'row', gap: 6 }}>
-              <View style={[styles.joinBtn, { flex: 1, backgroundColor: status.label === 'Joined' ? '#e6f4ea' : '#f1f3f4', borderWidth: 0 }]}>
-                <Text style={[styles.joinBtnText, { color: status.label === 'Joined' ? '#137333' : '#70757a' }]}>{status.label === 'Joined' ? 'Approved' : status.label}</Text>
+              <View style={[styles.joinBtn, {
+                flex: 1,
+                backgroundColor:
+                  status.label === 'Joined' ? '#e6f4ea' :
+                  status.label === 'Event Full' ? '#fee2e2' :
+                  '#f1f3f4',
+                borderWidth: 0
+              }]}>
+                <Text style={[styles.joinBtnText, {
+                  color:
+                    status.label === 'Joined' ? '#137333' :
+                    status.label === 'Event Full' ? '#dc2626' :
+                    '#70757a'
+                }]}>
+                  {status.label === 'Joined' ? 'Approved' : status.label}
+                </Text>
               </View>
               {status.label === 'Joined' ? (
                 <TouchableOpacity
@@ -1025,6 +1107,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+    flexDirection: 'row',
   },
   joinBtnText: {
     color: '#ffffff',

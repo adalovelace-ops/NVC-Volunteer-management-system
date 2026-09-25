@@ -20,6 +20,7 @@ import type {
 import type { Project, VolunteerProjectJoinRecord, VolunteerTimeLog } from '../models/types';
 import { isImageMediaUri, pickImageFromDevice } from '../utils/media';
 import { useAuth } from '../contexts/AuthContext';
+import ChildSafeguardingModal, { SafeguardingReviewResult } from './ChildSafeguardingModal';
 
 type MaterialIconName = keyof typeof MaterialIcons.glyphMap;
 
@@ -78,6 +79,9 @@ export default function ReportUploadModal({
   });
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [pendingSafeguardingPhoto, setPendingSafeguardingPhoto] = useState('');
+  const [showSafeguardingModal, setShowSafeguardingModal] = useState(false);
+  const [safeguardingResult, setSafeguardingResult] = useState<SafeguardingReviewResult | null>(null);
 
   const isVolunteer = userRole === 'volunteer';
   const isPartner = userRole === 'partner';
@@ -303,6 +307,7 @@ export default function ReportUploadModal({
 
   const validateForm = () => {
     const nextErrors: Record<string, string> = {};
+    const hasAnyMetric = Object.values(metrics).some(value => value && String(value).trim() !== '' && Number(value) > 0);
 
     if (!title.trim() && !isPartner) {
       nextErrors.title = 'Title is required';
@@ -354,6 +359,9 @@ export default function ReportUploadModal({
     setVolunteerPraise('');
     setGratitudeNote('');
     setSelectedReportPhoto('');
+    setPendingSafeguardingPhoto('');
+    setShowSafeguardingModal(false);
+    setSafeguardingResult(null);
     setMetrics({
       volunteerEventJoins: '',
       verifiedAttendance: '',
@@ -385,11 +393,25 @@ export default function ReportUploadModal({
     try {
       const pickedImage = await pickImageFromDevice();
       if (pickedImage) {
-        setSelectedReportPhoto(pickedImage);
+        // Trigger child-safeguarding flow instead of setting directly
+        setPendingSafeguardingPhoto(pickedImage);
+        setShowSafeguardingModal(true);
       }
     } catch (error: any) {
       Alert.alert('Photo Access Needed', error?.message || 'Unable to open your photo library.');
     }
+  }, []);
+
+  const handleSafeguardingApprove = useCallback((result: SafeguardingReviewResult) => {
+    setSafeguardingResult(result);
+    setSelectedReportPhoto(result.photoUri);
+    setShowSafeguardingModal(false);
+    setPendingSafeguardingPhoto('');
+  }, []);
+
+  const handleSafeguardingCancel = useCallback(() => {
+    setShowSafeguardingModal(false);
+    setPendingSafeguardingPhoto('');
   }, []);
 
   const handleRemoveReportPhoto = useCallback(() => {
@@ -508,7 +530,13 @@ export default function ReportUploadModal({
         ? selectedReportPhoto || volunteerMetrics.latestAttendancePhoto || undefined
         : undefined,
       status: 'Submitted',
-      submittedAt: new Date().toISOString(),
+      ...(safeguardingResult ? {
+        safeguardingStatus: safeguardingResult.status,
+        safeguardingReviewedAt: safeguardingResult.reviewedAt,
+        isRestrictedMedia: safeguardingResult.isRestrictedMedia,
+        safeguardingFlagReason: safeguardingResult.flagReason,
+        safeguardingActionTaken: safeguardingResult.actionTaken,
+      } : {}),
     };
 
     Keyboard.dismiss();
@@ -823,6 +851,30 @@ export default function ReportUploadModal({
               <Text style={styles.photoRemoveText}>Remove</Text>
             </TouchableOpacity>
           </View>
+          {safeguardingResult ? (
+            <View style={[
+              styles.safeguardingBadge,
+              safeguardingResult.status === 'approved'
+                ? styles.safeguardingBadgeApproved
+                : styles.safeguardingBadgeFlagged,
+            ]}>
+              <MaterialIcons
+                name={safeguardingResult.status === 'approved' ? 'verified-user' : 'flag'}
+                size={14}
+                color={safeguardingResult.status === 'approved' ? '#166534' : '#dc2626'}
+              />
+              <Text style={[
+                styles.safeguardingBadgeText,
+                safeguardingResult.status === 'approved'
+                  ? styles.safeguardingBadgeTextApproved
+                  : styles.safeguardingBadgeTextFlagged,
+              ]}>
+                {safeguardingResult.status === 'approved'
+                  ? 'Safeguarding: Approved'
+                  : 'Safeguarding: Flagged — Restricted'}
+              </Text>
+            </View>
+          ) : null}
         </View>
       ) : (
         <View>
@@ -1031,6 +1083,13 @@ export default function ReportUploadModal({
           </View>
         </View>
       </View>
+
+      <ChildSafeguardingModal
+        visible={showSafeguardingModal}
+        photoUri={pendingSafeguardingPhoto}
+        onApprove={handleSafeguardingApprove}
+        onCancel={handleSafeguardingCancel}
+      />
     </Modal>
   );
 }
@@ -1554,5 +1613,34 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#166534',
+  },
+  safeguardingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    marginTop: 6,
+  },
+  safeguardingBadgeApproved: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  safeguardingBadgeFlagged: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  safeguardingBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  safeguardingBadgeTextApproved: {
+    color: '#166534',
+  },
+  safeguardingBadgeTextFlagged: {
+    color: '#dc2626',
   },
 });

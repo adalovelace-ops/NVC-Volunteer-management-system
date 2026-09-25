@@ -22,3 +22,9 @@ scratch/
 scratch_plan.md
 *.db
 *.sqlite*
+*.apk
+*.apk.idsig
+*.keystore
+android/build/
+android/app/build/
+android/app/src/main/assets/www/

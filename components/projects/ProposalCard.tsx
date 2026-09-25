@@ -9,6 +9,7 @@ interface ProposalCardProps {
   onPress?: () => void;
   onApprove?: () => void;
   onReject?: () => void;
+  onEdit?: (app: PartnerProjectApplication) => void;
   isAdmin?: boolean;
 }
 
@@ -21,6 +22,7 @@ export default function ProposalCard({
   onPress, 
   onApprove, 
   onReject,
+  onEdit,
   isAdmin = false 
 }: ProposalCardProps) {
   const { proposalDetails, partnerName, partnerEmail, status, requestedAt } = application;
@@ -72,6 +74,24 @@ export default function ProposalCard({
           {proposalDetails?.proposedDescription || 'No description provided.'}
         </Text>
 
+        {proposalDetails?.communityNeed ? (
+          <View style={styles.narrativeSection}>
+            <Text style={styles.narrativeLabel}>Community Need</Text>
+            <Text style={styles.narrativeText} numberOfLines={2}>
+              {proposalDetails.communityNeed}
+            </Text>
+          </View>
+        ) : null}
+
+        {(proposalDetails?.expectedDeliverables || (proposalDetails as any)?.expectedOutcome) ? (
+          <View style={styles.narrativeSection}>
+            <Text style={styles.narrativeLabel}>Expected Outcome</Text>
+            <Text style={styles.narrativeText} numberOfLines={2}>
+              {proposalDetails?.expectedDeliverables || (proposalDetails as any)?.expectedOutcome}
+            </Text>
+          </View>
+        ) : null}
+
         <View style={styles.infoGrid}>
           <View style={styles.infoItem}>
             <MaterialIcons name="event" size={14} color="#64748b" />
@@ -89,6 +109,24 @@ export default function ProposalCard({
 
 
       </View>
+
+      {status === 'Rejected' && application.reviewNotes ? (
+        <View style={{ marginTop: 8, padding: 10, backgroundColor: '#fef2f2', borderRadius: 8, borderWidth: 1, borderColor: '#fecaca' }}>
+          <Text style={{ fontSize: 10, fontWeight: '700', color: '#991b1b', marginBottom: 2 }}>Rejection Reason</Text>
+          <Text style={{ fontSize: 12, color: '#7f1d1d', lineHeight: 16 }}>{application.reviewNotes}</Text>
+        </View>
+      ) : null}
+
+      {!isAdmin && (status === 'Rejected' || status === 'Revision Requested' || status === 'Needs Revision') && onEdit && (
+        <View style={styles.actionRow}>
+          <TouchableOpacity 
+            style={[styles.actionButton, { backgroundColor: status === 'Rejected' ? '#dc2626' : '#d97706' }]} 
+            onPress={() => onEdit(application)}
+          >
+            <Text style={styles.approveButtonText}>Revise & Resubmit Proposal</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {isAdmin && status === 'Pending' && (
         <View style={styles.actionRow}>

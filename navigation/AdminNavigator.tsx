@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { createBottomTabNavigator, BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
-import { ScrollView, StyleSheet, TouchableOpacity, View, Text } from 'react-native';
+import { ScrollView, StyleSheet, TouchableOpacity, View, Text, Alert } from 'react-native';
 
 // Safe Platform accessor for web environments
 function getPlatformOS(): string {
@@ -48,15 +48,16 @@ export type AdminTabParamList = {
   Partners: { partnerId?: string } | undefined;
   Projects: {
     projectId?: string;
+    openApplicationsModal?: boolean;
     programSuiteView?: 'programs' | 'projects' | 'events';
     programSuiteNavKey?: number;
   } | undefined;
-  Volunteers: { volunteerId?: string } | undefined;
+  Volunteers: { volunteerId?: string; filter?: string } | undefined;
   Map: undefined;
   Messages: { projectId?: string } | undefined;
   Reports: { projectId?: string } | undefined;
   Users: undefined;
-  Profile: undefined;
+  Profile: { tab?: string } | undefined;
 };
 
 const Tab = createBottomTabNavigator<AdminTabParamList>();
@@ -106,12 +107,6 @@ const SIDEBAR_GROUPS = [
     ]
   },
   {
-    title: 'COMMUNICATION',
-    items: [
-      { label: 'Messages', icon: 'chat-bubble-outline', route: 'Messages', params: undefined },
-    ]
-  },
-  {
     title: 'REPORTS',
     items: [
       { label: 'Analytics', icon: 'analytics', route: 'Analytics', params: undefined },
@@ -122,8 +117,6 @@ const SIDEBAR_GROUPS = [
     title: 'ADMINISTRATION',
     items: [
       { label: 'User Management', icon: 'manage-accounts', route: 'Users', params: undefined },
-      { label: 'Profile', icon: 'person', route: 'Profile', params: undefined },
-      { label: 'Settings', icon: 'settings', route: 'Profile', params: { tab: 'settings' } },
     ]
   }
 ] as const;
@@ -142,7 +135,10 @@ function SidebarTabBar({ state, descriptors, navigation, collapsed, onToggle }: 
     }
     
     const routeObj = state.routes.find(r => r.name === item.route);
-    const badgeValue = routeObj ? (descriptors[routeObj.key]?.options?.tabBarBadge as number || 0) : 0;
+    let badgeValue = routeObj ? (descriptors[routeObj.key]?.options?.tabBarBadge as number || 0) : 0;
+    if (item.route === 'Projects' && item.label !== 'All Projects') {
+      badgeValue = 0;
+    }
 
     return (
       <TouchableOpacity
@@ -199,19 +195,6 @@ function SidebarTabBar({ state, descriptors, navigation, collapsed, onToggle }: 
           </View>
         ))}
       </ScrollView>
-
-      {!collapsed && (
-        <TouchableOpacity style={styles.sidebarHelpCard} activeOpacity={0.85}>
-          <View style={styles.sidebarHelpIcon}>
-            <MaterialIcons name="headset-mic" size={20} color="#16a34a" />
-          </View>
-          <View style={styles.sidebarHelpCopy}>
-            <Text style={styles.sidebarHelpTitle}>Need help?</Text>
-            <Text style={styles.sidebarHelpText}>Contact support</Text>
-          </View>
-          <MaterialIcons name="chevron-right" size={16} color="#64748b" />
-        </TouchableOpacity>
-      )}
     </View>
   );
 }
@@ -240,6 +223,9 @@ export default function AdminNavigator() {
   const messageUnreadCount = unreadMessages.length;
   const reportNotificationCount = unreadReports.length;
   const pendingUserApprovalCount = pendingUsers.length;
+  const pendingVolunteerUserCount = pendingUsers.filter(u => u.role === 'volunteer').length;
+  const [latestVolunteerToast, setLatestVolunteerToast] = useState<{ id: string; title: string; subtitle: string; projectId?: string } | null>(null);
+  const seenVolunteerReqIdsRef = React.useRef<Set<string> | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotificationsMenu, setShowNotificationsMenu] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -323,6 +309,20 @@ export default function AdminNavigator() {
           };
         });
         setPendingVolunteerRequests(enrichedMatches);
+
+        // Detect newly received volunteer request to trigger live in-app toast
+        if (seenVolunteerReqIdsRef.current !== null) {
+          const newlyAdded = enrichedMatches.find(m => !seenVolunteerReqIdsRef.current?.has(m.id));
+          if (newlyAdded) {
+            setLatestVolunteerToast({
+              id: newlyAdded.id,
+              title: `Volunteer Application: ${newlyAdded.volunteerName}`,
+              subtitle: `Applied to join "${newlyAdded.projectTitle}"`,
+              projectId: newlyAdded.projectId,
+            });
+          }
+        }
+        seenVolunteerReqIdsRef.current = new Set(enrichedMatches.map(m => m.id));
       } catch (err) {
         console.error('Error loading admin notifications:', err);
       }
@@ -341,11 +341,37 @@ export default function AdminNavigator() {
       'volunteers'
     ], loadAllNotifications);
 
+    // Fallback polling every 8 seconds
+    const pollInterval = setInterval(loadAllNotifications, 8000);
+
     return () => {
       unsubMessages();
       unsubStorage?.();
+      clearInterval(pollInterval);
     };
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!latestVolunteerToast) return;
+    const timer = setTimeout(() => {
+      setLatestVolunteerToast(null);
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, [latestVolunteerToast]);
+
+  const handleToastClick = () => {
+    if (!latestVolunteerToast) return;
+    const targetProjectId = latestVolunteerToast.projectId;
+    setLatestVolunteerToast(null);
+    if (tabBarProps?.navigation) {
+      tabBarProps.navigation.navigate('Projects', {
+        projectId: targetProjectId,
+        openApplicationsModal: true,
+        programSuiteView: 'projects',
+        programSuiteNavKey: 2,
+      });
+    }
+  };
 
   const handleNotificationsSeen = React.useCallback(async () => {
     if (!user?.id || unreadMessages.length === 0) return;
@@ -395,7 +421,14 @@ export default function AdminNavigator() {
         }}
       />
       <Tab.Screen name="Partners" component={PartnerManagementScreen} options={{ title: 'Partner Management' }} />
-      <Tab.Screen name="Volunteers" component={VolunteerManagementScreen} options={{ title: 'Volunteer Management' }} />
+      <Tab.Screen
+        name="Volunteers"
+        component={VolunteerManagementScreen}
+        options={{
+          title: 'Volunteer Management',
+          tabBarBadge: pendingVolunteerUserCount > 0 ? pendingVolunteerUserCount : undefined,
+        }}
+      />
       <Tab.Screen name="Map" component={MappingScreen} options={{ title: 'Map' }} />
       <Tab.Screen name="Messages" component={CommunicationHubScreen} options={{ title: 'Messages', tabBarBadge: messageUnreadCount > 0 ? messageUnreadCount : undefined }} />
       <Tab.Screen name="Reports" component={AdminReportsScreen} options={{ title: 'Reports', tabBarBadge: reportNotificationCount > 0 ? reportNotificationCount : undefined }} />
@@ -462,53 +495,81 @@ export default function AdminNavigator() {
                 </View>
 
                 <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={true}>
-                  {/* Pending Users */}
-                  {pendingUsers.map(pUser => (
+                  {/* 1. Volunteer Join Requests (FIRST & PROMINENT) */}
+                  {pendingVolunteerRequests.map(req => (
                     <TouchableOpacity
-                      key={pUser.id}
-                      style={styles.notificationDropdownItem}
+                      key={req.id}
+                      style={[styles.notificationDropdownItem, { backgroundColor: '#f0fdf4', borderLeftWidth: 3, borderLeftColor: '#16a34a' }]}
                       onPress={() => {
                         setShowNotificationsMenu(false);
                         if (tabBarProps?.navigation) {
-                          tabBarProps.navigation.navigate('Users');
+                          tabBarProps.navigation.navigate('Projects', {
+                            projectId: req.projectId,
+                            openApplicationsModal: true,
+                            programSuiteView: 'projects',
+                            programSuiteNavKey: 2,
+                          });
                         }
                       }}
                     >
-                      <View style={[styles.notifIconWrap, { backgroundColor: '#fef3c7' }]}>
-                        <MaterialIcons name="person-add" size={16} color="#d97706" />
+                      <View style={[styles.notifIconWrap, { backgroundColor: '#dcfce7' }]}>
+                        <MaterialIcons name="how-to-reg" size={18} color="#16a34a" />
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.notifItemTitle} numberOfLines={1}>{pUser.name || pUser.email}</Text>
-                        <Text style={styles.notifItemSub} numberOfLines={1}>Account awaiting approval ({pUser.role})</Text>
+                        <Text style={[styles.notifItemTitle, { fontWeight: '700', color: '#14532d' }]} numberOfLines={1}>
+                          Volunteer Application: {req.volunteerName || 'Volunteer'}
+                        </Text>
+                        <Text style={styles.notifItemSub} numberOfLines={1}>
+                          Applied for "{req.projectTitle || 'Event'}"
+                        </Text>
                       </View>
-                      <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
+                      <View style={{ backgroundColor: '#16a34a', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, marginRight: 4 }}>
+                        <Text style={{ fontSize: 10, color: '#ffffff', fontWeight: '700' }}>Review</Text>
+                      </View>
+                      <MaterialIcons name="chevron-right" size={16} color="#16a34a" />
                     </TouchableOpacity>
                   ))}
 
-                  {/* Unread Messages */}
-                  {unreadMessages.map(msg => (
-                    <TouchableOpacity
-                      key={msg.id}
-                      style={styles.notificationDropdownItem}
-                      onPress={() => {
-                        setShowNotificationsMenu(false);
-                        if (tabBarProps?.navigation) {
-                          tabBarProps.navigation.navigate('Messages');
-                        }
-                      }}
-                    >
-                      <View style={[styles.notifIconWrap, { backgroundColor: '#eff6ff' }]}>
-                        <MaterialIcons name="chat-bubble" size={16} color="#2563eb" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.notifItemTitle} numberOfLines={1}>Message from {msg.senderName || 'User'}</Text>
-                        <Text style={styles.notifItemSub} numberOfLines={1}>{msg.content || 'New message received'}</Text>
-                      </View>
-                      <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
-                    </TouchableOpacity>
-                  ))}
+                  {/* 2. Pending Users (Volunteer registration & account approvals) */}
+                  {pendingUsers.map(pUser => {
+                    const isVolunteer = pUser.role === 'volunteer';
+                    return (
+                      <TouchableOpacity
+                        key={pUser.id}
+                        style={[styles.notificationDropdownItem, isVolunteer && { backgroundColor: '#fcfbf7', borderLeftWidth: 3, borderLeftColor: '#4338ca' }]}
+                        onPress={() => {
+                          setShowNotificationsMenu(false);
+                          if (tabBarProps?.navigation) {
+                            if (isVolunteer) {
+                              tabBarProps.navigation.navigate('Volunteers', { filter: 'Pending' });
+                            } else {
+                              tabBarProps.navigation.navigate('Users');
+                            }
+                          }
+                        }}
+                      >
+                        <View style={[styles.notifIconWrap, { backgroundColor: isVolunteer ? '#e0e7ff' : '#fef3c7' }]}>
+                          <MaterialIcons name={isVolunteer ? "badge" : "person-add"} size={16} color={isVolunteer ? "#4338ca" : "#d97706"} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.notifItemTitle, isVolunteer && { color: '#312e81' }]} numberOfLines={1}>
+                            {isVolunteer ? `Volunteer Application: ${pUser.name || pUser.email}` : (pUser.name || pUser.email)}
+                          </Text>
+                          <Text style={styles.notifItemSub} numberOfLines={1}>
+                            {isVolunteer ? 'New volunteer membership awaiting approval' : `Account awaiting approval (${pUser.role})`}
+                          </Text>
+                        </View>
+                        {isVolunteer && (
+                          <View style={{ backgroundColor: '#4338ca', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, marginRight: 4 }}>
+                            <Text style={{ fontSize: 10, color: '#ffffff', fontWeight: '700' }}>Review</Text>
+                          </View>
+                        )}
+                        <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
+                      </TouchableOpacity>
+                    );
+                  })}
 
-                  {/* Partner Proposals */}
+                  {/* 3. Partner Proposals */}
                   {pendingPartnerApplications.map(app => (
                     <TouchableOpacity
                       key={app.id}
@@ -531,30 +592,30 @@ export default function AdminNavigator() {
                     </TouchableOpacity>
                   ))}
 
-                  {/* Volunteer Join Requests */}
-                  {pendingVolunteerRequests.map(req => (
+                  {/* 4. Unread Messages */}
+                  {unreadMessages.map(msg => (
                     <TouchableOpacity
-                      key={req.id}
+                      key={msg.id}
                       style={styles.notificationDropdownItem}
                       onPress={() => {
                         setShowNotificationsMenu(false);
                         if (tabBarProps?.navigation) {
-                          tabBarProps.navigation.navigate('Projects');
+                          tabBarProps.navigation.navigate('Messages');
                         }
                       }}
                     >
-                      <View style={[styles.notifIconWrap, { backgroundColor: '#f0fdf4' }]}>
-                        <MaterialIcons name="how-to-reg" size={16} color="#166534" />
+                      <View style={[styles.notifIconWrap, { backgroundColor: '#eff6ff' }]}>
+                        <MaterialIcons name="chat-bubble" size={16} color="#2563eb" />
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.notifItemTitle} numberOfLines={1}>Join Request: {req.volunteerName || 'Volunteer'}</Text>
-                        <Text style={styles.notifItemSub} numberOfLines={1}>{req.projectTitle || 'Project request'}</Text>
+                        <Text style={styles.notifItemTitle} numberOfLines={1}>Message from {msg.senderName || 'User'}</Text>
+                        <Text style={styles.notifItemSub} numberOfLines={1}>{msg.content || 'New message received'}</Text>
                       </View>
                       <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
                     </TouchableOpacity>
                   ))}
 
-                  {/* Unread Reports */}
+                  {/* 5. Unread Reports */}
                   {unreadReports.map(rpt => (
                     <TouchableOpacity
                       key={rpt.id}
@@ -656,6 +717,42 @@ export default function AdminNavigator() {
           </View>
         </View>
       </View>
+      {latestVolunteerToast && (
+        <View style={styles.volunteerToastBanner}>
+          <View style={styles.volunteerToastIcon}>
+            <MaterialIcons name="how-to-reg" size={20} color="#15803d" />
+          </View>
+          <TouchableOpacity
+            style={styles.volunteerToastContent}
+            activeOpacity={0.85}
+            onPress={handleToastClick}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={styles.volunteerToastTitle} numberOfLines={1}>
+                {latestVolunteerToast.title}
+              </Text>
+              <View style={styles.volunteerToastTag}>
+                <Text style={styles.volunteerToastTagText}>New</Text>
+              </View>
+            </View>
+            <Text style={styles.volunteerToastSubtitle} numberOfLines={1}>
+              {latestVolunteerToast.subtitle}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.volunteerToastActionBtn}
+            onPress={handleToastClick}
+          >
+            <Text style={styles.volunteerToastActionBtnText}>Review</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.volunteerToastClose}
+            onPress={() => setLatestVolunteerToast(null)}
+          >
+            <MaterialIcons name="close" size={16} color="#64748b" />
+          </TouchableOpacity>
+        </View>
+      )}
       <View style={styles.webLayout}>
         <View style={[styles.sidebarWrapper, collapsed ? styles.sidebarWrapperCollapsed : styles.sidebarWrapperExpanded]}>
           {tabBarProps ? (
@@ -818,5 +915,72 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#64748b',
     marginTop: 2,
+  },
+  volunteerToastBanner: {
+    position: 'absolute',
+    top: 80,
+    right: 32,
+    maxWidth: 420,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#86efac',
+    shadowColor: '#052e16',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    elevation: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    gap: 10,
+    zIndex: 10000,
+  },
+  volunteerToastIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#dcfce7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  volunteerToastContent: {
+    flex: 1,
+  },
+  volunteerToastTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#14532d',
+  },
+  volunteerToastTag: {
+    backgroundColor: '#16a34a',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 8,
+  },
+  volunteerToastTagText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  volunteerToastSubtitle: {
+    fontSize: 11,
+    color: '#475569',
+    marginTop: 2,
+  },
+  volunteerToastActionBtn: {
+    backgroundColor: '#16a34a',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  volunteerToastActionBtnText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  volunteerToastClose: {
+    padding: 4,
   },
 });

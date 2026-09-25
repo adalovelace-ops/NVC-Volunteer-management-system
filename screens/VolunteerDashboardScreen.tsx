@@ -510,6 +510,12 @@ const convertGoogleEventToProjectEvent = (event: any): Project => {
       Alert.alert('Error', 'Profile not loaded yet');
       return;
     }
+    const volunteersNeeded = project.volunteersNeeded || 0;
+    const currentVolunteers = Math.max(project.volunteers?.length || 0, project.joinedUserIds?.length || 0);
+    if (volunteersNeeded > 0 && currentVolunteers >= volunteersNeeded) {
+      Alert.alert('Event Full', 'This event has reached its volunteer capacity. All slots are filled.');
+      return;
+    }
     try {
       setLoading(true);
       await joinProjectEvent(project.id, volunteerProfile.id);
@@ -807,26 +813,37 @@ const convertGoogleEventToProjectEvent = (event: any): Project => {
               <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>Check back soon for new volunteer opportunities</Text>
             </View>
           ) : (
-            displayProjects.map(project => (
-              <View key={project.id} style={styles.projectRow}>
-                <View style={styles.projectIcon}>
-                  {getProjectIcon(project.category)}
+            displayProjects.map(project => {
+              const volunteersNeeded = project.volunteersNeeded || 0;
+              const currentVolunteers = Math.max(project.volunteers?.length || 0, project.joinedUserIds?.length || 0);
+              const isEventFull = volunteersNeeded > 0 && currentVolunteers >= volunteersNeeded;
+              return (
+                <View key={project.id} style={styles.projectRow}>
+                  <View style={styles.projectIcon}>
+                    {getProjectIcon(project.category)}
+                  </View>
+                  <View style={styles.projectInfo}>
+                    <Text style={styles.projectTitleText}>{project.title}</Text>
+                    <Text style={styles.projectMeta}>
+                      {project.location?.address || 'Bacolod City'} · {isEventFull ? 'Event full' : `${volunteersNeeded} volunteers needed`}
+                    </Text>
+                  </View>
+                  {isEventFull ? (
+                    <View style={[styles.projectJoin, { backgroundColor: '#fee2e2' }]}>
+                      <Text style={[styles.projectJoinText, { color: '#dc2626' }]}>Full</Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.projectJoin}
+                      onPress={() => handleJoinProject(project)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.projectJoinText}>Join</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
-                <View style={styles.projectInfo}>
-                  <Text style={styles.projectTitleText}>{project.title}</Text>
-                  <Text style={styles.projectMeta}>
-                    {project.location?.address || 'Bacolod City'} · {project.volunteersNeeded || 0} volunteers needed
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.projectJoin}
-                  onPress={() => handleJoinProject(project)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.projectJoinText}>Join</Text>
-                </TouchableOpacity>
-              </View>
-            ))
+              );
+            })
           )}
         </View>
 

@@ -1140,12 +1140,23 @@ export default function DashboardScreen({ navigation }: any) {
         {/* Selected Day Events Details Card */}
         <View style={styles.gcalDetailsCard}>
           <View style={styles.gcalDetailsTitleRow}>
-            <MaterialIcons name="event-note" size={20} color="#10b981" />
-            <Text style={styles.gcalDetailsTitle}>
-              Events for {selectedDateLabel}
-            </Text>
+            <View style={styles.gcalDetailsTitleLeft}>
+              <MaterialIcons name="event-note" size={20} color="#10b981" />
+              <Text style={styles.gcalDetailsTitle} numberOfLines={1}>
+                Events for {selectedDateLabel}
+              </Text>
+            </View>
+            {selectedDayEvents.length > 0 ? (
+              <View style={styles.gcalEventBadge}>
+                <Text style={styles.gcalEventBadgeText}>{selectedDayEvents.length}</Text>
+              </View>
+            ) : null}
           </View>
-          <ScrollView style={styles.gcalDetailsScroll} showsVerticalScrollIndicator={false}>
+          <ScrollView
+            style={styles.gcalDetailsScroll}
+            contentContainerStyle={styles.gcalDetailsScrollContent}
+            showsVerticalScrollIndicator={true}
+          >
             {selectedDayEvents.length > 0 ? (
               selectedDayEvents.map((event, idx) => (
                 <View key={event.id || idx} style={styles.gcalEventItem}>
@@ -1638,11 +1649,13 @@ const styles = StyleSheet.create({
   },
   middleGrid: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
     gap: 20,
     marginBottom: 20,
   },
   stackGrid: {
     flexDirection: 'column',
+    alignItems: 'stretch',
   },
   mapCard: {
     flex: 1.5,
@@ -1715,7 +1728,9 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     borderRadius: 12,
     padding: 20,
-    minHeight: 400,
+    height: 480,
+    maxHeight: 480,
+    overflow: 'hidden',
   },
   gcalDetailsCard: {
     flex: 1,
@@ -1724,24 +1739,51 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
     borderRadius: 12,
     padding: 20,
-    minHeight: 400,
+    height: 480,
+    maxHeight: 480,
+    overflow: 'hidden',
   },
   gcalDetailsTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#f1f5f9',
     paddingBottom: 10,
     marginBottom: 12,
   },
+  gcalDetailsTitleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
   gcalDetailsTitle: {
     fontSize: 14,
     fontWeight: '800',
     color: '#0f172a',
   },
+  gcalEventBadge: {
+    backgroundColor: '#ecfdf5',
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  gcalEventBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#059669',
+  },
   gcalDetailsScroll: {
     flex: 1,
+    height: '100%',
+  },
+  gcalDetailsScrollContent: {
+    paddingBottom: 16,
+    flexGrow: 1,
   },
   gcalEventItem: {
     padding: 12,

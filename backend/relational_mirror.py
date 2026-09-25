@@ -306,22 +306,7 @@ RELATIONAL_TABLE_DDL = [
     "create index if not exists programs_category_idx on programs (category)",
     "create index if not exists programs_status_idx on programs (status)",
     "create index if not exists programs_created_at_idx on programs (created_at)",
-    f"""
-    create table if not exists program_tracks (
-      id text primary key,
-      title text not null,
-      description text,
-      icon text,
-      color text,
-      image_url text,
-      sort_order integer not null default 0,
-      is_active boolean not null default true,
-      created_at text,
-      updated_at text
-    )
-    """,
-    "create index if not exists program_tracks_sort_order_idx on program_tracks (sort_order)",
-    "create index if not exists program_tracks_is_active_idx on program_tracks (is_active)",
+    "alter table programs add column if not exists tracks jsonb not null default '[]'::jsonb",
     f"""
     create table if not exists events (
       id text primary key,
@@ -382,26 +367,41 @@ RELATIONAL_TABLE_DDL = [
     "alter table status_updates add column if not exists source text",
     "create index if not exists status_updates_project_id_idx on status_updates (project_id)",
     f"""
-    create table if not exists volunteer_matches (
+    create table if not exists event_group_messages (
       id text primary key,
-      volunteer_id text,
-      project_id text,
-      status text,
-      requested_at text,
-      matched_at text,
-      reviewed_at text,
-      reviewed_by text,
-      hours_contributed double precision not null default 0
+      event_id text not null,
+      sender_id text not null,
+      content text not null,
+      timestamp timestamp with time zone not null,
+      kind text not null,
+      need_post jsonb,
+      scope_proposal jsonb,
+      response_to_message_id text,
+      response_action text,
+      response_to_title text,
+      attachments jsonb not null default {JSON_ARRAY}
     )
     """,
-    "create index if not exists volunteer_matches_volunteer_id_idx on volunteer_matches (volunteer_id)",
-    "create index if not exists volunteer_matches_project_id_idx on volunteer_matches (project_id)",
-    "create index if not exists volunteer_matches_status_idx on volunteer_matches (status)",
-    "alter table volunteer_matches add column if not exists requested_at text",
-    "alter table volunteer_matches add column if not exists reviewed_at text",
-    "alter table volunteer_matches add column if not exists reviewed_by text",
-    f"""
-    create table if not exists volunteer_time_logs (
+    "create index if not exists event_group_messages_event_id_idx on event_group_messages (event_id)",
+    "create index if not exists event_group_messages_sender_id_idx on event_group_messages (sender_id)",
+        f"""
+        create table if not exists volunteer_matches (
+            id text primary key,
+            volunteer_id text,
+            project_id text,
+            status text,
+            requested_at text,
+            matched_at text,
+            reviewed_at text,
+            reviewed_by text,
+            hours_contributed numeric not null default 0
+        )
+        """,
+        "create index if not exists volunteer_matches_volunteer_id_idx on volunteer_matches (volunteer_id)",
+        "create index if not exists volunteer_matches_project_id_idx on volunteer_matches (project_id)",
+        "create index if not exists volunteer_matches_status_idx on volunteer_matches (status)",
+        f"""
+        create table if not exists volunteer_time_logs (
       id text primary key,
       volunteer_id text,
       project_id text,
@@ -529,38 +529,6 @@ RELATIONAL_TABLE_DDL = [
     "alter table reports add column if not exists download_content text",
     "alter table reports add column if not exists download_mime_type text",
     "alter table reports add column if not exists source_report_ids text[] not null default '{}'::text[]",
-    f"""
-    create table if not exists admin_planning_calendars (
-      id text primary key,
-      name text not null,
-      color text not null,
-      description text,
-            planning_items text not null default {JSON_ARRAY},
-      created_at text not null,
-      updated_at text not null
-    )
-    """,
-        "alter table admin_planning_calendars add column if not exists planning_items text not null default '[]'",
-    "create index if not exists admin_planning_calendars_created_at_idx on admin_planning_calendars (created_at)",
-    "create index if not exists admin_planning_calendars_updated_at_idx on admin_planning_calendars (updated_at)",
-    f"""
-    create table if not exists admin_planning_items (
-      id text primary key,
-      title text not null,
-      description text,
-      calendar_id text not null,
-      linked_project_id text,
-      start_date text not null,
-      end_date text not null,
-      location text,
-      participants_label text,
-      created_by text not null,
-      created_at text not null,
-      updated_at text not null
-    )
-    """,
-    "create index if not exists admin_planning_items_calendar_id_idx on admin_planning_items (calendar_id)",
-    "create index if not exists admin_planning_items_linked_project_id_idx on admin_planning_items (linked_project_id)",
 ]
 
 
@@ -733,21 +701,7 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             ("volunteers", False),
             ("joined_user_ids", False),
             ("linked_event_count", False),
-            ("created_at", False),
-            ("updated_at", False),
-        ],
-    },
-    "programTracks": {
-        "table": "program_tracks",
-        "columns": [
-            ("id", False),
-            ("title", False),
-            ("description", False),
-            ("icon", False),
-            ("color", False),
-            ("image_url", False),
-            ("sort_order", False),
-            ("is_active", False),
+            ("tracks", False),
             ("created_at", False),
             ("updated_at", False),
         ],
@@ -874,8 +828,6 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             ("title", False),
             ("report_type", False),
             ("description", False),
-            ("impact_count", False),
-            ("metrics", False),
             ("attachments", False),
             ("media_file", False),
             ("created_at", False),
@@ -900,33 +852,21 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             ("source_report_ids", False),
         ],
     },
-    "adminPlanningCalendars": {
-        "table": "admin_planning_calendars",
+    "eventGroupMessages": {
+        "table": "event_group_messages",
         "columns": [
             ("id", False),
-            ("name", False),
-            ("color", False),
-            ("description", False),
-            ("planning_items", False),
-            ("created_at", False),
-            ("updated_at", False),
-        ],
-    },
-    "adminPlanningItems": {
-        "table": "admin_planning_items",
-        "columns": [
-            ("id", False),
-            ("title", False),
-            ("description", False),
-            ("calendar_id", False),
-            ("linked_project_id", False),
-            ("start_date", False),
-            ("end_date", False),
-            ("location", False),
-            ("participants_label", False),
-            ("created_by", False),
-            ("created_at", False),
-            ("updated_at", False),
+            ("event_id", False),
+            ("sender_id", False),
+            ("content", False),
+            ("timestamp", False),
+            ("kind", False),
+            ("need_post", False),
+            ("scope_proposal", False),
+            ("response_to_message_id", False),
+            ("response_action", False),
+            ("response_to_title", False),
+            ("attachments", False),
         ],
     },
 }
@@ -1097,15 +1037,12 @@ _NON_STANDARD_PK_TABLES: dict[str, str] = {
     "users": "users_id",
     "volunteers": "volunteers_id",
     "partners": "partners_id",
-    "volunteer_matches": "volunteer_matches_id",
     "volunteer_event_joins": "volunteer_event_joins_id",
     "volunteer_time_logs": "volunteer_time_logs_id",
     "partner_project_applications": "partner_project_applications_id",
     "reports": "reports_id",
     "messages": "messages_id",
     "project_group_messages": "project_group_messages_id",
-    "admin_planning_calendars": "admin_planning_calendars_id",
-    "admin_planning_items": "admin_planning_items_id",
     "status_updates": "status_updates_id",
     "skills": "skills_id",
     "tasks": "tasks_id",
@@ -2032,135 +1969,7 @@ def _backfill_skills_from_existing_relational_data(connection: Any) -> None:
 
 
 def ensure_default_program_tracks(connection: Any) -> None:
-    with connection.cursor() as cursor:
-        cursor.execute("select exists (select 1 from program_tracks)")
-        has_program_tracks = bool(cursor.fetchone()[0])
-        if has_program_tracks:
-            return
-
-        cursor.execute(
-            """
-            insert into program_tracks (
-              id,
-              title,
-              description,
-              icon,
-              color,
-              image_url,
-              sort_order,
-              is_active,
-              created_at,
-              updated_at
-            )
-            values
-              ('Nutrition', 'Nutrition', 'Food security and health programs for children and families.', 'restaurant', '#dc2626', '', 10, true, now()::text, now()::text),
-              ('Education', 'Education', 'Learning, literacy, and skill development for students.', 'school', '#2563eb', '', 20, true, now()::text, now()::text),
-              ('Livelihood', 'Livelihood', 'Economic empowerment and vocational training programs.', 'work', '#7c3aed', '', 30, true, now()::text, now()::text),
-              ('Disaster', 'Disaster', 'Preparedness, relief, and recovery programs for affected communities.', 'warning', '#f97316', '', 40, true, now()::text, now()::text)
-            on conflict (id) do nothing
-            """
-        )
-
-
-def migrate_admin_planning_items_into_calendars(connection: Any) -> None:
-        with connection.cursor() as cursor:
-                cursor.execute(
-                        """
-                        with legacy_items as (
-                            select
-                                calendar_id,
-                                jsonb_agg(
-                                    jsonb_build_object(
-                                        'id', admin_planning_items_id,
-                                        'title', title,
-                                        'description', description,
-                                        'calendarId', calendar_id,
-                                        'linkedProjectId', linked_project_id,
-                                        'startDate', start_date,
-                                        'endDate', end_date,
-                                        'location', location,
-                                        'participantsLabel', participants_label,
-                                        'createdBy', created_by,
-                                        'createdAt', created_at,
-                                        'updatedAt', updated_at
-                                    )
-                                    order by created_at, updated_at, admin_planning_items_id
-                                ) as planning_items,
-                                min(created_at) as created_at,
-                                max(updated_at) as updated_at
-                            from admin_planning_items
-                            group by calendar_id
-                        ),
-                        calendar_rows as (
-                            select
-                                c.admin_planning_calendars_id,
-                                coalesce(c.planning_items, '[]')::jsonb as planning_items,
-                                c.name,
-                                c.color,
-                                c.description,
-                                c.created_at,
-                                c.updated_at
-                            from admin_planning_calendars c
-                        )
-                        update admin_planning_calendars c
-                        set planning_items = (
-                            coalesce(c.planning_items, '[]')::jsonb || coalesce(li.planning_items, '[]'::jsonb)
-                        )::text
-                        from legacy_items li
-                        where c.admin_planning_calendars_id = li.calendar_id
-                        """
-                )
-                cursor.execute(
-                        """
-                        insert into admin_planning_calendars (
-                            admin_planning_calendars_id,
-                            name,
-                            color,
-                            description,
-                            planning_items,
-                            created_at,
-                            updated_at
-                        )
-                        select
-                            li.calendar_id,
-                            li.calendar_id,
-                            '#0F766E',
-                            'Migrated planning lane.',
-                            li.planning_items::text,
-                            li.created_at,
-                            li.updated_at
-                        from (
-                            select
-                                calendar_id,
-                                jsonb_agg(
-                                    jsonb_build_object(
-                                        'id', admin_planning_items_id,
-                                        'title', title,
-                                        'description', description,
-                                        'calendarId', calendar_id,
-                                        'linkedProjectId', linked_project_id,
-                                        'startDate', start_date,
-                                        'endDate', end_date,
-                                        'location', location,
-                                        'participantsLabel', participants_label,
-                                        'createdBy', created_by,
-                                        'createdAt', created_at,
-                                        'updatedAt', updated_at
-                                    )
-                                    order by created_at, updated_at, admin_planning_items_id
-                                ) as planning_items,
-                                min(created_at) as created_at,
-                                max(updated_at) as updated_at
-                            from admin_planning_items
-                            group by calendar_id
-                        ) li
-                        left join admin_planning_calendars c on c.admin_planning_calendars_id = li.calendar_id
-                        where c.admin_planning_calendars_id is null
-                        on conflict (admin_planning_calendars_id) do update set
-                            planning_items = excluded.planning_items,
-                            updated_at = excluded.updated_at
-                        """
-                )
+    pass
 
 
 def ensure_named_primary_key_columns(connection: Any) -> None:
@@ -2335,10 +2144,6 @@ def ensure_relational_mirror_tables(connection: Any) -> None:
         except Exception as e:
             _trace(f"[WARN] ensure_named_primary_key_columns skipped: {e}")
 
-        try:
-            migrate_admin_planning_items_into_calendars(connection)
-        except Exception as e:
-            _trace(f"[WARN] migrate_admin_planning_items_into_calendars skipped: {e}")
 
         # Mark as completed so we never run DDL again this process lifetime
         _ddl_completed = True

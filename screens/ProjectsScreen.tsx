@@ -32,7 +32,8 @@ import {
   subscribeToStorageChanges,
 } from '../models/storage';
 import { PartnerProjectApplication, PartnerProjectProposalDetails, PartnerReport, Project, Volunteer, VolunteerProjectJoinRecord, VolunteerProjectMatch, VolunteerTimeLog } from '../models/types';
-import { isImageMediaUri, pickImageFromDevice, pickDocumentFromDevice } from '../utils/media';
+import { isImageMediaUri, pickImageFromDevice, pickDocumentFromDevice, getAttachmentLabel, openAttachmentUri } from '../utils/media';
+import ChildSafeguardingModal, { SafeguardingReviewResult } from '../components/ChildSafeguardingModal';
 import { navigateToAvailableRoute } from '../utils/navigation';
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
@@ -334,7 +335,7 @@ function getEventAvailabilitySummary(project: Project): string {
   const remainingSlots = Math.max(volunteersNeeded - project.volunteers.length, 0);
 
   if (remainingSlots === 0) {
-    return 'Volunteer slots full';
+    return 'Event full';
   }
 
   return `${remainingSlots} spot${remainingSlots === 1 ? '' : 's'} left`;
@@ -568,6 +569,9 @@ export default function ProjectsScreen({ navigation, route }: any) {
   const [allVolunteers, setAllVolunteers] = useState<Volunteer[]>([]);
   const [loadingProjectId, setLoadingProjectId] = useState<string | null>(null);
   const [attendanceNotice, setAttendanceNotice] = useState<string | null>(null);
+  const [pendingAttendancePhoto, setPendingAttendancePhoto] = useState<string | null>(null);
+  const [pendingAttendanceProjectId, setPendingAttendanceProjectId] = useState<string | null>(null);
+  const [showAttendanceSafeguardingModal, setShowAttendanceSafeguardingModal] = useState(false);
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Project['category'] | null>(null);
@@ -726,6 +730,17 @@ export default function ProjectsScreen({ navigation, route }: any) {
       if (user.role === 'partner') {
         if (selectedProject?.isDraft) {
           Alert.alert('Not Available', 'Draft projects are not available for partner proposals.');
+          return;
+        }
+        const currentPartnerId = partnerApplications.find(a => a.partnerUserId === user?.id)?.partnerId;
+        const isOwn = (
+          (user?.id && selectedProject.partnerId === user.id) ||
+          (currentPartnerId && selectedProject.partnerId === currentPartnerId) ||
+          ((selectedProject as any).partnerUserId && (selectedProject as any).partnerUserId === user.id) ||
+          partnerApplications.some(a => (a.projectId === projectId || a.proposalDetails?.targetProjectId === projectId) && a.status === 'Approved')
+        );
+        if (isOwn) {
+          Alert.alert('Your Project', 'You already lead this project. Proposals can only be submitted for collaborating initiatives.');
           return;
         }
         setProposalProjectId(projectId);
@@ -899,12 +914,33 @@ export default function ProjectsScreen({ navigation, route }: any) {
         return;
       }
 
+      setPendingAttendancePhoto(attendancePhoto);
+      setPendingAttendanceProjectId(projectId);
+      setShowAttendanceSafeguardingModal(true);
+    } catch (error) {
+      Alert.alert(
+        getRequestErrorTitle(error, 'Unable to pick photo'),
+        getRequestErrorMessage(error, 'Please try again.')
+      );
+    }
+  };
+
+  const handleAttendanceSafeguardingApprove = async (result: SafeguardingReviewResult) => {
+    setShowAttendanceSafeguardingModal(false);
+    const projectId = pendingAttendanceProjectId;
+    const photoUri = result.photoUri;
+    setPendingAttendancePhoto(null);
+    setPendingAttendanceProjectId(null);
+
+    if (!projectId || !volunteerProfile || !photoUri) return;
+
+    try {
       setLoadingProjectId(projectId);
       const createdLog = await startVolunteerTimeLog(
         volunteerProfile.id,
         projectId,
         undefined,
-        attendancePhoto
+        photoUri
       );
       startTransition(() => {
         setTimeLogs(prev =>
@@ -922,6 +958,12 @@ export default function ProjectsScreen({ navigation, route }: any) {
     } finally {
       setLoadingProjectId(null);
     }
+  };
+
+  const handleAttendanceSafeguardingCancel = () => {
+    setShowAttendanceSafeguardingModal(false);
+    setPendingAttendancePhoto(null);
+    setPendingAttendanceProjectId(null);
   };
 
   // Opens the group chat tied to the selected project or event.
@@ -1207,11 +1249,31 @@ export default function ProjectsScreen({ navigation, route }: any) {
   }, [user?.role, volunteerProfile?.id]);
 
   const getAssignableVolunteersForEvent = useCallback((event: Project) => {
-    return event.volunteers
-      .map(volunteerId => allVolunteersById.get(volunteerId) || null)
-      .filter((volunteer): volunteer is Volunteer => volunteer !== null)
+    const eventVolunteerIds = new Set([
+      ...(event.volunteers || []),
+      ...(event.joinedUserIds || []),
+    ]);
+    (event.internalTasks || []).forEach(task => {
+      if (task.assignedVolunteerId) eventVolunteerIds.add(task.assignedVolunteerId);
+      if (Array.isArray(task.assignedVolunteerIds)) {
+        task.assignedVolunteerIds.forEach(id => eventVolunteerIds.add(id));
+      }
+    });
+
+    const eventVolunteers = allVolunteers
+      .filter(v => eventVolunteerIds.has(v.id) || eventVolunteerIds.has(v.userId))
       .sort((left, right) => left.name.localeCompare(right.name));
-  }, [allVolunteersById]);
+
+    if (eventVolunteers.length > 0) {
+      return eventVolunteers;
+    }
+
+    if (user?.role === 'admin') {
+      return allVolunteers;
+    }
+
+    return [];
+  }, [allVolunteers, user?.role]);
 
   const handleAssignEventTask = useCallback(async (
     eventProject: Project,
@@ -1224,13 +1286,12 @@ export default function ProjectsScreen({ navigation, route }: any) {
     }
 
     try {
-      const assignableVolunteers = getAssignableVolunteersForEvent(eventProject);
       const assignedVolunteer =
-        volunteerId ? assignableVolunteers.find(volunteer => volunteer.id === volunteerId) || null : null;
+        volunteerId ? allVolunteers.find(volunteer => volunteer.id === volunteerId || volunteer.userId === volunteerId) || null : null;
       const currentTask = (eventProject.internalTasks || []).find(task => task.id === taskId) || null;
       const previouslyAssignedVolunteer =
         currentTask?.assignedVolunteerId && currentTask.assignedVolunteerId !== volunteerId
-          ? assignableVolunteers.find(volunteer => volunteer.id === currentTask.assignedVolunteerId) || null
+          ? allVolunteers.find(volunteer => volunteer.id === currentTask.assignedVolunteerId || volunteer.userId === currentTask.assignedVolunteerId) || null
           : null;
       const shouldNotifyAssignedVolunteer = Boolean(
         assignedVolunteer &&
@@ -1258,13 +1319,20 @@ export default function ProjectsScreen({ navigation, route }: any) {
           ...task,
           assignedVolunteerId: volunteerId || undefined,
           assignedVolunteerName: assignedVolunteer?.name || undefined,
+          assignedVolunteerIds: volunteerId ? [volunteerId] : undefined,
+          assignedVolunteerNames: assignedVolunteer?.name ? [assignedVolunteer.name] : undefined,
           status: nextStatus,
           updatedAt: new Date().toISOString(),
         };
       });
 
+      const nextVolunteers = volunteerId
+        ? Array.from(new Set([...(eventProject.volunteers || []), volunteerId]))
+        : eventProject.volunteers;
+
       await saveEvent({
         ...eventProject,
+        volunteers: nextVolunteers,
         internalTasks: updatedTasks,
         updatedAt: new Date().toISOString(),
       });
@@ -1424,6 +1492,18 @@ export default function ProjectsScreen({ navigation, route }: any) {
       !isOnHold &&
       !eventHasNotStarted;
 
+    // Check if event has reached capacity
+    const volunteersNeeded = project.volunteersNeeded || 0;
+    const currentVolunteers = project.volunteers?.length || 0;
+    const pendingJoinRequests = volunteerMatches.filter(
+      match => match.projectId === project.id && match.status === 'Requested'
+    ).length;
+    const approvedJoinRequests = volunteerJoinRecords.filter(
+      record => record.projectId === project.id
+    ).length;
+    const totalSlotsTaken = currentVolunteers + pendingJoinRequests + approvedJoinRequests;
+    const isEventFull = project.isEvent && volunteersNeeded > 0 && totalSlotsTaken >= volunteersNeeded;
+
     const joinButtonLabel = completedParticipation
       ? 'Task Completed'
       : joined
@@ -1438,6 +1518,8 @@ export default function ProjectsScreen({ navigation, route }: any) {
       ? 'On Hold'
       : wasRejected
       ? 'Request Again'
+      : isEventFull
+      ? 'Event Full'
       : 'Request to Join';
 
     const joinButtonIcon: keyof typeof MaterialIcons.glyphMap = completedParticipation
@@ -1450,19 +1532,9 @@ export default function ProjectsScreen({ navigation, route }: any) {
       ? 'event-busy'
       : wasRejected
       ? 'refresh'
+      : isEventFull
+      ? 'block'
       : 'add-circle-outline';
-
-    // Check if event has reached capacity
-    const volunteersNeeded = project.volunteersNeeded || 0;
-    const currentVolunteers = project.volunteers?.length || 0;
-    const pendingJoinRequests = volunteerMatches.filter(
-      match => match.projectId === project.id && match.status === 'Requested'
-    ).length;
-    const approvedJoinRequests = volunteerJoinRecords.filter(
-      record => record.projectId === project.id
-    ).length;
-    const totalSlotsTaken = currentVolunteers + pendingJoinRequests + approvedJoinRequests;
-    const isEventFull = project.isEvent && volunteersNeeded > 0 && totalSlotsTaken >= volunteersNeeded;
 
     const statusMessage = completedParticipation
       ? 'You already completed this event.'
@@ -1483,7 +1555,7 @@ export default function ProjectsScreen({ navigation, route }: any) {
       : wasRejected
       ? 'Your last request was rejected. You can submit again.'
       : isEventFull
-      ? 'This event has reached volunteer capacity.'
+      ? 'Event full. All volunteer slots are filled.'
       : 'Open for volunteer requests.';
 
     const isJoinDisabled =
@@ -2344,36 +2416,75 @@ export default function ProjectsScreen({ navigation, route }: any) {
                       <Text style={styles.detailButtonText}>Details</Text>
                     </TouchableOpacity>
                   </View>
-                  <TouchableOpacity
-                    style={[
-                      styles.joinButton,
-                      { marginTop: 6 },
-                      loadingProjectId === item.id && styles.joinButtonLoading,
-                    ]}
-                    disabled={loadingProjectId === item.id}
-                    onPress={() => handleJoinProject(item.id)}
-                  >
-                    <MaterialIcons
-                      name={partnerApplication ? 'add-business' : 'campaign'}
-                      size={18}
-                      color="#fff"
-                    />
-                    <Text style={styles.joinButtonText}>
-                      {partnerApplication ? 'Submit Another Proposal' : 'Submit Proposal'}
-                    </Text>
-                  </TouchableOpacity>
-                  {partnerApplication && (
-                    <>
-                      <Text style={styles.partnerNote}>
-                        {partnerApplication?.status === 'Pending'
-                          ? 'Your project proposal is pending admin approval.'
-                          : partnerApplication?.status === 'Approved'
-                          ? 'Your project proposal was approved by the admin and is now active in Projects.'
-                          : 'This proposal was rejected by the admin.'}
-                      </Text>
+                  {(() => {
+                    const currentPartnerId = partnerApplications.find(a => a.partnerUserId === user?.id)?.partnerId;
+                    const isPartnerOwned = Boolean(
+                      (user?.id && item.partnerId === user.id) ||
+                      (currentPartnerId && item.partnerId === currentPartnerId) ||
+                      (user?.id && (item as any).partnerUserId === user.id) ||
+                      partnerApplication?.status === 'Approved' ||
+                      partnerApplications.some(
+                        a => (a.projectId === item.id || a.proposalDetails?.targetProjectId === item.id) &&
+                             (a.partnerUserId === user?.id || (user?.id && a.partnerId === user.id)) &&
+                             a.status === 'Approved'
+                      )
+                    );
 
-                    </>
-                  )}
+                    if (isPartnerOwned) {
+                      return null;
+                    }
+
+                    const isPending = partnerApplication?.status === 'Pending' || partnerApplication?.status === 'Resubmitted';
+                    const needsRevision = partnerApplication?.status === 'Revision Requested' || partnerApplication?.status === 'Needs Revision' || partnerApplication?.status === 'Rejected';
+
+                    return (
+                      <>
+                        <TouchableOpacity
+                          style={[
+                            styles.joinButton,
+                            { marginTop: 6 },
+                            isPending && { backgroundColor: '#d97706' },
+                            needsRevision && { backgroundColor: '#ea580c' },
+                            loadingProjectId === item.id && styles.joinButtonLoading,
+                          ]}
+                          disabled={loadingProjectId === item.id || isPending}
+                          onPress={() => {
+                            if (needsRevision) {
+                              navigation.navigate('Messages');
+                            } else {
+                              handleJoinProject(item.id);
+                            }
+                          }}
+                        >
+                          <MaterialIcons
+                            name={isPending ? 'hourglass-top' : needsRevision ? 'edit' : partnerApplication ? 'add-business' : 'campaign'}
+                            size={18}
+                            color="#fff"
+                          />
+                          <Text style={styles.joinButtonText}>
+                            {isPending
+                              ? 'Proposal Pending Admin Review'
+                              : needsRevision
+                              ? 'Revise Proposal'
+                              : partnerApplication
+                              ? 'Submit Another Proposal'
+                              : 'Submit Proposal'}
+                          </Text>
+                        </TouchableOpacity>
+                        {partnerApplication && (
+                          <Text style={styles.partnerNote}>
+                            {isPending
+                              ? 'Your project proposal is pending admin approval.'
+                              : partnerApplication?.status === 'Approved'
+                              ? 'Your project proposal was approved by the admin and is now active in Projects.'
+                              : needsRevision
+                              ? 'Admin requested revisions on your proposal. Check Messages.'
+                              : 'This proposal was rejected by the admin.'}
+                          </Text>
+                        )}
+                      </>
+                    );
+                  })()}
                 </View>
               )}
 
@@ -3236,12 +3347,24 @@ export default function ProjectsScreen({ navigation, route }: any) {
                     <Text style={styles.documentRemoveButtonText}>Remove Document</Text>
                   </TouchableOpacity>
 
-                  <View style={styles.documentPreviewCard}>
+                  <TouchableOpacity
+                    style={styles.documentPreviewCard}
+                    onPress={async () => {
+                      try {
+                        await openAttachmentUri(partnerProposalDraft.proposalDocument);
+                      } catch (err: any) {
+                        Alert.alert('Unable to Open Document', err?.message || 'Failed to open document.');
+                      }
+                    }}
+                  >
                     <MaterialIcons name="insert-drive-file" size={32} color="#10b981" />
-                    <Text style={styles.documentPreviewText} numberOfLines={1}>
-                      {partnerProposalDraft.proposalDocument.split('/').pop() || 'Document attached'}
-                    </Text>
-                  </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.documentPreviewText, { color: '#047857', fontWeight: '700' }]} numberOfLines={1}>
+                        {getAttachmentLabel(partnerProposalDraft.proposalDocument, 'Document attached')}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: '#10b981' }}>Click to view file</Text>
+                    </View>
+                  </TouchableOpacity>
                 </View>
               ) : null}
 
@@ -3462,6 +3585,14 @@ export default function ProjectsScreen({ navigation, route }: any) {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <ChildSafeguardingModal
+        visible={showAttendanceSafeguardingModal}
+        photoUri={pendingAttendancePhoto || ''}
+        isVolunteerAttendance={true}
+        onApprove={handleAttendanceSafeguardingApprove}
+        onCancel={handleAttendanceSafeguardingCancel}
+      />
     </View>
   );
 }

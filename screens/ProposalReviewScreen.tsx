@@ -59,7 +59,7 @@ export default function ProposalReviewScreen({ navigation }: any) {
         getAllProjects(),
       ]);
 
-      const pending = applications.filter(a => a.status === 'Pending');
+      const pending = applications.filter(a => a.status === 'Pending' || a.status === 'Resubmitted');
       const approved = applications.filter(a => a.status === 'Approved');
       const rejected = applications.filter(a => a.status === 'Rejected');
 

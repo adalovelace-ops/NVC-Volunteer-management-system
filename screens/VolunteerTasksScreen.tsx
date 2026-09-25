@@ -72,6 +72,8 @@ import {
   notifyVolunteerAboutTaskUnassignment,
   notifyVolunteerAboutTaskUpdate,
   setVolunteerAttendanceChecked,
+  setVolunteerAttendanceSafeguardingReview,
+  notifyVolunteerAboutAttendancePhotoDecision,
 } from '../models/storage';
 import {
   Project,
@@ -84,6 +86,7 @@ import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/project
 import { navigateToAvailableRoute } from '../utils/navigation';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
 import { isImageMediaUri, pickImageFromDevice } from '../utils/media';
+import ChildSafeguardingModal, { SafeguardingReviewResult } from '../components/ChildSafeguardingModal';
 
 type AssignedTask = ProjectInternalTask & {
   projectId: string;
@@ -502,6 +505,11 @@ export default function VolunteerTasksScreen({ navigation }: any) {
   const [selectedTaskSection, setSelectedTaskSection] = useState<TaskSectionPreview | null>(null);
   const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null);
   const [attendanceNotice, setAttendanceNotice] = useState<string | null>(null);
+  const [pendingAttendancePhoto, setPendingAttendancePhoto] = useState<string | null>(null);
+  const [pendingAttendanceProjectId, setPendingAttendanceProjectId] = useState<string | null>(null);
+  const [showAttendanceSafeguardingModal, setShowAttendanceSafeguardingModal] = useState(false);
+  const [adminReviewLog, setAdminReviewLog] = useState<VolunteerTimeLog | null>(null);
+  const [adminReviewVolunteer, setAdminReviewVolunteer] = useState<Volunteer | null>(null);
 
   const tasksLoadInFlightRef = useRef<Promise<void> | null>(null);
   const tasksReloadQueuedRef = useRef(false);
@@ -709,13 +717,34 @@ export default function VolunteerTasksScreen({ navigation }: any) {
         return;
       }
 
+      setPendingAttendancePhoto(attendancePhoto);
+      setPendingAttendanceProjectId(projectId);
+      setShowAttendanceSafeguardingModal(true);
+    } catch (error) {
+      Alert.alert(
+        getRequestErrorTitle(error, 'Unable to pick photo'),
+        getRequestErrorMessage(error, 'Please try again.')
+      );
+    }
+  };
+
+  const handleAttendanceSafeguardingApprove = async (result: SafeguardingReviewResult) => {
+    setShowAttendanceSafeguardingModal(false);
+    const projectId = pendingAttendanceProjectId;
+    const photoUri = result.photoUri;
+    setPendingAttendancePhoto(null);
+    setPendingAttendanceProjectId(null);
+
+    if (!projectId || !volunteerProfile || !photoUri) return;
+
+    try {
       setActionLoadingKey(`attendance_${projectId}`);
 
       const createdLog = await startVolunteerTimeLog(
         volunteerProfile.id,
         projectId,
         undefined,
-        attendancePhoto
+        photoUri
       );
       const nextVolunteerTimeLogs = [createdLog, ...volunteerTimeLogs.filter(log => log.id !== createdLog.id)].sort(
         (left, right) => new Date(right.timeIn).getTime() - new Date(left.timeIn).getTime()
@@ -750,26 +779,76 @@ export default function VolunteerTasksScreen({ navigation }: any) {
     }
   };
 
+  const handleAttendanceSafeguardingCancel = () => {
+    setShowAttendanceSafeguardingModal(false);
+    setPendingAttendancePhoto(null);
+    setPendingAttendanceProjectId(null);
+  };
+
+  const handleAdminSafeguardingApprove = async (result: SafeguardingReviewResult) => {
+    if (!adminReviewLog || !user?.id) {
+      setAdminReviewLog(null);
+      setAdminReviewVolunteer(null);
+      return;
+    }
+
+    const targetLog = adminReviewLog;
+    const targetVolunteer = adminReviewVolunteer;
+    setAdminReviewLog(null);
+    setAdminReviewVolunteer(null);
+
+    try {
+      const updatedLog = await setVolunteerAttendanceSafeguardingReview(targetLog.id, {
+        status: result.status,
+        reviewedByUserId: user.id,
+        flagReason: result.flagReason,
+        actionTaken: result.actionTaken,
+      });
+
+      setAllVolunteerTimeLogs(current =>
+        current.map(entry => (entry.id === updatedLog.id ? updatedLog : entry))
+      );
+      setVolunteerTimeLogs(current =>
+        current.map(entry => (entry.id === updatedLog.id ? updatedLog : entry))
+      );
+
+      await notifyVolunteerAboutAttendancePhotoDecision({
+        eventTitle: selectedManagedEvent?.title || 'Event',
+        volunteerUserId: targetVolunteer?.userId || targetVolunteer?.id,
+        actorUserId: user.id,
+        decision: result.status === 'approved' ? 'accepted' : 'removed',
+        reason: result.flagReason,
+      });
+
+      showAttendanceNotice(
+        result.status === 'approved'
+          ? 'Photo accepted. Volunteer notified.'
+          : 'Photo concern flagged. Volunteer notified.'
+      );
+    } catch (error) {
+      console.error('Error saving safeguarding review:', error);
+      Alert.alert('Error', 'Failed to save safeguarding review.');
+    }
+  };
+
   const selectedEventProject = useMemo(
     () => allProjects.find(project => project.id === selectedTask?.projectId && project.isEvent) || null,
     [allProjects, selectedTask?.projectId]
   );
 
   const fieldOfficerEvents = useMemo(() => {
-    if (!volunteerProfile) {
-      return [];
-    }
-
     return allProjects
       .filter(
         project =>
           project.isEvent &&
-          (project.internalTasks || []).some(
-            task => task.isFieldOfficer && isVolunteerAssignedToTask(task, volunteerProfile.id)
-          )
+          (user?.role === 'admin' ||
+            (volunteerProfile &&
+              (project.internalTasks || []).some(
+                task => task.isFieldOfficer && isVolunteerAssignedToTask(task, volunteerProfile.id)
+              )))
       )
       .sort((left, right) => new Date(left.startDate).getTime() - new Date(right.startDate).getTime());
-  }, [allProjects, volunteerProfile]);
+  }, [allProjects, volunteerProfile, user?.role]);
 
   const parentProjectTitleById = useMemo(
     () =>
@@ -787,6 +866,9 @@ export default function VolunteerTasksScreen({ navigation }: any) {
   );
 
   const isFieldOfficerForSelectedEvent = useMemo(() => {
+    if (user?.role === 'admin') {
+      return true;
+    }
     if (!selectedEventProject || !volunteerProfile) {
       return false;
     }
@@ -794,16 +876,23 @@ export default function VolunteerTasksScreen({ navigation }: any) {
     return (selectedEventProject.internalTasks || []).some(
       task => task.isFieldOfficer && isVolunteerAssignedToTask(task, volunteerProfile.id)
     );
-  }, [selectedEventProject, volunteerProfile]);
+  }, [selectedEventProject, volunteerProfile, user?.role]);
 
   const joinedVolunteerOptions = useMemo(() => {
     if (!selectedEventProject) {
       return [];
     }
 
-    return selectedEventProject.volunteers
-      .map(volunteerId => allVolunteers.find(volunteer => volunteer.id === volunteerId) || null)
-      .filter((volunteer): volunteer is Volunteer => volunteer !== null)
+    const eventVolunteerIds = new Set([
+      ...(selectedEventProject.volunteers || []),
+      ...(selectedEventProject.joinedUserIds || []),
+    ]);
+    (selectedEventProject.internalTasks || []).forEach(task => {
+      getTaskAssignedVolunteerIds(task).forEach(id => eventVolunteerIds.add(id));
+    });
+
+    return allVolunteers
+      .filter(v => eventVolunteerIds.has(v.id) || eventVolunteerIds.has(v.userId))
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [allVolunteers, selectedEventProject]);
 
@@ -812,9 +901,16 @@ export default function VolunteerTasksScreen({ navigation }: any) {
       return [];
     }
 
-    return selectedManagedEvent.volunteers
-      .map(volunteerId => allVolunteers.find(volunteer => volunteer.id === volunteerId) || null)
-      .filter((volunteer): volunteer is Volunteer => volunteer !== null)
+    const eventVolunteerIds = new Set([
+      ...(selectedManagedEvent.volunteers || []),
+      ...(selectedManagedEvent.joinedUserIds || []),
+    ]);
+    (selectedManagedEvent.internalTasks || []).forEach(task => {
+      getTaskAssignedVolunteerIds(task).forEach(id => eventVolunteerIds.add(id));
+    });
+
+    return allVolunteers
+      .filter(v => eventVolunteerIds.has(v.id) || eventVolunteerIds.has(v.userId))
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [allVolunteers, selectedManagedEvent]);
 
@@ -915,25 +1011,22 @@ export default function VolunteerTasksScreen({ navigation }: any) {
     volunteerId?: string,
     mode: 'assign' | 'remove' = 'assign'
   ) => {
-    if (!eventProject || !volunteerProfile) {
+    if (!eventProject || (!volunteerProfile && user?.role !== 'admin')) {
       return;
     }
 
     try {
-      const isFieldOfficerForEvent = (eventProject.internalTasks || []).some(
-        task => task.isFieldOfficer && isVolunteerAssignedToTask(task, volunteerProfile.id)
+      const isFieldOfficerForEvent = user?.role === 'admin' || (eventProject.internalTasks || []).some(
+        task => task.isFieldOfficer && volunteerProfile && isVolunteerAssignedToTask(task, volunteerProfile.id)
       );
 
       if (!isFieldOfficerForEvent) {
-        Alert.alert('Access Restricted', 'Only the assigned field officer for this event can manage volunteer task assignments.');
+        Alert.alert('Access Restricted', 'Only admins and the assigned field officer for this event can manage volunteer task assignments.');
         return;
       }
 
-      const assignableVolunteers = eventProject.volunteers
-        .map(joinedVolunteerId => allVolunteers.find(volunteer => volunteer.id === joinedVolunteerId) || null)
-        .filter((volunteer): volunteer is Volunteer => volunteer !== null);
       const assignedVolunteer = volunteerId
-        ? assignableVolunteers.find(volunteer => volunteer.id === volunteerId) || null
+        ? allVolunteers.find(volunteer => volunteer.id === volunteerId || volunteer.userId === volunteerId) || null
         : null;
       const currentTask = (eventProject.internalTasks || []).find(task => task.id === taskId) || null;
       const currentAssignedVolunteerIds = currentTask ? getTaskAssignedVolunteerIds(currentTask) : [];
@@ -948,12 +1041,12 @@ export default function VolunteerTasksScreen({ navigation }: any) {
         ? currentAssignedVolunteerIds
         : [...currentAssignedVolunteerIds, volunteerId];
       const nextAssignedVolunteers = nextAssignedVolunteerIds
-        .map(id => assignableVolunteers.find(volunteer => volunteer.id === id) || null)
+        .map(id => allVolunteers.find(volunteer => volunteer.id === id || volunteer.userId === id) || null)
         .filter((volunteer): volunteer is Volunteer => volunteer !== null);
       const nextAssignedVolunteerNames = nextAssignedVolunteers.map(volunteer => volunteer.name);
       const removedVolunteer =
         mode === 'remove' && volunteerId
-          ? assignableVolunteers.find(volunteer => volunteer.id === volunteerId) || null
+          ? allVolunteers.find(volunteer => volunteer.id === volunteerId || volunteer.userId === volunteerId) || null
           : null;
       const shouldNotifyAssignedVolunteer = Boolean(
         assignedVolunteer && volunteerId && mode === 'assign' && !currentAssignedVolunteerIds.includes(volunteerId)
@@ -986,8 +1079,13 @@ export default function VolunteerTasksScreen({ navigation }: any) {
         };
       });
 
+      const nextVolunteers = Array.from(
+        new Set([...(eventProject.volunteers || []), ...nextAssignedVolunteerIds])
+      );
+
       await saveEvent({
         ...eventProject,
+        volunteers: nextVolunteers,
         internalTasks: updatedTasks,
         updatedAt: new Date().toISOString(),
       });
@@ -2326,11 +2424,75 @@ export default function VolunteerTasksScreen({ navigation }: any) {
                                   <>
                                     {(log.attendancePhoto || log.completionPhoto) &&
                                     isImageMediaUri(log.attendancePhoto || log.completionPhoto) ? (
-                                      <Image
-                                        source={{ uri: log.attendancePhoto || log.completionPhoto || '' }}
-                                        style={styles.attendanceReviewImage}
-                                        resizeMode="cover"
-                                      />
+                                      <View style={{ marginTop: 8 }}>
+                                        <TouchableOpacity
+                                          onPress={() => {
+                                            setAdminReviewLog(log);
+                                            setAdminReviewVolunteer(entry.volunteer);
+                                          }}
+                                          activeOpacity={0.88}
+                                        >
+                                          <Image
+                                            source={{ uri: log.attendancePhoto || log.completionPhoto || '' }}
+                                            style={styles.attendanceReviewImage}
+                                            resizeMode="cover"
+                                          />
+                                        </TouchableOpacity>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, gap: 8 }}>
+                                          <View
+                                            style={{
+                                              paddingHorizontal: 8,
+                                              paddingVertical: 4,
+                                              borderRadius: 6,
+                                              backgroundColor:
+                                                log.safeguardingStatus === 'approved'
+                                                  ? '#dcfce7'
+                                                  : log.safeguardingStatus === 'flagged'
+                                                  ? '#fee2e2'
+                                                  : '#fef3c7',
+                                            }}
+                                          >
+                                            <Text
+                                              style={{
+                                                fontSize: 11,
+                                                fontWeight: '700',
+                                                color:
+                                                  log.safeguardingStatus === 'approved'
+                                                    ? '#166534'
+                                                    : log.safeguardingStatus === 'flagged'
+                                                    ? '#dc2626'
+                                                    : '#b45309',
+                                              }}
+                                            >
+                                              {log.safeguardingStatus === 'approved'
+                                                ? 'Safeguarding: Approved'
+                                                : log.safeguardingStatus === 'flagged'
+                                                ? 'Safeguarding: Flagged'
+                                                : 'Safeguarding: Pending Review'}
+                                            </Text>
+                                          </View>
+                                          <TouchableOpacity
+                                            onPress={() => {
+                                              setAdminReviewLog(log);
+                                              setAdminReviewVolunteer(entry.volunteer);
+                                            }}
+                                            style={{
+                                              paddingHorizontal: 10,
+                                              paddingVertical: 5,
+                                              borderRadius: 6,
+                                              backgroundColor: '#0284c7',
+                                              flexDirection: 'row',
+                                              alignItems: 'center',
+                                              gap: 4,
+                                            }}
+                                          >
+                                            <MaterialIcons name="verified-user" size={14} color="#fff" />
+                                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
+                                              Review Photo
+                                            </Text>
+                                          </TouchableOpacity>
+                                        </View>
+                                      </View>
                                     ) : (
                                       <Text style={styles.attendanceReviewEmptyPhoto}>No photo available</Text>
                                     )}
@@ -2498,6 +2660,29 @@ export default function VolunteerTasksScreen({ navigation }: any) {
           </View>
         </View>
       </Modal>
+
+      <ChildSafeguardingModal
+        visible={showAttendanceSafeguardingModal}
+        photoUri={pendingAttendancePhoto || ''}
+        isVolunteerAttendance={true}
+        onApprove={handleAttendanceSafeguardingApprove}
+        onCancel={handleAttendanceSafeguardingCancel}
+      />
+
+      <ChildSafeguardingModal
+        visible={Boolean(adminReviewLog)}
+        photoUri={adminReviewLog?.attendancePhoto || adminReviewLog?.completionPhoto || ''}
+        isAdmin={true}
+        mode="admin_review"
+        volunteerName={adminReviewVolunteer?.name}
+        volunteerUserId={adminReviewVolunteer?.userId || adminReviewVolunteer?.id}
+        eventName={selectedManagedEvent?.title}
+        onApprove={handleAdminSafeguardingApprove}
+        onCancel={() => {
+          setAdminReviewLog(null);
+          setAdminReviewVolunteer(null);
+        }}
+      />
     </View>
   );
 }

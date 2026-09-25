@@ -2,12 +2,14 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ModernTheme from '../utils/modernTheme';
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -15,11 +17,21 @@ import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import {
+  clearStorageCache,
+  getAllVolunteers,
   getAllVolunteerTimeLogs,
   getProjectsScreenSnapshot,
+  notifyVolunteerAboutTaskUpdate,
+  saveEvent,
   subscribeToStorageChanges,
 } from '../models/storage';
-import { PartnerProjectApplication, Project, VolunteerTimeLog } from '../models/types';
+import {
+  PartnerProjectApplication,
+  Project,
+  ProjectInternalTask,
+  Volunteer,
+  VolunteerTimeLog,
+} from '../models/types';
 import { getProjectDisplayStatus, getProjectStatusColor } from '../utils/projectStatus';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
 
@@ -53,27 +65,48 @@ export default function PartnerProjectsScreen({ route, navigation }: any) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [partnerApplications, setPartnerApplications] = useState<PartnerProjectApplication[]>([]);
   const [volunteerTimeLogs, setVolunteerTimeLogs] = useState<VolunteerTimeLog[]>([]);
+  const [volunteers, setVolunteers] = useState<Volunteer[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<{ title: string; message: string } | null>(null);
 
+  // Event task states
+  const [selectedEventForTasks, setSelectedEventForTasks] = useState<Project | null>(null);
+  const [showTaskEditModal, setShowTaskEditModal] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [taskDraft, setTaskDraft] = useState({
+    title: '',
+    description: '',
+    category: 'General',
+    priority: 'Medium' as 'Low' | 'Medium' | 'High',
+    status: 'Unassigned' as 'Unassigned' | 'Assigned' | 'In Progress' | 'Completed',
+    volunteersNeeded: '1',
+    assignedVolunteerId: '',
+  });
+  const [saveTaskModalState, setSaveTaskModalState] = useState<'idle' | 'loading' | 'success'>('idle');
+  const [saveTaskSuccessMessage, setSaveTaskSuccessMessage] = useState('');
+  const [taskToDeleteId, setTaskToDeleteId] = useState<string | null>(null);
+
   const loadData = useCallback(async () => {
     if (!user) {
       setProjects([]);
       setPartnerApplications([]);
+      setVolunteers([]);
       setLoading(false);
       return;
     }
 
     try {
-      const [snapshot, allVolunteerTimeLogs] = await Promise.all([
+      const [snapshot, allVolunteerTimeLogs, allVolunteers] = await Promise.all([
         getProjectsScreenSnapshot(user, ['projects', 'partnerApplications']),
         getAllVolunteerTimeLogs(),
+        getAllVolunteers(),
       ]);
       setProjects(snapshot.projects || []);
       setPartnerApplications(snapshot.partnerApplications || []);
       setVolunteerTimeLogs(allVolunteerTimeLogs || []);
+      setVolunteers(allVolunteers || []);
       setLoadError(null);
     } catch (error) {
       setLoadError({
@@ -89,7 +122,7 @@ export default function PartnerProjectsScreen({ route, navigation }: any) {
   useFocusEffect(
     useCallback(() => {
       void loadData();
-      return subscribeToStorageChanges(['projects', 'events', 'partnerProjectApplications'], () => {
+      return subscribeToStorageChanges(['projects', 'events', 'partnerProjectApplications', 'volunteers'], () => {
         void loadData();
       });
     }, [loadData])
@@ -213,6 +246,145 @@ export default function PartnerProjectsScreen({ route, navigation }: any) {
         : null,
     [projectMetrics, selectedProjectId]
   );
+
+  const currentSelectedEvent = useMemo(() => {
+    if (!selectedEventForTasks) return null;
+    return projects.find(p => p.id === selectedEventForTasks.id) || selectedEventForTasks;
+  }, [projects, selectedEventForTasks]);
+
+  const openCreateTaskModal = () => {
+    setEditingTaskId(null);
+    setTaskDraft({
+      title: '',
+      description: '',
+      category: 'General',
+      priority: 'Medium',
+      status: 'Unassigned',
+      volunteersNeeded: '1',
+      assignedVolunteerId: '',
+    });
+    setShowTaskEditModal(true);
+  };
+
+  const openEditTaskModal = (task: ProjectInternalTask) => {
+    setEditingTaskId(task.id);
+    setTaskDraft({
+      title: task.title,
+      description: task.description || '',
+      category: task.category || 'General',
+      priority: (task.priority as any) || 'Medium',
+      status: (task.status as any) || 'Unassigned',
+      volunteersNeeded: String(task.volunteersNeeded || 1),
+      assignedVolunteerId: task.assignedVolunteerId || (task.assignedVolunteerIds && task.assignedVolunteerIds[0]) || '',
+    });
+    setShowTaskEditModal(true);
+  };
+
+  const handleSaveEventTask = async () => {
+    if (!currentSelectedEvent) return;
+    if (!taskDraft.title.trim()) {
+      Alert.alert('Validation Error', 'Task title is required.');
+      return;
+    }
+
+    const assignedVol = volunteers.find(
+      v => v.id === taskDraft.assignedVolunteerId || v.userId === taskDraft.assignedVolunteerId
+    ) || null;
+    const now = new Date().toISOString();
+
+    const nextTask: ProjectInternalTask = {
+      id: editingTaskId || `${currentSelectedEvent.id}-task-${Date.now()}`,
+      title: taskDraft.title.trim(),
+      description: taskDraft.description.trim(),
+      category: taskDraft.category.trim() || 'General',
+      priority: taskDraft.priority,
+      status: taskDraft.assignedVolunteerId && taskDraft.status === 'Unassigned' ? 'Assigned' : taskDraft.status,
+      assignedVolunteerId: assignedVol?.id || undefined,
+      assignedVolunteerName: assignedVol?.name || undefined,
+      assignedVolunteerIds: assignedVol ? [assignedVol.id] : undefined,
+      assignedVolunteerNames: assignedVol ? [assignedVol.name] : undefined,
+      skillsNeeded: [],
+      volunteersNeeded: Math.max(1, Number(taskDraft.volunteersNeeded || 1)),
+      updatedAt: now,
+      createdAt: editingTaskId
+        ? (currentSelectedEvent.internalTasks || []).find(t => t.id === editingTaskId)?.createdAt || now
+        : now,
+    };
+
+    const currentTasks = currentSelectedEvent.internalTasks || [];
+    const updatedTasks = editingTaskId
+      ? currentTasks.map(t => t.id === editingTaskId ? nextTask : t)
+      : [...currentTasks, nextTask];
+
+    const nextVolunteers = assignedVol
+      ? Array.from(new Set([...(currentSelectedEvent.volunteers || []), assignedVol.id]))
+      : (currentSelectedEvent.volunteers || []);
+
+    const updatedEvent: Project = {
+      ...currentSelectedEvent,
+      volunteers: nextVolunteers,
+      internalTasks: updatedTasks,
+      updatedAt: now,
+    };
+
+    try {
+      setSaveTaskModalState('loading');
+      await saveEvent(updatedEvent);
+      clearStorageCache(['projects', 'events']);
+
+      setProjects(prev => prev.map(p => p.id === updatedEvent.id ? updatedEvent : p));
+      setSelectedEventForTasks(updatedEvent);
+
+      setSaveTaskSuccessMessage(
+        editingTaskId ? 'Event task updated successfully.' : 'Event task saved successfully.'
+      );
+      setSaveTaskModalState('success');
+
+      setTimeout(() => {
+        setSaveTaskModalState('idle');
+        setShowTaskEditModal(false);
+      }, 900);
+
+      if (assignedVol) {
+        notifyVolunteerAboutTaskUpdate({
+          event: updatedEvent,
+          task: nextTask,
+          volunteer: assignedVol,
+          actorUserId: user?.id,
+          action: 'assigned',
+        }).catch(err => console.warn('Volunteer notification failed:', err));
+      }
+    } catch (error) {
+      setSaveTaskModalState('idle');
+      Alert.alert(
+        getRequestErrorTitle(error),
+        getRequestErrorMessage(error, 'Failed to save the event task.')
+      );
+    }
+  };
+
+  const handleDeleteEventTask = async (taskId: string) => {
+    if (!currentSelectedEvent) return;
+    const updatedTasks = (currentSelectedEvent.internalTasks || []).filter(t => t.id !== taskId);
+    const updatedEvent: Project = {
+      ...currentSelectedEvent,
+      internalTasks: updatedTasks,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await saveEvent(updatedEvent);
+      clearStorageCache(['projects', 'events']);
+      setProjects(prev => prev.map(p => p.id === updatedEvent.id ? updatedEvent : p));
+      setSelectedEventForTasks(updatedEvent);
+      setTaskToDeleteId(null);
+    } catch (error) {
+      Alert.alert(
+        getRequestErrorTitle(error),
+        getRequestErrorMessage(error, 'Failed to delete the event task.')
+      );
+    }
+  };
 
   if (loading) {
     return (
@@ -494,6 +666,18 @@ export default function PartnerProjectsScreen({ route, navigation }: any) {
                               </Text>
                             </View>
                           </View>
+
+                          <View style={styles.eventTasksActionRow}>
+                            <TouchableOpacity
+                              style={styles.eventTasksButton}
+                              onPress={() => setSelectedEventForTasks(event)}
+                            >
+                              <MaterialIcons name="assignment" size={15} color="#ffffff" />
+                              <Text style={styles.eventTasksButtonText}>
+                                Event Tasks ({Array.isArray(event.internalTasks) ? event.internalTasks.length : 0})
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
                         </View>
                       );
                     })
@@ -501,6 +685,414 @@ export default function PartnerProjectsScreen({ route, navigation }: any) {
                 </ScrollView>
               </>
             ) : null}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Event Tasks Modal for Partner */}
+      <Modal
+        visible={Boolean(currentSelectedEvent)}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelectedEventForTasks(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable style={styles.modalBackdropDismiss} onPress={() => setSelectedEventForTasks(null)} />
+          <View style={styles.modalCard}>
+            {currentSelectedEvent ? (
+              <>
+                <View style={styles.modalHeader}>
+                  <View style={styles.modalHeaderCopy}>
+                    <Text style={styles.modalTitle}>Event Tasks</Text>
+                    <Text style={styles.modalSubtitle} numberOfLines={1}>
+                      {currentSelectedEvent.title}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <TouchableOpacity
+                      style={styles.addTaskHeaderBtn}
+                      onPress={openCreateTaskModal}
+                    >
+                      <MaterialIcons name="add" size={18} color="#ffffff" />
+                      <Text style={styles.addTaskHeaderBtnText}>Add Task</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.modalCloseButton}
+                      onPress={() => setSelectedEventForTasks(null)}
+                      hitSlop={8}
+                    >
+                      <MaterialIcons name="close" size={20} color="#0f172a" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <ScrollView
+                  style={styles.modalContentScroll}
+                  contentContainerStyle={styles.modalContentScrollContent}
+                  showsVerticalScrollIndicator
+                >
+                  {(currentSelectedEvent.internalTasks || []).length === 0 ? (
+                    <View style={styles.eventEmptyCard}>
+                      <MaterialIcons name="assignment-late" size={36} color="#94a3b8" style={{ marginBottom: 8 }} />
+                      <Text style={styles.emptyTitle}>No event tasks yet</Text>
+                      <Text style={styles.emptyText}>
+                        Tap "+ Add Task" to create and assign tasks for this event's volunteers.
+                      </Text>
+                    </View>
+                  ) : (
+                    (currentSelectedEvent.internalTasks || []).map(task => {
+                      const priorityColor =
+                        task.priority === 'High'
+                          ? '#ef4444'
+                          : task.priority === 'Medium'
+                          ? '#f59e0b'
+                          : '#64748b';
+                      const statusColor =
+                        task.status === 'Completed'
+                          ? '#166534'
+                          : task.status === 'In Progress'
+                          ? '#2563eb'
+                          : task.status === 'Assigned'
+                          ? '#0284c7'
+                          : '#64748b';
+
+                      return (
+                        <View key={task.id} style={styles.taskCard}>
+                          <View style={styles.taskCardHeader}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.taskCardTitle}>{task.title}</Text>
+                              {task.category ? (
+                                <Text style={styles.taskCardCategory}>{task.category}</Text>
+                              ) : null}
+                            </View>
+                            <View style={{ flexDirection: 'row', gap: 6 }}>
+                              <View style={[styles.statusChip, { backgroundColor: `${priorityColor}18` }]}>
+                                <Text style={[styles.statusChipText, { color: priorityColor }]}>
+                                  {task.priority || 'Normal'}
+                                </Text>
+                              </View>
+                              <View style={[styles.statusChip, { backgroundColor: `${statusColor}18` }]}>
+                                <Text style={[styles.statusChipText, { color: statusColor }]}>
+                                  {task.status || 'Unassigned'}
+                                </Text>
+                              </View>
+                            </View>
+                          </View>
+
+                          {task.description ? (
+                            <Text style={styles.taskCardDesc}>{task.description}</Text>
+                          ) : null}
+
+                          <View style={styles.taskCardMetaRow}>
+                            <View style={styles.taskCardMetaItem}>
+                              <MaterialIcons name="person" size={15} color="#166534" />
+                              <Text style={styles.taskCardMetaText}>
+                                {task.assignedVolunteerName || 'Unassigned'}
+                              </Text>
+                            </View>
+                            <View style={styles.taskCardMetaItem}>
+                              <MaterialIcons name="group" size={15} color="#64748b" />
+                              <Text style={styles.taskCardMetaText}>
+                                Need: {task.volunteersNeeded || 1}
+                              </Text>
+                            </View>
+                          </View>
+
+                          <View style={styles.taskCardActions}>
+                            <TouchableOpacity
+                              style={styles.taskActionEditBtn}
+                              onPress={() => openEditTaskModal(task)}
+                            >
+                              <MaterialIcons name="edit" size={15} color="#2563eb" />
+                              <Text style={styles.taskActionEditBtnText}>Edit</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.taskActionDeleteBtn}
+                              onPress={() => setTaskToDeleteId(task.id)}
+                            >
+                              <MaterialIcons name="delete" size={15} color="#ef4444" />
+                              <Text style={styles.taskActionDeleteBtnText}>Delete</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      );
+                    })
+                  )}
+                </ScrollView>
+              </>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add / Edit Task Modal */}
+      <Modal
+        visible={showTaskEditModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowTaskEditModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <Pressable style={styles.modalBackdropDismiss} onPress={() => setShowTaskEditModal(false)} />
+          <View style={[styles.modalCard, { maxWidth: 500 }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {editingTaskId ? 'Edit Event Task' : 'Add Event Task'}
+              </Text>
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                onPress={() => setShowTaskEditModal(false)}
+              >
+                <MaterialIcons name="close" size={20} color="#0f172a" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator>
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Task Title *</Text>
+                <TextInput
+                  style={styles.formInput}
+                  placeholder="e.g., Equipment Setup, Registration"
+                  value={taskDraft.title}
+                  onChangeText={text => setTaskDraft(d => ({ ...d, title: text }))}
+                />
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Description</Text>
+                <TextInput
+                  style={[styles.formInput, { height: 80, textAlignVertical: 'top' }]}
+                  placeholder="Describe task details and responsibilities..."
+                  multiline
+                  numberOfLines={3}
+                  value={taskDraft.description}
+                  onChangeText={text => setTaskDraft(d => ({ ...d, description: text }))}
+                />
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Category</Text>
+                <TextInput
+                  style={styles.formInput}
+                  placeholder="e.g., Logistics, Coordination, Medical"
+                  value={taskDraft.category}
+                  onChangeText={text => setTaskDraft(d => ({ ...d, category: text }))}
+                />
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Priority</Text>
+                <View style={styles.pillSelectRow}>
+                  {(['Low', 'Medium', 'High'] as const).map(p => (
+                    <TouchableOpacity
+                      key={p}
+                      style={[
+                        styles.pillSelectBtn,
+                        taskDraft.priority === p && styles.pillSelectBtnActive,
+                      ]}
+                      onPress={() => setTaskDraft(d => ({ ...d, priority: p }))}
+                    >
+                      <Text
+                        style={[
+                          styles.pillSelectBtnText,
+                          taskDraft.priority === p && styles.pillSelectBtnTextActive,
+                        ]}
+                      >
+                        {p}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Status</Text>
+                <View style={styles.pillSelectRow}>
+                  {(['Unassigned', 'Assigned', 'In Progress', 'Completed'] as const).map(s => (
+                    <TouchableOpacity
+                      key={s}
+                      style={[
+                        styles.pillSelectBtn,
+                        taskDraft.status === s && styles.pillSelectBtnActive,
+                      ]}
+                      onPress={() => setTaskDraft(d => ({ ...d, status: s }))}
+                    >
+                      <Text
+                        style={[
+                          styles.pillSelectBtnText,
+                          taskDraft.status === s && styles.pillSelectBtnTextActive,
+                        ]}
+                      >
+                        {s}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Volunteers Needed</Text>
+                <TextInput
+                  style={styles.formInput}
+                  keyboardType="numeric"
+                  value={taskDraft.volunteersNeeded}
+                  onChangeText={text => setTaskDraft(d => ({ ...d, volunteersNeeded: text }))}
+                />
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Assign Volunteer</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+                  <View style={{ flexDirection: 'row', gap: 6, paddingVertical: 4 }}>
+                    <TouchableOpacity
+                      style={[
+                        styles.assignVolChip,
+                        !taskDraft.assignedVolunteerId && styles.assignVolChipActive,
+                      ]}
+                      onPress={() => setTaskDraft(d => ({ ...d, assignedVolunteerId: '' }))}
+                    >
+                      <Text
+                        style={[
+                          styles.assignVolChipText,
+                          !taskDraft.assignedVolunteerId && styles.assignVolChipTextActive,
+                        ]}
+                      >
+                        None (Unassigned)
+                      </Text>
+                    </TouchableOpacity>
+                    {volunteers.map(v => (
+                      <TouchableOpacity
+                        key={v.id}
+                        style={[
+                          styles.assignVolChip,
+                          taskDraft.assignedVolunteerId === v.id && styles.assignVolChipActive,
+                        ]}
+                        onPress={() =>
+                          setTaskDraft(d => ({
+                            ...d,
+                            assignedVolunteerId: v.id,
+                            status: d.status === 'Unassigned' ? 'Assigned' : d.status,
+                          }))
+                        }
+                      >
+                        <Text
+                          style={[
+                            styles.assignVolChipText,
+                            taskDraft.assignedVolunteerId === v.id && styles.assignVolChipTextActive,
+                          ]}
+                        >
+                          {v.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+              </View>
+            </ScrollView>
+
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+              <TouchableOpacity
+                onPress={() => setShowTaskEditModal(false)}
+                style={styles.cancelBtn}
+              >
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => void handleSaveEventTask()}
+                style={styles.saveBtn}
+              >
+                <Text style={styles.saveBtnText}>Save Task</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Save Task Loading and Success Modal */}
+      <Modal
+        transparent
+        visible={saveTaskModalState !== 'idle'}
+        animationType="fade"
+        onRequestClose={() => {
+          setSaveTaskModalState('idle');
+          if (saveTaskModalState === 'success') {
+            setShowTaskEditModal(false);
+          }
+        }}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.45)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: '#ffffff', borderRadius: 18, padding: 24, maxWidth: 420, width: '100%', alignSelf: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 16, elevation: 8 }}>
+            {saveTaskModalState === 'loading' && (
+              <View style={{ alignItems: 'center', paddingVertical: 16, gap: 14 }}>
+                <ActivityIndicator size="large" color="#166534" />
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>
+                  Saving task...
+                </Text>
+                <Text style={{ fontSize: 12, color: '#64748b' }}>Please wait a moment</Text>
+                <TouchableOpacity
+                  onPress={() => setSaveTaskModalState('idle')}
+                  style={{ marginTop: 8, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: '#cbd5e1' }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b' }}>Dismiss</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {saveTaskModalState === 'success' && (
+              <View style={{ alignItems: 'center', paddingVertical: 16, gap: 12 }}>
+                <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#f0fdf4', alignItems: 'center', justifyContent: 'center' }}>
+                  <MaterialIcons name="check-circle" size={32} color="#166534" />
+                </View>
+                <Text style={{ fontSize: 18, fontWeight: '900', color: '#0f172a' }}>
+                  Task saved
+                </Text>
+                <Text style={{ fontSize: 13, color: '#64748b', textAlign: 'center' }}>
+                  {saveTaskSuccessMessage || 'Event task has been saved successfully.'}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    setSaveTaskModalState('idle');
+                    setShowTaskEditModal(false);
+                  }}
+                  style={{ marginTop: 8, paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8, backgroundColor: '#166534' }}
+                >
+                  <Text style={{ fontWeight: '800', color: '#ffffff' }}>Done</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        visible={Boolean(taskToDeleteId)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTaskToDeleteId(null)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.45)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: '#ffffff', borderRadius: 18, padding: 20, maxWidth: 400, width: '100%', alignSelf: 'center' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+              <MaterialIcons name="warning" size={24} color="#dc2626" style={{ marginRight: 8 }} />
+              <Text style={{ fontSize: 18, fontWeight: '900', color: '#0f172a' }}>Delete Task</Text>
+            </View>
+            <Text style={{ fontSize: 14, color: '#475569', marginBottom: 20 }}>
+              Remove this task from the event? This action cannot be undone.
+            </Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+              <TouchableOpacity onPress={() => setTaskToDeleteId(null)} style={styles.cancelBtn}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  if (taskToDeleteId) void handleDeleteEventTask(taskToDeleteId);
+                }}
+                style={[styles.saveBtn, { backgroundColor: '#dc2626' }]}
+              >
+                <Text style={styles.saveBtnText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -828,12 +1420,12 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
   },
   modalCard: {
-    maxHeight: '82%',
-    width: '100%',
-    maxWidth: 380,
+    maxHeight: '85%',
+    width: '92%',
+    maxWidth: 580,
     backgroundColor: '#ffffff',
     borderRadius: 22,
-    padding: 16,
+    padding: 18,
     borderWidth: 1,
     borderColor: '#dbe7dc',
     overflow: 'hidden',
@@ -874,28 +1466,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 16,
     justifyContent: 'space-between',
+    width: '100%',
   },
   modalMetricCard: {
     flex: 1,
-    width: '100%',
+    minWidth: 70,
     borderRadius: 14,
     backgroundColor: '#f8fbf8',
     borderWidth: 1,
     borderColor: '#dbe7dc',
     padding: 10,
+    alignItems: 'center',
   },
   modalMetricValue: {
     fontSize: 16,
     fontWeight: '900',
     color: '#0f172a',
+    textAlign: 'center',
   },
   modalMetricLabel: {
     marginTop: 4,
     fontSize: 11,
     fontWeight: '700',
     color: '#64748b',
+    textAlign: 'center',
   },
   modalContentScroll: {
     marginTop: 6,
@@ -941,21 +1537,24 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#dbe7dc',
-    padding: 12,
-    marginTop: 6,
+    padding: 14,
+    marginTop: 10,
+    overflow: 'hidden',
   },
   eventItemTopRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 10,
+    flexWrap: 'wrap',
   },
   eventItemCopy: {
     flex: 1,
+    minWidth: 160,
   },
   eventItemTitle: {
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: '800',
     color: '#0f172a',
   },
@@ -975,14 +1574,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginTop: 10,
+    marginTop: 12,
+    marginBottom: 4,
   },
   eventPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 10,
-    paddingVertical: 7,
+    paddingVertical: 6,
     borderRadius: 999,
     backgroundColor: '#f8fbf8',
     borderWidth: 1,
@@ -992,5 +1592,218 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#334155',
+  },
+  eventTasksActionRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    flexWrap: 'wrap',
+  },
+  eventTasksButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#166534',
+  },
+  eventTasksButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  addTaskHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#166534',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  addTaskHeaderBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  taskCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 14,
+    marginBottom: 10,
+    overflow: 'hidden',
+  },
+  taskCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 8,
+  },
+  taskCardTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  taskCardCategory: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748b',
+    marginTop: 2,
+  },
+  taskCardDesc: {
+    fontSize: 13,
+    color: '#475569',
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  taskCardMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 14,
+    marginBottom: 10,
+  },
+  taskCardMetaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  taskCardMetaText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  taskCardActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    paddingTop: 10,
+    marginTop: 6,
+    flexWrap: 'wrap',
+  },
+  taskActionEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#eff6ff',
+  },
+  taskActionEditBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2563eb',
+  },
+  taskActionDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#fef2f2',
+  },
+  taskActionDeleteBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ef4444',
+  },
+  formGroup: {
+    marginBottom: 14,
+  },
+  formLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
+  },
+  formInput: {
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 13,
+    color: '#0f172a',
+    backgroundColor: '#ffffff',
+  },
+  pillSelectRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  pillSelectBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#ffffff',
+  },
+  pillSelectBtnActive: {
+    borderColor: '#166534',
+    backgroundColor: '#f0fdf4',
+  },
+  pillSelectBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  pillSelectBtnTextActive: {
+    color: '#166534',
+    fontWeight: '700',
+  },
+  assignVolChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#ffffff',
+  },
+  assignVolChipActive: {
+    borderColor: '#166534',
+    backgroundColor: '#166534',
+  },
+  assignVolChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  assignVolChipTextActive: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  cancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  cancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  saveBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#166534',
+  },
+  saveBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
   },
 });

@@ -22,6 +22,7 @@
     "all:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/stop-all.ps1",
     "all:status": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/status-all.ps1",
     "android": "react-native run-android",
+    "build:apk": "python ./scripts/build_apk.py",
     "ios": "react-native run-ios",
     "pod:install": "cd ios && pod install && cd ..",
     "web": "node ./scripts/run-vite.mjs",

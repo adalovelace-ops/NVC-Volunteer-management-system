@@ -10,18 +10,15 @@ CANONICAL_STORAGE_TABLES = {
     "partners": "partners",
     "projects": "projects",
     "programs": "programs",
-    "programTracks": "program_tracks",
     "events": "events",
     "volunteers": "volunteers",
     "statusUpdates": "status_updates",
-    "volunteerMatches": "volunteer_matches",
     "volunteerTimeLogs": "volunteer_time_logs",
+    "volunteerMatches": "volunteer_matches",
     "volunteerProjectJoins": "volunteer_event_joins",
     "partnerProjectApplications": "partner_project_applications",
     "partnerReports": "reports",
     "publishedImpactReports": "reports",
-    "adminPlanningCalendars": "admin_planning_calendars",
-    "adminPlanningItems": "admin_planning_items",
 }
 
 LEGACY_COMPAT_STORAGE_TABLES = {}
@@ -29,6 +26,7 @@ LEGACY_COMPAT_STORAGE_TABLES = {}
 MESSAGE_STORAGE_TABLES = {
     "messages": "messages",
     "projectGroupMessages": "project_group_messages",
+    "eventGroupMessages": "event_group_messages",
 }
 
 LEGACY_AUXILIARY_TABLES = ()
@@ -37,6 +35,9 @@ LEGACY_AUXILIARY_TABLES = ()
 # when they appear. Keep this list intentionally narrow to avoid dropping legacy
 # compatibility tables that are still referenced by maintenance workflows.
 DEPRECATED_STORAGE_TABLES = (
+    "admin_planning_calendars",
+    "admin_planning_items",
+    "program_tracks",
     "app_storage",
     "app_users",
     "app_users_store",

@@ -217,6 +217,9 @@ export function generateVolunteersPerEventReportHtml(
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${escapeHtml(headingTitle)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700;800;900&display=swap" rel="stylesheet">
 <style>
   :root {
     --green: #216b35;
@@ -233,7 +236,7 @@ export function generateVolunteersPerEventReportHtml(
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: Inter, Arial, Helvetica, sans-serif;
+    font-family: 'Nunito', Inter, Arial, Helvetica, sans-serif;
     font-size: 14px;
   }
 

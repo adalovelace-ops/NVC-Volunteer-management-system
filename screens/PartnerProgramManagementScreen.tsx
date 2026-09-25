@@ -214,9 +214,33 @@ export default function PartnerProgramManagementScreen() {
     });
   }, [availableProjects, selectedCategoryTab, searchQuery]);
 
+  const isProjectOwned = useCallback((project: Project | null | undefined): boolean => {
+    if (!project) return false;
+    const partnerId = partner?.id || (partner as any)?.partnersId;
+    if (partnerId && project.partnerId === partnerId) return true;
+    if (user?.id && project.partnerId === user.id) return true;
+    if (partner?.ownerUserId && project.partnerId === partner.ownerUserId) return true;
+    return partnerApplications.some(
+      a => (a.projectId === project.id || a.proposalDetails?.targetProjectId === project.id) && a.status === 'Approved'
+    );
+  }, [partner, user, partnerApplications]);
+
+  const getProjectApplication = useCallback((project: Project | null | undefined) => {
+    if (!project) return null;
+    return partnerApplications.find(
+      a => a.projectId === project.id || a.proposalDetails?.targetProjectId === project.id
+    );
+  }, [partnerApplications]);
+
   const handleOpenProposal = (project: Project) => {
     if (project.isDraft) {
       Alert.alert('Not Available', 'Draft projects are not available for partner proposals.');
+      return;
+    }
+    if (isProjectOwned(project)) {
+      Alert.alert('Your Project', 'You already lead this project. Opening your project workspace...');
+      setDetailModalProject(null);
+      navigation.navigate('Projects', { projectId: project.id });
       return;
     }
     const module = getProgramModule(project) || 'Nutrition';
@@ -360,9 +384,18 @@ export default function PartnerProgramManagementScreen() {
                   {/* Dark gradient overlay for text readability */}
                   <View style={styles.cardHeaderOverlay}>
                     <View style={styles.cardHeaderTopRow}>
-                      <View style={[styles.moduleBadge, { backgroundColor: accent }]}>
-                        <MaterialIcons name={iconName} size={12} color="#ffffff" style={{ marginRight: 4 }} />
-                        <Text style={styles.moduleBadgeText}>{module.toUpperCase()}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1 }}>
+                        <View style={[styles.moduleBadge, { backgroundColor: accent }]}>
+                          <MaterialIcons name={iconName} size={12} color="#ffffff" style={{ marginRight: 4 }} />
+                          <Text style={styles.moduleBadgeText}>{module.toUpperCase()}</Text>
+                        </View>
+
+                        {isProjectOwned(project) && (
+                          <View style={styles.ownerBadge}>
+                            <MaterialIcons name="workspace-premium" size={12} color="#ffffff" style={{ marginRight: 3 }} />
+                            <Text style={styles.ownerBadgeText}>YOUR PROJECT</Text>
+                          </View>
+                        )}
                       </View>
 
                       <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
@@ -425,13 +458,58 @@ export default function PartnerProgramManagementScreen() {
                       <MaterialIcons name="arrow-forward" size={14} color="#166534" />
                     </TouchableOpacity>
 
-                    <TouchableOpacity
-                      style={[styles.proposalButton, { backgroundColor: accent }]}
-                      onPress={() => handleOpenProposal(project)}
-                    >
-                      <MaterialIcons name="edit-note" size={16} color="#ffffff" style={{ marginRight: 4 }} />
-                      <Text style={styles.proposalButtonText}>Submit Proposal</Text>
-                    </TouchableOpacity>
+                    {(() => {
+                      const isOwn = isProjectOwned(project);
+                      const app = getProjectApplication(project);
+                      const isPending = app?.status === 'Pending' || app?.status === 'Resubmitted';
+                      const needsRevision = app?.status === 'Revision Requested' || app?.status === 'Needs Revision' || app?.status === 'Rejected';
+
+                      if (isOwn) {
+                        return (
+                          <TouchableOpacity
+                            style={[styles.proposalButton, { backgroundColor: '#166534' }]}
+                            onPress={() => navigation.navigate('Projects', { projectId: project.id })}
+                          >
+                            <MaterialIcons name="folder-special" size={16} color="#ffffff" style={{ marginRight: 4 }} />
+                            <Text style={styles.proposalButtonText}>View Workspace</Text>
+                          </TouchableOpacity>
+                        );
+                      }
+
+                      if (isPending) {
+                        return (
+                          <TouchableOpacity
+                            style={[styles.proposalButton, { backgroundColor: '#d97706' }]}
+                            onPress={() => navigation.navigate('Messages')}
+                          >
+                            <MaterialIcons name="hourglass-top" size={16} color="#ffffff" style={{ marginRight: 4 }} />
+                            <Text style={styles.proposalButtonText}>Proposal Pending</Text>
+                          </TouchableOpacity>
+                        );
+                      }
+
+                      if (needsRevision) {
+                        return (
+                          <TouchableOpacity
+                            style={[styles.proposalButton, { backgroundColor: '#ea580c' }]}
+                            onPress={() => handleOpenProposal(project)}
+                          >
+                            <MaterialIcons name="edit" size={16} color="#ffffff" style={{ marginRight: 4 }} />
+                            <Text style={styles.proposalButtonText}>Revise Proposal</Text>
+                          </TouchableOpacity>
+                        );
+                      }
+
+                      return (
+                        <TouchableOpacity
+                          style={[styles.proposalButton, { backgroundColor: accent }]}
+                          onPress={() => handleOpenProposal(project)}
+                        >
+                          <MaterialIcons name="edit-note" size={16} color="#ffffff" style={{ marginRight: 4 }} />
+                          <Text style={styles.proposalButtonText}>Submit Proposal</Text>
+                        </TouchableOpacity>
+                      );
+                    })()}
                   </View>
                 </View>
               </View>
@@ -532,13 +610,65 @@ export default function PartnerProgramManagementScreen() {
                   <Text style={styles.modalCancelBtnText}>Close</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={[styles.modalPrimaryBtn, { backgroundColor: getProgramAccent(getProgramModule(detailModalProject) || 'Nutrition') }]}
-                  onPress={() => handleOpenProposal(detailModalProject)}
-                >
-                  <MaterialIcons name="handshake" size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                  <Text style={styles.modalPrimaryBtnText}>Partner With This Project</Text>
-                </TouchableOpacity>
+                {(() => {
+                  const isOwnModal = isProjectOwned(detailModalProject);
+                  const modalApp = getProjectApplication(detailModalProject);
+                  const isPendingModal = modalApp?.status === 'Pending' || modalApp?.status === 'Resubmitted';
+                  const needsRevisionModal = modalApp?.status === 'Revision Requested' || modalApp?.status === 'Needs Revision' || modalApp?.status === 'Rejected';
+
+                  if (isOwnModal) {
+                    return (
+                      <TouchableOpacity
+                        style={[styles.modalPrimaryBtn, { backgroundColor: '#166534' }]}
+                        onPress={() => {
+                          const targetId = detailModalProject.id;
+                          setDetailModalProject(null);
+                          navigation.navigate('Projects', { projectId: targetId });
+                        }}
+                      >
+                        <MaterialIcons name="folder-special" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                        <Text style={styles.modalPrimaryBtnText}>Open Project Workspace</Text>
+                      </TouchableOpacity>
+                    );
+                  }
+
+                  if (isPendingModal) {
+                    return (
+                      <TouchableOpacity
+                        style={[styles.modalPrimaryBtn, { backgroundColor: '#d97706' }]}
+                        onPress={() => {
+                          setDetailModalProject(null);
+                          navigation.navigate('Messages');
+                        }}
+                      >
+                        <MaterialIcons name="hourglass-top" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                        <Text style={styles.modalPrimaryBtnText}>Proposal Pending Review</Text>
+                      </TouchableOpacity>
+                    );
+                  }
+
+                  if (needsRevisionModal) {
+                    return (
+                      <TouchableOpacity
+                        style={[styles.modalPrimaryBtn, { backgroundColor: '#ea580c' }]}
+                        onPress={() => handleOpenProposal(detailModalProject)}
+                      >
+                        <MaterialIcons name="edit" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                        <Text style={styles.modalPrimaryBtnText}>Revise Proposal</Text>
+                      </TouchableOpacity>
+                    );
+                  }
+
+                  return (
+                    <TouchableOpacity
+                      style={[styles.modalPrimaryBtn, { backgroundColor: getProgramAccent(getProgramModule(detailModalProject) || 'Nutrition') }]}
+                      onPress={() => handleOpenProposal(detailModalProject)}
+                    >
+                      <MaterialIcons name="handshake" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                      <Text style={styles.modalPrimaryBtnText}>Partner With This Project</Text>
+                    </TouchableOpacity>
+                  );
+                })()}
               </View>
             </View>
           </View>
@@ -737,6 +867,20 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   moduleBadgeText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  ownerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#166534',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  ownerBadgeText: {
     color: '#ffffff',
     fontSize: 10,
     fontWeight: '800',

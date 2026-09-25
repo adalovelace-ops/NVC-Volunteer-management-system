@@ -259,19 +259,19 @@ function renderSvgChart(points: VolunteerReportChartPoint[]): string {
     const val = Math.round(step * gridMax);
     return `
       <line x1="${padLeft}" y1="${y}" x2="${width - padRight}" y2="${y}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4 4" />
-      <text x="${padLeft - 10}" y="${y + 4}" text-anchor="end" font-size="11" fill="#64748b" font-family="Inter, Arial, sans-serif">${val}</text>
+      <text x="${padLeft - 10}" y="${y + 4}" text-anchor="end" font-size="11" fill="#64748b" font-family="'Nunito', sans-serif">${val}</text>
     `;
   }).join('');
 
   // X axis labels
   const xLabels = coords.map(pt => `
-    <text x="${pt.x}" y="${height - 10}" text-anchor="middle" font-size="11" fill="#64748b" font-family="Inter, Arial, sans-serif">${escapeHtml(pt.label)}</text>
+    <text x="${pt.x}" y="${height - 10}" text-anchor="middle" font-size="11" fill="#64748b" font-family="'Nunito', sans-serif">${escapeHtml(pt.label)}</text>
   `).join('');
 
   // Points & tooltips
   const dots = coords.map(pt => `
     <circle cx="${pt.x}" cy="${pt.y}" r="4.5" fill="#ffffff" stroke="#216b35" stroke-width="2.5" />
-    <text x="${pt.x}" y="${pt.y - 8}" text-anchor="middle" font-size="10" font-weight="700" fill="#216b35" font-family="Inter, Arial, sans-serif">${pt.value}</text>
+    <text x="${pt.x}" y="${pt.y - 8}" text-anchor="middle" font-size="10" font-weight="700" fill="#216b35" font-family="'Nunito', sans-serif">${pt.value}</text>
   `).join('');
 
   return `
@@ -341,6 +341,9 @@ export function generateVolunteerReportHtml(data: VolunteerReportTemplateData): 
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Partner Quarterly Report - Volunteer List</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700;800;900&display=swap" rel="stylesheet">
 <style>
   :root {
     --green: #216b35;
@@ -357,7 +360,7 @@ export function generateVolunteerReportHtml(data: VolunteerReportTemplateData): 
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: 'Nunito', Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     font-size: 14px;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;

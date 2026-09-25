@@ -85,10 +85,19 @@ export function getAttachmentUris(
 }
 
 // Builds a short admin-friendly attachment label from a URI or data URI.
-export function getAttachmentLabel(value?: string | null): string {
+export function getAttachmentLabel(value?: string | null, fallbackLabel: string = 'Attachment'): string {
   const normalizedValue = (value || '').trim();
   if (!normalizedValue) {
-    return 'Attachment';
+    return fallbackLabel;
+  }
+
+  const nameMatch = normalizedValue.match(/;name=([^;]+)/i);
+  if (nameMatch?.[1]) {
+    try {
+      return decodeURIComponent(nameMatch[1]);
+    } catch {
+      return nameMatch[1];
+    }
   }
 
   const dataUriMatch = normalizedValue.match(DATA_URI_PATTERN);
@@ -104,9 +113,9 @@ export function getAttachmentLabel(value?: string | null): string {
   const lastSegment = segments[segments.length - 1] || pathWithoutQuery;
 
   try {
-    return decodeURIComponent(lastSegment) || 'Attachment';
+    return decodeURIComponent(lastSegment) || fallbackLabel;
   } catch {
-    return lastSegment || 'Attachment';
+    return lastSegment || fallbackLabel;
   }
 }
 
@@ -368,7 +377,12 @@ export async function pickDocumentFromDevice(): Promise<string | null> {
         }
         const reader = new FileReader();
         reader.onload = (event: any) => {
-          finish(event.target.result);
+          let dataUrl = event.target?.result as string;
+          if (file.name && typeof dataUrl === 'string' && dataUrl.startsWith('data:')) {
+            const encodedName = encodeURIComponent(file.name);
+            dataUrl = dataUrl.replace(';base64,', `;name=${encodedName};base64,`);
+          }
+          finish(dataUrl);
         };
         reader.onerror = () => {
           finish(null);

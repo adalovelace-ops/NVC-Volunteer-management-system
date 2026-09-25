@@ -5,6 +5,7 @@ import { isAbortLikeError } from '../utils/requestErrors';
 import { hashPassword, verifyPassword } from '../utils/security';
 import { sendGoogleCalendarSyncEmail } from '../utils/googleCalendarSync';
 import { getGoogleCalendarEventTemplateUrl } from '../utils/calendarSync';
+import { pushNotificationService } from '../services/PushNotificationService';
 
 // Safe Platform accessor for web environments
 function getPlatformOS(): string {
@@ -41,6 +42,7 @@ import {
   ProgramTrack,
   PublishedImpactReport,
   VolunteerProjectJoinRecord,
+  SignupConsent,
 } from './types';
 import { NVCSector, UserRole } from './types';
 
@@ -308,9 +310,12 @@ function connectSharedStorageSocket() {
 
   sharedStorageSocket.onmessage = event => {
     try {
-      const payload = JSON.parse(event.data) as { type: string; keys?: string[] };
-      const changedKeys = payload.keys || [];
-      if (payload.type !== 'storage.changed' || changedKeys.length === 0) {
+      const payload = JSON.parse(event.data) as { type: string; keys?: string[]; message?: any };
+      const changedKeys = payload.keys ? [...payload.keys] : [];
+      if (payload.type === 'message.changed' || payload.type === 'message.sent') {
+        changedKeys.push('messages');
+      }
+      if (changedKeys.length === 0) {
         return;
       }
 
@@ -587,8 +592,15 @@ function buildPartnerProposalCardMessageContent(
   extraData?: Record<string, unknown>
 ): string {
   const proposalDetails: Partial<PartnerProjectProposalDetails> = application.proposalDetails || {};
-  return `${PROPOSAL_CARD_MESSAGE_PREFIX}${JSON.stringify({
-    ...proposalDetails,
+  const cleanedAttachments = (proposalDetails.attachments || []).map(att => {
+    if (typeof att === 'object' && att && typeof (att as any).url === 'string' && (att as any).url.startsWith('data:')) {
+      return { ...att, url: '' };
+    }
+    return att;
+  });
+  const sanitizedDetails = { ...proposalDetails, attachments: cleanedAttachments };
+  const cardData = {
+    ...sanitizedDetails,
     proposedVolunteersNeeded: Number(proposalDetails.proposedVolunteersNeeded) || 0,
     requestedProgramModule:
       proposalDetails.requestedProgramModule ||
@@ -599,9 +611,15 @@ function buildPartnerProposalCardMessageContent(
     proposedById: partnerUser.id,
     proposedByName: partnerUser.name,
     applicationId: application.id,
-    timestamp: application.requestedAt || new Date().toISOString(),
+    timestamp: application.resubmittedAt || application.requestedAt || new Date().toISOString(),
     ...extraData,
-  })}`;
+  };
+  let cardJson = JSON.stringify(cardData);
+  const maxLen = 3900 - PROPOSAL_CARD_MESSAGE_PREFIX.length;
+  if (cardJson.length > maxLen) {
+    cardJson = cardJson.slice(0, maxLen);
+  }
+  return `${PROPOSAL_CARD_MESSAGE_PREFIX}${cardJson}`;
 }
 
 async function notifyAdminAboutPartnerProjectJoin(
@@ -629,7 +647,10 @@ async function notifyAdminAboutPartnerProjectJoin(
     ? ` (${partnerUser.email.trim()})`
     : '';
 
-  const proposalCardMessageId = application ? `prop-card-${application.id}` : undefined;
+  const isResubmission = application?.status === 'Resubmitted';
+  const proposalCardMessageId = application
+    ? (isResubmission ? `prop-card-${application.id}-${Date.now()}` : `prop-card-${application.id}`)
+    : undefined;
 
   await sendSystemMessage(
     partnerUser.id,
@@ -642,7 +663,9 @@ async function notifyAdminAboutPartnerProjectJoin(
 
   // Also send a lightweight confirmation back to the partner so they see a record in Messages.
   try {
-    const confirmMessageId = application ? `prop-confirm-${application.id}` : undefined;
+    const confirmMessageId = application
+      ? (isResubmission ? `prop-confirm-${application.id}-${Date.now()}` : `prop-confirm-${application.id}`)
+      : undefined;
     await sendSystemMessage(
       adminUser.id,
       partnerUser.id,
@@ -702,6 +725,17 @@ async function notifyPartnerAboutProjectJoinReview(
     } catch (msgErr) {
       console.warn('Failed sending partner revision request system message:', msgErr);
     }
+  } else if (application.status === 'Rejected') {
+    const projectTitle = application.proposalDetails?.proposedTitle || application.proposalDetails?.targetProjectTitle || requestedProgramModule || 'Program';
+    try {
+      await sendSystemMessage(
+        reviewedBy,
+        application.partnerUserId,
+        `Your proposal for "${projectTitle}" was rejected: "${reviewNotes || 'The proposal was not approved.'}". You can now edit and resubmit.`
+      );
+    } catch (msgErr) {
+      console.warn('Failed sending partner rejection system message:', msgErr);
+    }
   }
 
   if (application.status === 'Approved') {
@@ -728,27 +762,81 @@ async function notifyPartnerAboutProjectJoinReview(
   }
 }
 
+async function sendEmailNotificationAndCalendarSync(params: {
+  recipientEmail: string;
+  recipientName: string;
+  subject: string;
+  messageText: string;
+  eventDetails?: {
+    title: string;
+    description?: string;
+    startDate?: string;
+    endDate?: string;
+    location?: string;
+  };
+}): Promise<void> {
+  try {
+    await requestApiJson('/notify/gcal-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recipient_email: params.recipientEmail,
+        user_name: params.recipientName,
+        schedule_type: 'event',
+        calendar_url: 'https://calendar.google.com',
+        event_title: params.eventDetails?.title || params.subject,
+        event_date: params.eventDetails?.startDate || new Date().toISOString(),
+        location: params.eventDetails?.location || '',
+        details: params.messageText,
+        subject: params.subject,
+      }),
+    });
+  } catch (err) {
+    console.warn('[Notification] Failed to send email notification:', err);
+  }
+}
+
 async function notifyAdminAboutVolunteerProjectJoinRequest(
   projectId: string,
   volunteer: Pick<Volunteer, 'userId' | 'name' | 'email'>
 ): Promise<void> {
-  const [project, adminUser] = await Promise.all([
+  const [project, allUsers] = await Promise.all([
     getProject(projectId),
-    getPrimaryAdminUser(),
+    getAllUsers(),
   ]);
 
-  if (!project || !adminUser) {
+  if (!project) {
     return;
   }
 
-  const volunteerEmail = volunteer.email.trim()
+  const volunteerEmail = volunteer.email?.trim()
     ? ` (${volunteer.email.trim()})`
     : '';
-  await sendSystemMessage(
-    volunteer.userId,
-    adminUser.id,
-    `${volunteer.name}${volunteerEmail} requested to join "${project.title}". Review it in the Project Management Suite to approve or reject.`
-  );
+  const adminUsers = allUsers.filter(candidate => candidate.role === 'admin');
+  const notificationContent = `${volunteer.name}${volunteerEmail} requested to join "${project.title}". Review it in the Project Management Suite to approve or reject.`;
+
+  for (const admin of adminUsers) {
+    try {
+      await sendSystemMessage(
+        volunteer.userId,
+        admin.id,
+        notificationContent
+      );
+    } catch (err) {
+      console.warn('Failed to send admin notification message:', err);
+    }
+  }
+
+  try {
+    await pushNotificationService.showLocalNotification({
+      title: 'Volunteer Application Received',
+      body: `${volunteer.name} applied to join "${project.title}".`,
+      data: { projectId, volunteerId: volunteer.userId, type: 'volunteer_application' },
+      tag: `vol-apply-${projectId}-${volunteer.userId}`,
+    });
+  } catch (err) {
+    console.warn('Failed to dispatch volunteer join push notification:', err);
+  }
 }
 
 async function notifyVolunteerAboutProjectMatchDecision(
@@ -845,6 +933,49 @@ export async function notifyVolunteerAboutTaskUpdate(params: {
       : `"${params.task.title}" in "${params.event.title}" was updated. Current status: ${params.task.status}.`;
 
   await sendSystemMessage(senderId, recipientId, message);
+}
+
+export async function notifyVolunteerAboutAttendancePhotoDecision(params: {
+  eventTitle: string;
+  volunteerUserId?: string;
+  actorUserId?: string;
+  decision: 'accepted' | 'removed' | 'flagged';
+  reason?: string;
+}): Promise<void> {
+  const recipientId = params.volunteerUserId;
+  if (!recipientId) {
+    return;
+  }
+
+  const adminUser = await getPrimaryAdminUser();
+  const senderId = params.actorUserId || adminUser?.id;
+  if (!senderId || senderId === recipientId) {
+    return;
+  }
+
+  const message =
+    params.decision === 'accepted'
+      ? `Your attendance photo for "${params.eventTitle}" was accepted and verified.`
+      : params.decision === 'removed'
+      ? `Your attendance photo for "${params.eventTitle}" was removed${params.reason ? `: ${params.reason}` : '. Please re-submit a valid attendance photo.'}`
+      : `Your attendance photo for "${params.eventTitle}" was flagged${params.reason ? `: ${params.reason}` : '.'}`;
+
+  try {
+    await sendSystemMessage(senderId, recipientId, message);
+  } catch (err) {
+    console.warn('Failed to send attendance photo notification message:', err);
+  }
+
+  try {
+    await pushNotificationService.showLocalNotification({
+      title: params.decision === 'accepted' ? 'Attendance Photo Accepted' : 'Attendance Photo Update',
+      body: message,
+      data: { type: 'attendance_photo_decision', decision: params.decision },
+      tag: `attendance-photo-${params.decision}-${Date.now()}`,
+    });
+  } catch (err) {
+    console.warn('Failed to dispatch attendance photo push notification:', err);
+  }
 }
 
 // Extracts the Metro bundler host so native devices can resolve the backend URL.
@@ -1407,6 +1538,8 @@ function invalidateSharedStorageCache(keys?: string[]): void {
   if (!keys) {
     sharedStorageCacheTimestamps.clear();
     projectsSnapshotCache.clear();
+    messagesForUserCache.clear();
+    conversationCache.clear();
     return;
   }
 
@@ -1415,6 +1548,10 @@ function invalidateSharedStorageCache(keys?: string[]): void {
     if (!isLocalOnlyStorageKey(key)) {
       memoryStorageCache.delete(key);
     }
+  }
+  if (keys.includes('messages') || keys.includes(STORAGE_KEYS.MESSAGES)) {
+    messagesForUserCache.clear();
+    conversationCache.clear();
   }
   projectsSnapshotCache.clear();
 }
@@ -2630,26 +2767,45 @@ function normalizeProjectInternalTask(
   projectId: string
 ): ProjectInternalTask {
   const now = new Date().toISOString();
-  const assignedVolunteerIds = Array.from(
-    new Set(
-      [
-        ...(Array.isArray(task.assignedVolunteerIds) ? task.assignedVolunteerIds : []),
-        task.assignedVolunteerId,
-      ]
-        .map(value => String(value || '').trim())
-        .filter(Boolean)
-    )
-  );
-  const assignedVolunteerNames = Array.from(
-    new Set(
-      [
-        ...(Array.isArray(task.assignedVolunteerNames) ? task.assignedVolunteerNames : []),
-        task.assignedVolunteerName,
-      ]
-        .map(value => String(value || '').trim())
-        .filter(Boolean)
-    )
-  );
+
+  let assignedVolunteerIds: string[] = [];
+  let assignedVolunteerNames: string[] = [];
+
+  const rawSingleId = String(task.assignedVolunteerId || '').trim();
+  const rawSingleName = String(task.assignedVolunteerName || '').trim();
+
+  if (Array.isArray(task.assignedVolunteerIds)) {
+    assignedVolunteerIds = Array.from(
+      new Set(task.assignedVolunteerIds.map(v => String(v || '').trim()).filter(Boolean))
+    );
+    assignedVolunteerNames = Array.from(
+      new Set((task.assignedVolunteerNames || []).map(v => String(v || '').trim()).filter(Boolean))
+    );
+    // If assignedVolunteerId changed to something not in array, sync it
+    if (rawSingleId && !assignedVolunteerIds.includes(rawSingleId)) {
+      assignedVolunteerIds = [rawSingleId, ...assignedVolunteerIds];
+      if (rawSingleName) {
+        assignedVolunteerNames = [rawSingleName, ...assignedVolunteerNames];
+      }
+    }
+  } else if (rawSingleId) {
+    assignedVolunteerIds = [rawSingleId];
+    assignedVolunteerNames = rawSingleName ? [rawSingleName] : [];
+  }
+
+  // If task status was explicitly marked Unassigned and single ID was cleared, ensure lists are empty
+  if (task.status === 'Unassigned' && !rawSingleId) {
+    assignedVolunteerIds = [];
+    assignedVolunteerNames = [];
+  }
+
+  const nextStatus =
+    task.status === 'Completed'
+      ? 'Completed'
+      : assignedVolunteerIds.length > 0
+      ? (task.status === 'In Progress' ? 'In Progress' : 'Assigned')
+      : 'Unassigned';
+
   return {
     ...task,
     id: task.id || `task-${projectId}-${Date.now()}`,
@@ -2657,9 +2813,9 @@ function normalizeProjectInternalTask(
     description: task.description?.trim() || '',
     category: task.category?.trim() || 'General',
     priority: task.priority || 'Medium',
-    status: task.status || (assignedVolunteerIds.length > 0 ? 'Assigned' : 'Unassigned'),
+    status: nextStatus,
     assignedVolunteerId: assignedVolunteerIds[0] || undefined,
-    assignedVolunteerName: assignedVolunteerNames[0] || undefined,
+    assignedVolunteerName: assignedVolunteerNames[0] || (rawSingleId === assignedVolunteerIds[0] ? rawSingleName || undefined : undefined),
     assignedVolunteerIds: assignedVolunteerIds.length ? assignedVolunteerIds : undefined,
     assignedVolunteerNames: assignedVolunteerNames.length ? assignedVolunteerNames : undefined,
     isFieldOfficer: Boolean(task.isFieldOfficer),
@@ -2714,8 +2870,8 @@ function normalizeProjectRecord(project: Project): Project {
     category: normalizedCategory,
     programModule: normalizedProgramModule,
     parentProjectId: project.parentProjectId?.trim() || undefined,
-    joinedUserIds: project.isEvent ? (project.joinedUserIds || []) : [],
-    volunteers: project.isEvent ? (project.volunteers || []) : [],
+    joinedUserIds: project.joinedUserIds || [],
+    volunteers: project.volunteers || [],
     skillsNeeded: normalizeProjectSkillsNeeded(project, normalizedTasks),
     statusUpdates: project.statusUpdates || [],
     internalTasks: normalizedTasks,
@@ -2848,6 +3004,7 @@ export async function createUserAccount(input: {
   role: UserRole;
   userType: UserType;
   pillarsOfInterest: NVCSector[];
+  consent?: SignupConsent;
   partnerRegistration?: {
     organizationName: string;
     sectorType: PartnerSectorType;
@@ -2914,6 +3071,12 @@ export async function createUserAccount(input: {
     }
   }
 
+  if (input.role === 'volunteer' || input.role === 'partner') {
+    if (!input.consent?.accepted || !input.consent?.acceptedAt) {
+      throw new Error('Please review and accept the signup consent before continuing.');
+    }
+  }
+
   const users = await getStorageItem<User[]>(STORAGE_KEYS.USERS) || [];
   const existingEmailUser = normalizedEmail
     ? users.find(user => user.email?.trim().toLowerCase() === normalizedEmail)
@@ -2942,6 +3105,7 @@ export async function createUserAccount(input: {
     pillarsOfInterest: input.pillarsOfInterest,
     approvalStatus: input.role === 'admin' ? 'approved' : 'pending',
     createdAt,
+    consent: input.consent,
   };
 
   await saveUser(createdUser);
@@ -2986,6 +3150,26 @@ export async function createUserAccount(input: {
         registrationStatus: 'Pending',
         createdAt,
       });
+
+      // Notify all admins about new volunteer application
+      void (async () => {
+        try {
+          const allUsers = await getAllUsers();
+          const adminUsers = allUsers.filter(candidate => candidate.role === 'admin');
+          const notice = `${createdUser.name} submitted a volunteer registration application. Review it in Volunteer Management.`;
+          for (const admin of adminUsers) {
+            await sendSystemMessage(createdUser.id, admin.id, notice);
+          }
+          await pushNotificationService.showLocalNotification({
+            title: 'New Volunteer Application',
+            body: `${createdUser.name} applied to become a volunteer.`,
+            data: { userId: createdUser.id, type: 'volunteer_registration' },
+            tag: `vol-reg-${createdUser.id}`,
+          });
+        } catch (e) {
+          console.warn('Failed to notify admins of volunteer registration:', e);
+        }
+      })();
     } catch (error) {
       console.error('Error saving volunteer profile:', error);
       throw new Error(`Failed to create volunteer profile: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -3009,6 +3193,7 @@ export async function createUserAccount(input: {
         status: 'Pending',
         verificationStatus: 'Pending',
         createdAt,
+        consent: input.consent,
       });
     } catch (error) {
       console.error('Error saving partner profile:', error);
@@ -3073,14 +3258,14 @@ export async function cancelUserRegistration(userIdOrEmailOrPhone: string): Prom
   await setStorageItem(STORAGE_KEYS.PARTNERS, updatedPartners);
 
   // Remove partner applications
-  const partnerApps = (await getStorageItem<PartnerApplication[]>(STORAGE_KEYS.PARTNER_APPLICATIONS)) || [];
+  const partnerApps = (await getStorageItem<PartnerProjectApplication[]>(STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS)) || [];
   const updatedPartnerApps = partnerApps.filter(
     a =>
       a.partnerUserId !== targetId &&
       (!targetEmail || a.contactEmail?.trim().toLowerCase() !== targetEmail) &&
       (!targetPhone || normalizeAccountPhone(a.contactPhone) !== targetPhone)
   );
-  await setStorageItem(STORAGE_KEYS.PARTNER_APPLICATIONS, updatedPartnerApps);
+  await setStorageItem(STORAGE_KEYS.PARTNER_PROJECT_APPLICATIONS, updatedPartnerApps);
 }
 
 // Looks up a single user by id.
@@ -4425,6 +4610,37 @@ export async function setVolunteerAttendanceChecked(
   return updatedLog;
 }
 
+export async function setVolunteerAttendanceSafeguardingReview(
+  logId: string,
+  review: {
+    status: 'pending' | 'approved' | 'flagged';
+    reviewedByUserId: string;
+    flagReason?: string;
+    actionTaken?: string;
+  }
+): Promise<VolunteerTimeLog> {
+  const logs = (await getStorageItem<VolunteerTimeLog[]>(STORAGE_KEYS.VOLUNTEER_TIME_LOGS)) || [];
+  const existingLog = logs.find(log => log.id === logId);
+  if (!existingLog) {
+    throw new Error('Attendance log not found.');
+  }
+
+  const users = (await getStorageItem<User[]>(STORAGE_KEYS.USERS)) || [];
+  const reviewer = users.find(candidate => candidate.id === review.reviewedByUserId);
+  const updatedLog: VolunteerTimeLog = {
+    ...existingLog,
+    safeguardingStatus: review.status,
+    safeguardingReviewedAt: new Date().toISOString(),
+    safeguardingReviewedBy: review.reviewedByUserId,
+    safeguardingReviewedByName: reviewer?.name || 'Admin',
+    safeguardingFlagReason: review.flagReason,
+    safeguardingActionTaken: review.actionTaken,
+  };
+
+  await saveVolunteerTimeLog(updatedLog);
+  return updatedLog;
+}
+
 // Starts a volunteer time log for the selected project.
 export async function startVolunteerTimeLog(
   volunteerId: string,
@@ -4587,12 +4803,24 @@ export async function saveMessage(message: Message): Promise<void> {
     timestamp: Date.now(),
   });
 
-  const userCached = messagesForUserCache.get(message.senderId);
-  if (userCached) {
+  const senderCached = messagesForUserCache.get(message.senderId);
+  if (senderCached) {
     messagesForUserCache.set(message.senderId, {
-      data: [message, ...userCached.data.filter(m => m.id !== message.id)],
+      data: [message, ...senderCached.data.filter(m => m.id !== message.id)],
       timestamp: Date.now(),
     });
+  } else {
+    messagesForUserCache.delete(message.senderId);
+  }
+
+  const recipientCached = messagesForUserCache.get(message.recipientId);
+  if (recipientCached) {
+    messagesForUserCache.set(message.recipientId, {
+      data: [message, ...recipientCached.data.filter(m => m.id !== message.id)],
+      timestamp: Date.now(),
+    });
+  } else {
+    messagesForUserCache.delete(message.recipientId);
   }
 
   try {
@@ -4607,6 +4835,7 @@ export async function saveMessage(message: Message): Promise<void> {
 
   void fbSaveMessage(message).catch(() => {});
   notifyWebMessageUpdate();
+  notifyStorageChanged(['messages']);
 }
 
 export async function saveProjectGroupMessage(message: ProjectGroupMessage): Promise<void> {
@@ -4718,7 +4947,10 @@ export async function deleteMessage(messageId: string, senderId?: string, recipi
   notifyWebMessageUpdate();
 
   // Run backend and firebase delete concurrently with timeout to prevent lag
-  const backendPromise = requestApiJson(`/messages/${encodeURIComponent(messageId)}`, {
+  const deleteUrl = senderId
+    ? `/messages/${encodeURIComponent(messageId)}?user_id=${encodeURIComponent(senderId)}`
+    : `/messages/${encodeURIComponent(messageId)}`;
+  const backendPromise = requestApiJson(deleteUrl, {
     method: 'DELETE',
   });
   const fbPromise = Promise.race([
@@ -4955,6 +5187,12 @@ export async function saveVolunteerProjectMatch(match: VolunteerProjectMatch): P
     STORAGE_KEYS.VOLUNTEERS,
     STORAGE_KEYS.PROJECTS,
   ]);
+  notifyStorageChanged([
+    STORAGE_KEYS.VOLUNTEER_MATCHES,
+    STORAGE_KEYS.VOLUNTEER_PROJECT_JOINS,
+    STORAGE_KEYS.VOLUNTEERS,
+    STORAGE_KEYS.PROJECTS,
+  ]);
   if (match.status === 'Matched') {
     await attachVolunteerToProject(match.projectId, match.volunteerId);
   }
@@ -5021,6 +5259,14 @@ export async function requestVolunteerProjectJoin(
 
   if (existingMatch?.status === 'Completed') {
     throw new Error('You have already completed this program.');
+  }
+
+  const volunteersNeeded = typeof project.volunteersNeeded === 'number'
+    ? project.volunteersNeeded
+    : (project.volunteersNeeded ? parseInt(String(project.volunteersNeeded), 10) : 0);
+  const currentVolunteers = Math.max(project.volunteers?.length || 0, project.joinedUserIds?.length || 0);
+  if (volunteersNeeded > 0 && currentVolunteers >= volunteersNeeded) {
+    throw new Error('This event is full. All volunteer slots have been filled.');
   }
 
   const requestedMatch: VolunteerProjectMatch = {
@@ -5102,13 +5348,15 @@ export async function reviewVolunteerProjectMatch(
   try {
     const volunteer = await getVolunteer(payload.match.volunteerId);
     const volunteerUser = volunteer?.userId ? await getUser(volunteer.userId) : null;
-    await notifyVolunteerAboutProjectMatchDecision(
-      payload.match.projectId,
-      volunteer?.userId || '',
-      reviewedBy,
-      nextStatus,
-      'request'
-    );
+    if (nextStatus === 'Matched' || nextStatus === 'Rejected') {
+      await notifyVolunteerAboutProjectMatchDecision(
+        payload.match?.projectId || '',
+        volunteer?.userId || '',
+        reviewedBy,
+        nextStatus,
+        'request'
+      );
+    }
     if (nextStatus === 'Matched') {
       try {
         await reconcileApprovedVolunteerEventMemberships();
@@ -5119,6 +5367,7 @@ export async function reviewVolunteerProjectMatch(
       // Send Calendar Confirmation Email to Approved Volunteer
       void (async () => {
         try {
+          if (!payload.match?.projectId) return;
           const project = await getProject(payload.match.projectId);
           const recipientEmail = volunteer?.email || volunteerUser?.email;
           const recipientName = volunteer?.name || volunteerUser?.name || 'Volunteer';
@@ -5203,6 +5452,27 @@ export async function assignVolunteerToProject(
 
   await saveVolunteerProjectMatch(assignedMatch);
   await ensureVolunteerProjectJoinRecord(projectId, volunteerId, 'AdminMatch');
+
+  const nextVolunteers = Array.from(new Set([...(project.volunteers || []), volunteerId]));
+  const nextJoinedUserIds = volunteer.userId
+    ? Array.from(new Set([...(project.joinedUserIds || []), volunteer.userId]))
+    : project.joinedUserIds;
+
+  if (project.isEvent) {
+    await saveEvent({
+      ...project,
+      volunteers: nextVolunteers,
+      joinedUserIds: nextJoinedUserIds,
+      updatedAt: new Date().toISOString(),
+    });
+  } else {
+    await saveProject({
+      ...project,
+      volunteers: nextVolunteers,
+      joinedUserIds: nextJoinedUserIds,
+      updatedAt: new Date().toISOString(),
+    });
+  }
 
   try {
     await reconcileApprovedVolunteerEventMemberships();
@@ -5581,6 +5851,7 @@ export async function submitPartnerProgramProposal(
       },
       body: JSON.stringify({
         projectId: proposalProjectId,
+        applicationId: (options?.proposalDetails as any)?.applicationId || (options as any)?.applicationId,
         programModule: requestedProgramModule || undefined,
         partnerUserId: partnerUser.id,
         partnerName: partnerUser.name,
@@ -5659,6 +5930,7 @@ export async function reviewPartnerProjectApplication(
   if (status === 'Approved') {
     void (async () => {
       try {
+        if (!payload.application) return;
         const project = payload.project || (await getProject(payload.application.projectId));
         const partnerId = payload.application.partnerId || payload.application.partnerUserId;
         let partnerUser: User | null = null;
@@ -6360,6 +6632,17 @@ export async function joinProjectEvent(
   projectId: string,
   userId: string
 ): Promise<JoinProjectResult> {
+  const project = await getProject(projectId);
+  if (project) {
+    const volunteersNeeded = typeof project.volunteersNeeded === 'number'
+      ? project.volunteersNeeded
+      : (project.volunteersNeeded ? parseInt(String(project.volunteersNeeded), 10) : 0);
+    const currentVolunteers = Math.max(project.volunteers?.length || 0, project.joinedUserIds?.length || 0);
+    const isAlreadyJoined = (project.joinedUserIds || []).includes(userId) || (project.volunteers || []).includes(userId);
+    if (!isAlreadyJoined && volunteersNeeded > 0 && currentVolunteers >= volunteersNeeded) {
+      throw new Error('This event is full. All volunteer slots have been filled.');
+    }
+  }
   const payload = await requestApiJson<Partial<JoinProjectResult>>(
     `/projects/${encodeURIComponent(projectId)}/join`,
     {

@@ -95,7 +95,7 @@ DATA_QUALITY_CONSTRAINT_SPECS = [
     ("volunteer_event_joins", "volunteer_event_joins_participation_status_chk", "participation_status is null or participation_status in ('Active', 'Completed')"),
     ("volunteer_event_joins", "volunteer_event_joins_completed_by_len_chk", "completed_by is null or length(completed_by) <= 64"),
     ("partner_project_applications", "partner_project_applications_id_len_chk", "length(partner_project_applications_id) between 1 and 64"),
-    ("partner_project_applications", "partner_project_applications_status_chk", "status is null or status in ('Pending', 'Approved', 'Rejected')"),
+    ("partner_project_applications", "partner_project_applications_status_chk", "status is null or status in ('Pending', 'Approved', 'Rejected', 'Resubmitted', 'Revision Requested', 'Needs Revision', 'Revision')"),
     ("partner_project_applications", "partner_project_applications_partner_name_len_chk", "partner_name is null or length(partner_name) <= 120"),
     ("partner_project_applications", "partner_project_applications_partner_email_chk", "partner_email is null or partner_email = '' or (length(partner_email) <= 254 and partner_email ~* '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')"),
     ("partner_project_applications", "partner_project_applications_reviewed_by_len_chk", "reviewed_by is null or length(reviewed_by) <= 64"),

@@ -6,7 +6,7 @@ import type { PartnerProjectApplication, PartnerProjectProposalDetails } from '.
 
 interface ProposalCardProps {
   application: PartnerProjectApplication;
-  projectTitle: string;
+  projectTitle?: string;
   onPress?: () => void;
   onApprove?: (application: PartnerProjectApplication) => void;
   onReject?: (application: PartnerProjectApplication, notes: string) => void;
@@ -41,7 +41,18 @@ const getStatusIcon = (status: string) => {
   }
 };
 
-export default function ProposalCard({ application, projectTitle, onPress, onApprove, onReject, onRequestRevision, onEdit, compact = false, isAdmin = false, isVolunteer = false }: ProposalCardProps) {
+export default function ProposalCard({
+  application,
+  projectTitle = application.proposalDetails?.proposedTitle || application.projectTitle || '',
+  onPress,
+  onApprove,
+  onReject,
+  onRequestRevision,
+  onEdit,
+  compact = false,
+  isAdmin = false,
+  isVolunteer = false,
+}: ProposalCardProps) {
   const navigation = useNavigation<any>();
   const [showModal, setShowModal] = useState(false);
   const [showRejectInput, setShowRejectInput] = useState(false);

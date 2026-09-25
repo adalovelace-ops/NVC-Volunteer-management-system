@@ -571,7 +571,7 @@ function generateAnalyticsPdf(
         s += `    * Sector Type: ${p.sectorType || 'NGO'}\n`;
         s += `    * Contact: ${p.contactPerson || 'N/A'} (${p.contactEmail || 'N/A'})\n`;
         s += `    * Phone: ${p.contactPhone || 'N/A'}\n`;
-        s += `    * Location: ${p.location?.address || 'N/A'}\n`;
+        s += `    * Location: ${typeof p.location === 'object' ? (p.location as any)?.address : (p.location || p.address || p.cityMunicipality || 'N/A')}\n`;
         s += `    * Joined: ${p.createdAt ? new Date(p.createdAt).toLocaleDateString() : 'N/A'}\n\n`;
       });
     }
@@ -1006,7 +1006,6 @@ export default function AdminAnalyticsScreen() {
               <TouchableOpacity
                 onPress={() => void handleExportVolunteerReport()}
                 style={styles.cardExportIconBtn}
-                title="Export Volunteer Report PDF"
               >
                 <MaterialIcons name="picture-as-pdf" size={16} color="#166534" />
                 <Text style={styles.cardExportIconText}>Export PDF</Text>
@@ -1134,7 +1133,6 @@ export default function AdminAnalyticsScreen() {
                 <TouchableOpacity
                   onPress={() => void handleExportVolunteersPerEventReport()}
                   style={styles.cardExportIconBtn}
-                  title="Preview & Download Report PDF"
                 >
                   <MaterialIcons name="picture-as-pdf" size={16} color="#166534" />
                   <Text style={styles.cardExportIconText}>Export PDF</Text>
@@ -1252,7 +1250,6 @@ export default function AdminAnalyticsScreen() {
               <TouchableOpacity
                 onPress={() => void handleGenerateAnalyticsReport('skills_contributed')}
                 style={styles.cardExportIconBtn}
-                title="Download Skills Contributed PDF"
               >
                 <MaterialIcons name="picture-as-pdf" size={16} color="#166534" />
                 <Text style={styles.cardExportIconText}>Export PDF</Text>
@@ -1313,7 +1310,6 @@ export default function AdminAnalyticsScreen() {
               <TouchableOpacity
                 onPress={() => void handleGenerateAnalyticsReport('partner_sectors')}
                 style={styles.cardExportIconBtn}
-                title="Download Partner Sectors PDF"
               >
                 <MaterialIcons name="picture-as-pdf" size={16} color="#166534" />
                 <Text style={styles.cardExportIconText}>Export PDF</Text>
@@ -1348,7 +1344,6 @@ export default function AdminAnalyticsScreen() {
             <TouchableOpacity
               onPress={() => setShowProjectStatusOverviewPreview(true)}
               style={styles.cardExportIconBtn}
-              title="Download Project Status Overview PDF"
             >
               <MaterialIcons name="picture-as-pdf" size={16} color="#166534" />
               <Text style={styles.cardExportIconText}>Export PDF</Text>
@@ -1397,7 +1392,6 @@ export default function AdminAnalyticsScreen() {
             <TouchableOpacity
               onPress={() => setShowProjectTrackingPreview(true)}
               style={styles.cardExportIconBtn}
-              title="Preview and export projects tracking PDF"
             >
               <MaterialIcons name="picture-as-pdf" size={16} color="#166534" />
               <Text style={styles.cardExportIconText}>Preview PDF</Text>
