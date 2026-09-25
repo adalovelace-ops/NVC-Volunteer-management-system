@@ -42,6 +42,38 @@ os.makedirs(classes_dir, exist_ok=True)
 os.makedirs(dex_dir, exist_ok=True)
 os.makedirs(ASSETS_WWW, exist_ok=True)
 
+import socket
+def get_lan_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "192.168.1.17"
+
+env_file = os.path.join(ROOT, ".env")
+env_url = None
+if os.path.exists(env_file):
+    with open(env_file, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("VOLCRE_API_BASE_URL="):
+                val = line.split("=", 1)[1].strip()
+                if val:
+                    env_url = val
+                break
+
+target_url = os.environ.get("VOLCRE_API_BASE_URL") or env_url
+if not target_url:
+    lan_ip = os.environ.get("VOLCRE_LAN_IP") or get_lan_ip()
+    target_url = f"http://{lan_ip}:8000"
+
+target_url = target_url.rstrip("/")
+os.environ["VOLCRE_API_BASE_URL"] = target_url
+os.environ["VOLCRE_WEB_API_BASE_URL"] = target_url
+print(f"Target backend URL: {target_url}")
+
 print("Step 1: Building Vite production bundle...")
 cmd = ["npx", "vite", "build"]
 subprocess.run(cmd, cwd=ROOT, check=True, shell=True)

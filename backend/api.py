@@ -8,7 +8,7 @@ import secrets
 import ssl
 from email.message import EmailMessage
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 

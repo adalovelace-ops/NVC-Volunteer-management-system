@@ -13,6 +13,7 @@ import {
   useWindowDimensions,
   Image,
   Platform,
+  Linking,
 } from "react-native";
 import { format, parseISO } from "date-fns";
 import ModernTheme from "../utils/modernTheme";
@@ -130,6 +131,7 @@ type SignupVolunteerSheetState = {
   facebookUrl: string;
   messengerLink: string;
   validIdPhoto: string;
+  videoBriefingUrl?: string;
 };
 
 type SignupPartnerApplicationState = {
@@ -212,6 +214,7 @@ function createEmptySignupVolunteerSheet(): SignupVolunteerSheetState {
     facebookUrl: "",
     messengerLink: "",
     validIdPhoto: "",
+    videoBriefingUrl: "./videos/nvc-intro.mp4",
   };
 }
 
@@ -1528,6 +1531,7 @@ export default function LoginScreen() {
               ),
               facebookUrl: signupVolunteerSheet.facebookUrl.trim() || undefined,
               messengerLink: signupVolunteerSheet.messengerLink.trim() || undefined,
+              videoBriefingUrl: signupVolunteerSheet.videoBriefingUrl?.trim() || "./videos/nvc-intro.mp4",
             } as any
             : undefined,
       });
@@ -3124,16 +3128,44 @@ export default function LoginScreen() {
 
                           <Text style={styles.modalSectionLabel}>Orientation Video</Text>
                           <View style={styles.briefingVideoCard}>
-                            <View style={styles.briefingVideoPreview}>
-                              <MaterialIcons
-                                name="play-circle-outline"
-                                size={56}
-                                color="#fff"
-                              />
-                              <Text style={styles.briefingVideoPreviewText}>
-                                Watch NVC Introduction Video
-                              </Text>
-                            </View>
+                            {Platform.OS === "web" ? (
+                              <View style={styles.videoPlayerWrapper}>
+                                <video
+                                  controls
+                                  playsInline
+                                  preload="metadata"
+                                  controlsList="nodownload"
+                                  style={{
+                                    width: "100%",
+                                    maxHeight: 280,
+                                    borderRadius: 12,
+                                    backgroundColor: "#000",
+                                    display: "block",
+                                  }}
+                                  src="./videos/nvc-intro.mp4"
+                                >
+                                  <source src="./videos/nvc-intro.mp4" type="video/mp4" />
+                                  Your browser does not support the video tag.
+                                </video>
+                              </View>
+                            ) : (
+                              <TouchableOpacity
+                                style={styles.briefingVideoPreview}
+                                activeOpacity={0.85}
+                                onPress={() => {
+                                  Linking.openURL("./videos/nvc-intro.mp4").catch(() => {});
+                                }}
+                              >
+                                <MaterialIcons
+                                  name="play-circle-outline"
+                                  size={56}
+                                  color="#fff"
+                                />
+                                <Text style={styles.briefingVideoPreviewText}>
+                                  Watch NVC Introduction Video
+                                </Text>
+                              </TouchableOpacity>
+                            )}
                             <Text style={styles.briefingVideoTitle}>
                               About NVC Foundation, Inc.
                             </Text>
@@ -5003,6 +5035,13 @@ const styles = StyleSheet.create({
     borderColor: "#cbd5e1",
     borderRadius: 14,
     padding: 14,
+    marginBottom: 12,
+  },
+  videoPlayerWrapper: {
+    width: "100%",
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#000",
     marginBottom: 12,
   },
   briefingVideoPreview: {

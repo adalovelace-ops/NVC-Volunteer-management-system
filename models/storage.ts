@@ -1097,26 +1097,46 @@ function resolveNativeApiBaseUrl(configuredBaseUrl?: string): string {
   }
 
   if (getPlatformOS() === 'android') {
-    return 'http://10.0.2.2:8000';
+    return 'http://129.121.73.76';
   }
 
-  return 'http://127.0.0.1:8000';
+  return 'http://129.121.73.76';
 }
 
 // Returns the effective HTTP base URL used by the frontend storage layer.
 export function getApiBaseUrl(): string {
-  const configuredWebBaseUrl = getExpoExtraValue('webApiBaseUrl');
-  if (typeof document !== 'undefined') {
-    if (configuredWebBaseUrl && configuredWebBaseUrl.trim().length > 0) {
-      return configuredWebBaseUrl.trim().replace(/\/$/, '');
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const stored = localStorage.getItem('volcre_api_base_url');
+      if (stored && stored.trim().length > 0) {
+        return stored.trim().replace(/\/$/, '');
+      }
     }
+  } catch {}
 
-    const protocol = document.location.protocol || 'http:';
-    const host = document.location.hostname || '127.0.0.1';
-    return `${protocol}//${host}:8000`;
+  const configuredWebBaseUrl = getExpoExtraValue('webApiBaseUrl');
+  if (configuredWebBaseUrl && configuredWebBaseUrl.trim().length > 0) {
+    return configuredWebBaseUrl.trim().replace(/\/$/, '');
   }
 
   const configuredNativeBaseUrl = getExpoExtraValue('apiBaseUrl');
+  if (configuredNativeBaseUrl && configuredNativeBaseUrl.trim().length > 0) {
+    return configuredNativeBaseUrl.trim().replace(/\/$/, '');
+  }
+
+  if (typeof document !== 'undefined') {
+    const isFileProtocol = !document.location.protocol || document.location.protocol === 'file:';
+    if (!isFileProtocol && document.location.hostname) {
+      if (document.location.hostname === 'localhost' || document.location.hostname === '127.0.0.1') {
+        const protocol = document.location.protocol.startsWith('http') ? document.location.protocol : 'http:';
+        return `${protocol}//${document.location.hostname}:8000`;
+      }
+      const protocol = document.location.protocol.startsWith('http') ? document.location.protocol : 'http:';
+      const port = document.location.port ? `:${document.location.port}` : '';
+      return `${protocol}//${document.location.hostname}${port}`;
+    }
+  }
+
   return resolveNativeApiBaseUrl(configuredNativeBaseUrl);
 }
 
