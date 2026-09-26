@@ -799,8 +799,25 @@ export default function DashboardScreen({ navigation }: any) {
       } catch (err: any) {
         console.warn('Google Calendar fetch error:', err);
         if (active) {
-          setCalendarError(err.message || 'Failed to fetch events');
-          setGoogleEvents([]);
+          const errMsg = String(err.message || '');
+          const isBlocked = errMsg.includes('blocked') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('API key not valid');
+          if (isBlocked) {
+            setCalendarError('Google Calendar API restricted or not enabled. Showing internal events.');
+          } else {
+            setCalendarError(errMsg || 'Failed to fetch events');
+          }
+          const fallbackEvents = (projectsData || [])
+            .filter(p => p.startDate)
+            .map(p => ({
+              id: p.id,
+              summary: `[${p.isEvent ? 'Event' : 'Project'}] ${p.title}`,
+              description: p.description,
+              location: p.locationVenue || p.locationCity || p.location?.address,
+              start: p.startDate.includes('T') ? { dateTime: p.startDate } : { date: p.startDate.slice(0, 10) },
+              end: p.endDate?.includes('T') ? { dateTime: p.endDate } : { date: (p.endDate || p.startDate).slice(0, 10) },
+              isSystemEvent: true,
+            }));
+          setGoogleEvents(fallbackEvents);
         }
       } finally {
         if (active) {
