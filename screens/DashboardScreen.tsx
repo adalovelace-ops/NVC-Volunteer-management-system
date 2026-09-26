@@ -739,7 +739,7 @@ export default function DashboardScreen({ navigation }: any) {
   // Google Calendar Integration states
   const [calendarSettings, setCalendarSettings] = useState({
     calendarId: 'nvc4090@gmail.com',
-    apiKey: process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '',
+    apiKey: '',
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [tempCalendarId, setTempCalendarId] = useState('');
@@ -763,7 +763,7 @@ export default function DashboardScreen({ navigation }: any) {
             : storedId;
         setCalendarSettings({
           calendarId: effectiveId,
-          apiKey: storedKey || process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '',
+          apiKey: storedKey || '',
         });
       } catch (err) {
         console.error('Failed to load Google Calendar settings:', err);
@@ -772,13 +772,36 @@ export default function DashboardScreen({ navigation }: any) {
     loadSettings();
   }, []);
 
-  // Fetch events when month, calendarId, or apiKey change
+  // Fetch events when month, calendarId, apiKey, or projects change
   useEffect(() => {
     let active = true;
     const fetchGCalEvents = async () => {
       setIsLoadingEvents(true);
       setCalendarError(null);
       
+      const buildSystemEvents = () => {
+        return (projectsData || [])
+          .filter(p => p.startDate)
+          .map(p => ({
+            id: p.id,
+            summary: `[${p.isEvent ? 'Event' : 'Project'}] ${p.title}`,
+            description: p.description,
+            location: p.locationVenue || p.locationCity || p.location?.address,
+            start: p.startDate.includes('T') ? { dateTime: p.startDate } : { date: p.startDate.slice(0, 10) },
+            end: p.endDate?.includes('T') ? { dateTime: p.endDate } : { date: (p.endDate || p.startDate).slice(0, 10) },
+            isSystemEvent: true,
+          }));
+      };
+
+      if (!calendarSettings.apiKey) {
+        if (active) {
+          setCalendarError(null);
+          setGoogleEvents(buildSystemEvents());
+          setIsLoadingEvents(false);
+        }
+        return;
+      }
+
       const year = calendarMonth.getFullYear();
       const month = calendarMonth.getMonth();
       const timeMin = new Date(year, month - 1, 20).toISOString();
@@ -799,25 +822,8 @@ export default function DashboardScreen({ navigation }: any) {
       } catch (err: any) {
         console.warn('Google Calendar fetch error:', err);
         if (active) {
-          const errMsg = String(err.message || '');
-          const isBlocked = errMsg.includes('blocked') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('API key not valid');
-          if (isBlocked) {
-            setCalendarError('Google Calendar API restricted or not enabled. Showing internal events.');
-          } else {
-            setCalendarError(errMsg || 'Failed to fetch events');
-          }
-          const fallbackEvents = (projectsData || [])
-            .filter(p => p.startDate)
-            .map(p => ({
-              id: p.id,
-              summary: `[${p.isEvent ? 'Event' : 'Project'}] ${p.title}`,
-              description: p.description,
-              location: p.locationVenue || p.locationCity || p.location?.address,
-              start: p.startDate.includes('T') ? { dateTime: p.startDate } : { date: p.startDate.slice(0, 10) },
-              end: p.endDate?.includes('T') ? { dateTime: p.endDate } : { date: (p.endDate || p.startDate).slice(0, 10) },
-              isSystemEvent: true,
-            }));
-          setGoogleEvents(fallbackEvents);
+          setCalendarError(null);
+          setGoogleEvents(buildSystemEvents());
         }
       } finally {
         if (active) {
@@ -830,7 +836,7 @@ export default function DashboardScreen({ navigation }: any) {
     return () => {
       active = false;
     };
-  }, [calendarMonth, calendarSettings]);
+  }, [calendarMonth, calendarSettings, projectsData]);
 
   // Auto-select today or first day with events on initial fetch
   useEffect(() => {

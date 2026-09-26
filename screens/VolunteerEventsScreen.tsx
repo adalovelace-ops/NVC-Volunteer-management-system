@@ -227,7 +227,7 @@ export default function VolunteerEventsScreen() {
           !storedId || storedId === 'en.philippines#holiday@group.v.calendar.google.com'
             ? 'nvc4090@gmail.com'
             : storedId;
-        const apiKey = storedKey || process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '';
+        const apiKey = storedKey || '';
         
         if (apiKey) {
           const now = new Date();

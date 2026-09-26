@@ -177,7 +177,7 @@ export default function ProjectTimelineCalendarCard({
             : storedId;
         setCalendarSettings({
           calendarId: effectiveId,
-          apiKey: storedKey || process.env.GOOGLE_MAPS_WEB_API_KEY || process.env.VITE_GOOGLE_MAPS_WEB_API_KEY || '',
+          apiKey: storedKey || '',
         });
       } catch (err) {
         console.error('Failed to load Google Calendar settings:', err);
@@ -186,12 +186,34 @@ export default function ProjectTimelineCalendarCard({
     loadSettings();
   }, []);
 
-  // Fetch events when month, calendarId, or apiKey change
+  // Fetch events when month, calendarId, apiKey, or projects change
   useEffect(() => {
     let active = true;
     const fetchGCalEvents = async () => {
       setCalendarError(null);
       
+      const buildSystemEvents = () => {
+        return (projects || [])
+          .filter(p => p.startDate)
+          .map(p => ({
+            id: p.id,
+            summary: `[${p.isEvent ? 'Event' : 'Project'}] ${p.title}`,
+            description: p.description,
+            location: p.locationVenue || p.locationCity || p.location?.address,
+            start: p.startDate.includes('T') ? { dateTime: p.startDate } : { date: p.startDate.slice(0, 10) },
+            end: p.endDate?.includes('T') ? { dateTime: p.endDate } : { date: (p.endDate || p.startDate).slice(0, 10) },
+            isSystemEvent: true,
+          }));
+      };
+
+      if (!calendarSettings.apiKey) {
+        if (active) {
+          setCalendarError(null);
+          setGoogleEvents(buildSystemEvents());
+        }
+        return;
+      }
+
       const year = calendarDate.getFullYear();
       const month = calendarDate.getMonth();
       const timeMin = new Date(year, month - 1, 20).toISOString();
@@ -212,8 +234,8 @@ export default function ProjectTimelineCalendarCard({
       } catch (err: any) {
         console.warn('Google Calendar fetch error:', err);
         if (active) {
-          setCalendarError(err.message || 'Failed to fetch events');
-          setGoogleEvents([]);
+          setCalendarError(null);
+          setGoogleEvents(buildSystemEvents());
         }
       }
     };
@@ -222,7 +244,7 @@ export default function ProjectTimelineCalendarCard({
     return () => {
       active = false;
     };
-  }, [calendarDate, calendarSettings]);
+  }, [calendarDate, calendarSettings, projects]);
 
   const timelineEntries = useMemo(() => {
     const visibleProjectIds = projectFilterIds ? new Set(projectFilterIds) : null;
