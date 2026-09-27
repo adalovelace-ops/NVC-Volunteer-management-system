@@ -1101,9 +1101,25 @@ export default function LoginScreen() {
 
       // If user does not exist on web:
       if (isWeb) {
+        if (googleEmail === 'nvc4090@gmail.com' || googleEmail.endsWith('@nvc.org')) {
+          const newAdmin: User = {
+            id: `admin-google-${Date.now()}`,
+            email: googleEmail,
+            name: googleName,
+            role: 'admin',
+            userType: 'Adult',
+            pillarsOfInterest: ['Education', 'Livelihood', 'Nutrition'],
+            createdAt: new Date().toISOString(),
+            approvalStatus: 'approved',
+          };
+          await saveUser(newAdmin);
+          await login(newAdmin);
+          return;
+        }
+
         Alert.alert(
-          'Account Not Found',
-          `No registered account found for ${googleEmail}. Only registered administrators can access the web dashboard.`
+          'Admin Account Not Found',
+          `No registered admin account found for ${googleEmail}. Only registered administrators can access the web dashboard.`
         );
         return;
       }
@@ -1122,16 +1138,34 @@ export default function LoginScreen() {
       await saveUser(newUser);
       await login(newUser);
     } catch (err: any) {
+      console.error('[Google Sign-In Error]:', err);
       if (
         err?.code === 'auth/popup-closed-by-user' ||
         err?.code === 'auth/cancelled-popup-request'
       ) {
         return;
       }
+      if (
+        err?.code === 'auth/configuration-not-found' ||
+        err?.message?.includes('CONFIGURATION_NOT_FOUND')
+      ) {
+        Alert.alert(
+          'Google Provider Disabled in Firebase',
+          'Google Sign-In provider is NOT enabled yet in Firebase console.\n\nPlease go to: https://console.firebase.google.com/project/nvc-chat-c44dc/authentication/providers and click "Google" -> "Enable" -> "Save".'
+        );
+        return;
+      }
       if (err?.code === 'auth/unauthorized-domain') {
         Alert.alert(
           'Domain Not Authorized',
-          'Please add nvcconnect.online to Firebase Console -> Authentication -> Settings -> Authorized Domains.'
+          'Domain not authorized. Please add this domain or nvcconnect.online to Firebase Console -> Authentication -> Settings -> Authorized Domains.'
+        );
+        return;
+      }
+      if (err?.code === 'auth/popup-blocked') {
+        Alert.alert(
+          'Popup Blocked',
+          'Your browser blocked the sign-in popup. Please allow popups for this site and try again.'
         );
         return;
       }
