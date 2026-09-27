@@ -818,14 +818,6 @@ export default function ReportsScreen({ navigation, route }: any) {
           }
         }
 
-        setShowUploadModal(false);
-        const successMessage = user.role === 'volunteer'
-          ? hadActiveVolunteerLog
-            ? 'Your report was submitted for today\'s confirmed attendance.'
-            : 'Your report was submitted to the event reports.'
-          : 'Your report was submitted to the impact hub.';
-        
-        Alert.alert('Success', successMessage);
         // Reload reports in background without blocking
         void loadReportsCoalesced();
         return true;

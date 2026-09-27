@@ -6478,9 +6478,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 const styles = StyleSheet.create({
 
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: '#fff', width: '100%', height: '100%' },
 
-  layout: { flex: 1, flexDirection: 'row' },
+  layout: { flex: 1, flexDirection: 'row', width: '100%', height: '100%' },
 
   hidden: { display: 'none' },
 
@@ -6586,7 +6586,9 @@ const styles = StyleSheet.create({
 
     paddingVertical: 24,
 
-    gap: 16
+    gap: 16,
+
+    height: '100%',
 
   },
 
@@ -6670,7 +6672,9 @@ const styles = StyleSheet.create({
 
     borderRightWidth: 1,
 
-    borderRightColor: '#f1f5f9'
+    borderRightColor: '#f1f5f9',
+
+    height: '100%',
 
   },
 
@@ -6972,7 +6976,7 @@ const styles = StyleSheet.create({
 
 
 
-  detail: { flex: 1, backgroundColor: '#fff' },
+  detail: { flex: 1, backgroundColor: '#fff', height: '100%', width: '100%' },
 
   detailHeader: {
 

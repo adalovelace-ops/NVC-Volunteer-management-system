@@ -766,7 +766,7 @@ export function PartnerReportsDashboard({
   const programTitle =
     activeReport?.projectTitle ||
     (activeSummary?.project?.title) ||
-    '—';
+    (projects.length === 1 ? projects[0]?.title : projects.length > 1 ? `${projects.length} Active Projects` : '');
   const reportingPeriod = currentQuarter.periodLabel;
   const submittedOn = activeReport?.submittedAt
     ? new Date(activeReport.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -868,7 +868,7 @@ export function PartnerReportsDashboard({
     return `conic-gradient(${parts.join(', ')})`;
   }, [sectorData]);
 
-  // Real Report Documents for the Quarter (empty if no real files uploaded)
+  // Real Report Documents for the Quarter (includes partner submitted reports and attachments)
   const generatedDocuments = useMemo(() => {
     const list: Array<{
       id: string;
@@ -877,42 +877,78 @@ export function PartnerReportsDashboard({
       type: 'pdf' | 'excel' | 'doc';
       isVolunteerReport: boolean;
       url: string;
+      report?: SubmittedReport;
     }> = [];
 
-    quarterReports.forEach(report => {
+    const reportsForDocs = quarterReports.length > 0 ? quarterReports : ownReports;
+
+    reportsForDocs.forEach(report => {
+      const reportDateStr = report.submittedAt
+        ? new Date(report.submittedAt).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+          })
+        : 'Submitted';
+
+      list.push({
+        id: `doc-report-${report.id}`,
+        title: report.title
+          ? report.title.toLowerCase().endsWith('.pdf')
+            ? report.title
+            : `${report.title}.pdf`
+          : 'Partner Project Report.pdf',
+        size: `${reportDateStr} • ${report.status || 'Submitted'}`,
+        type: 'pdf',
+        isVolunteerReport: false,
+        url: report.mediaFile && !isImageMediaUri(report.mediaFile) ? report.mediaFile : '',
+        report,
+      });
+
       if (report.mediaFile && !isImageMediaUri(report.mediaFile)) {
         const isPdf = report.mediaFile.toLowerCase().endsWith('.pdf');
-        const isExcel = report.mediaFile.toLowerCase().endsWith('.xls') || report.mediaFile.toLowerCase().endsWith('.xlsx');
+        const isExcel =
+          report.mediaFile.toLowerCase().endsWith('.xls') ||
+          report.mediaFile.toLowerCase().endsWith('.xlsx');
         list.push({
           id: `doc-${report.id}`,
-          title: report.title || `${report.reportType || 'Report'}.pdf`,
-          size: 'Document',
+          title: `${report.title || 'Report'} Attachment`,
+          size: 'Attachment',
           type: isPdf ? 'pdf' : isExcel ? 'excel' : 'doc',
           isVolunteerReport: false,
           url: report.mediaFile,
+          report,
         });
       }
 
       (report.attachments || []).forEach((att: any, idx) => {
         const url = typeof att === 'string' ? att : att?.url;
-        const name = (typeof att === 'object' && att?.name) ? att.name : `${report.title || 'Attachment'} ${idx + 1}`;
+        const name =
+          typeof att === 'object' && att?.name
+            ? att.name
+            : `${report.title || 'Attachment'} ${idx + 1}`;
         if (url && !isImageMediaUri(url)) {
           const isPdf = url.toLowerCase().endsWith('.pdf') || name.toLowerCase().endsWith('.pdf');
-          const isExcel = url.toLowerCase().endsWith('.xls') || url.toLowerCase().endsWith('.xlsx') || name.toLowerCase().endsWith('.xls') || name.toLowerCase().endsWith('.xlsx');
+          const isExcel =
+            url.toLowerCase().endsWith('.xls') ||
+            url.toLowerCase().endsWith('.xlsx') ||
+            name.toLowerCase().endsWith('.xls') ||
+            name.toLowerCase().endsWith('.xlsx');
           list.push({
             id: `att-${report.id}-${idx}`,
             title: name,
-            size: (typeof att === 'object' && att?.size) ? att.size : 'Document',
+            size: typeof att === 'object' && att?.size ? att.size : 'Document',
             type: isPdf ? 'pdf' : isExcel ? 'excel' : 'doc',
             isVolunteerReport: false,
             url,
+            report,
           });
         }
       });
     });
 
     return list;
-  }, [quarterReports]);
+  }, [quarterReports, ownReports]);
 
   // Volunteer photos for the selected quarter
   const volunteerPhotos = useMemo(() => {
@@ -985,6 +1021,43 @@ export function PartnerReportsDashboard({
   const handleDownloadDoc = async (doc: any) => {
     if (doc.url) {
       Linking.openURL(doc.url).catch(() => Alert.alert('Unable to open report file'));
+      return;
+    }
+    if (doc.report) {
+      try {
+        const title = doc.report.title || 'Partner Report';
+        const dateStr = doc.report.submittedAt
+          ? new Date(doc.report.submittedAt).toISOString().split('T')[0]
+          : 'recent';
+        const pdfContent = [
+          `Title: ${doc.report.title}`,
+          `Submitted By: ${doc.report.submitterName}`,
+          `Role: ${doc.report.submitterRole}`,
+          `Status: ${doc.report.status}`,
+          `Submitted At: ${new Date(doc.report.submittedAt).toLocaleDateString()}`,
+          doc.report.projectTitle ? `Project: ${doc.report.projectTitle}` : '',
+          '',
+          'Description:',
+          doc.report.description || 'No description',
+          '',
+          doc.report.collaborationFeedback
+            ? `How Was the Collaboration?:\n${doc.report.collaborationFeedback}`
+            : '',
+          doc.report.volunteerPraise
+            ? `Praise for the Volunteers:\n${doc.report.volunteerPraise}`
+            : '',
+          doc.report.gratitudeNote ? `Thank You Note:\n${doc.report.gratitudeNote}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+
+        await downloadPdfFile(
+          `${title.replace(/[^a-zA-Z0-9_-]/g, '_')}_${dateStr}.pdf`,
+          buildTextPdf(title, pdfContent)
+        );
+      } catch (_e) {
+        onViewReport(doc.report);
+      }
       return;
     }
     if (doc.isVolunteerReport || doc.type === 'pdf') {
@@ -1068,12 +1141,8 @@ export function PartnerReportsDashboard({
             borderRadius: 16,
             borderWidth: 1,
             borderColor: '#e2e8f0',
-            padding: 20,
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: 16,
+            padding: 16,
+            gap: 14,
             shadowColor: '#000',
             shadowOffset: { width: 0, height: 1 },
             shadowOpacity: 0.04,
@@ -1081,25 +1150,26 @@ export function PartnerReportsDashboard({
             elevation: 1,
           }}
         >
-          {/* Left: Icon + Title + Org */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1, minWidth: 280 }}>
+          {/* Top Row: Icon + Title + Org */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <View
               style={{
-                width: 52,
-                height: 52,
-                borderRadius: 26,
+                width: 48,
+                height: 48,
+                borderRadius: 24,
                 backgroundColor: '#E8F5E9',
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderWidth: 1,
                 borderColor: '#C8E6C9',
+                flexShrink: 0,
               }}
             >
-              <MaterialIcons name="storefront" size={28} color="#2E7D32" />
+              <MaterialIcons name="storefront" size={26} color="#2E7D32" />
             </View>
-            <View style={{ gap: 2 }}>
+            <View style={{ flex: 1, gap: 2 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <Text style={{ fontSize: 17, fontWeight: '800', color: '#0f172a' }}>{reportTitle}</Text>
+                <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }}>{reportTitle}</Text>
                 <View
                   style={{
                     backgroundColor: hasQuarterReport ? '#DCFCE7' : '#F1F5F9',
@@ -1114,24 +1184,36 @@ export function PartnerReportsDashboard({
                 </View>
               </View>
               <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>{orgName}</Text>
-              <Text style={{ fontSize: 12, color: '#64748b' }}>{programTitle}</Text>
+              {Boolean(programTitle && programTitle !== '—' && programTitle.trim() !== '') && (
+                <Text style={{ fontSize: 12, color: '#64748b' }}>{programTitle}</Text>
+              )}
             </View>
           </View>
 
-          {/* Middle & Right Detail Blocks */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+          {/* Subtle separator */}
+          <View style={{ height: 1, backgroundColor: '#f1f5f9', marginHorizontal: -4 }} />
+
+          {/* Bottom Toolbar: Period & Actions */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: 12,
+            }}
+          >
             {/* Reporting Period */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, minWidth: 150 }}>
               <MaterialIcons name="event" size={20} color="#64748b" />
               <View>
-                <Text style={{ fontSize: 11, fontWeight: '600', color: '#94a3b8' }}>Reporting Period</Text>
+                <Text style={{ fontSize: 10, fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4 }}>Reporting Period</Text>
                 <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e293b' }}>{reportingPeriod}</Text>
               </View>
             </View>
 
-
             {/* Actions */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
               <TouchableOpacity
                 style={{
                   flexDirection: 'row',
@@ -1409,14 +1491,20 @@ export function PartnerReportsDashboard({
               ) : (
                 <View style={{ gap: 10 }}>
                   {generatedDocuments.map(doc => (
-                    <View
+                    <TouchableOpacity
                       key={doc.id}
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        paddingVertical: 4,
+                        paddingVertical: 6,
+                        paddingHorizontal: 4,
+                        borderRadius: 8,
                       }}
+                      activeOpacity={0.7}
+                      onPress={() =>
+                        doc.report ? onViewReport(doc.report) : void handleDownloadDoc(doc)
+                      }
                     >
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
                         <View
@@ -1438,24 +1526,30 @@ export function PartnerReportsDashboard({
                               color: doc.type === 'pdf' ? '#DC2626' : '#16A34A',
                             }}
                           >
-                            {doc.type === 'pdf' ? 'Abc' : 'Xl'}
+                            {doc.type === 'pdf' ? 'Pdf' : 'Xl'}
                           </Text>
                         </View>
                         <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }} numberOfLines={1}>
+                          <Text
+                            style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}
+                            numberOfLines={1}
+                          >
                             {doc.title}
                           </Text>
                           <Text style={{ fontSize: 11, color: '#64748b' }}>{doc.size}</Text>
                         </View>
                       </View>
                       <TouchableOpacity
-                        onPress={() => void handleDownloadDoc(doc)}
+                        onPress={(e: any) => {
+                          e?.stopPropagation?.();
+                          void handleDownloadDoc(doc);
+                        }}
                         activeOpacity={0.7}
                         style={{ padding: 4 }}
                       >
                         <MaterialIcons name="file-download" size={20} color="#64748b" />
                       </TouchableOpacity>
-                    </View>
+                    </TouchableOpacity>
                   ))}
                 </View>
               )}
@@ -1760,7 +1854,7 @@ export function PartnerReportsDashboard({
                 </View>
               ) : (
                 generatedDocuments.map(doc => (
-                  <View
+                  <TouchableOpacity
                     key={doc.id}
                     style={{
                       flexDirection: 'row',
@@ -1770,9 +1864,15 @@ export function PartnerReportsDashboard({
                       borderBottomWidth: 1,
                       borderBottomColor: '#f1f5f9',
                     }}
+                    activeOpacity={0.7}
+                    onPress={() =>
+                      doc.report ? onViewReport(doc.report) : void handleDownloadDoc(doc)
+                    }
                   >
                     <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>{doc.title}</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>
+                        {doc.title}
+                      </Text>
                       <Text style={{ fontSize: 11, color: '#64748b' }}>{doc.size}</Text>
                     </View>
                     <TouchableOpacity
@@ -1785,12 +1885,17 @@ export function PartnerReportsDashboard({
                         paddingVertical: 6,
                         borderRadius: 6,
                       }}
-                      onPress={() => void handleDownloadDoc(doc)}
+                      onPress={(e: any) => {
+                        e?.stopPropagation?.();
+                        void handleDownloadDoc(doc);
+                      }}
                     >
                       <MaterialIcons name="file-download" size={16} color="#334155" />
-                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155' }}>Download</Text>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#334155' }}>
+                        Download
+                      </Text>
                     </TouchableOpacity>
-                  </View>
+                  </TouchableOpacity>
                 ))
               )}
             </View>

@@ -111,13 +111,6 @@ export default function ProfileScreen() {
 
   // Admin accounts state
   const [adminUsers, setAdminUsers] = useState<User[]>([]);
-  const [showAddAdminModal, setShowAddAdminModal] = useState(false);
-  const [addAdminLoading, setAddAdminLoading] = useState(false);
-  const [newAdminName, setNewAdminName] = useState('');
-  const [newAdminEmail, setNewAdminEmail] = useState('');
-  const [newAdminPhone, setNewAdminPhone] = useState('');
-  const [newAdminPassword, setNewAdminPassword] = useState('Password123!');
-  const [adminSuccessNotice, setAdminSuccessNotice] = useState<string | null>(null);
 
   const loadAdminUsers = useCallback(async () => {
     if (user?.role !== 'admin') return;
@@ -129,55 +122,6 @@ export default function ProfileScreen() {
       console.error('Error loading admin users:', err);
     }
   }, [user?.role]);
-
-  const handleAddAdminAccount = async () => {
-    const name = newAdminName.trim();
-    const email = newAdminEmail.trim().toLowerCase();
-    const phone = newAdminPhone.trim();
-    const password = newAdminPassword.trim() || 'Password123!';
-
-    if (!name || !email) {
-      Alert.alert('Validation Error', 'Name and Email are required.');
-      return;
-    }
-
-    const existing = adminUsers.find(u => u.email?.toLowerCase() === email);
-    if (existing) {
-      Alert.alert('Duplicate Email', 'An account with this email address already exists.');
-      return;
-    }
-
-    try {
-      setAddAdminLoading(true);
-      const newAdmin: User = {
-        id: `admin-${Date.now()}`,
-        name,
-        email,
-        phone: phone || undefined,
-        password,
-        role: 'admin',
-        userType: 'Adult',
-        approvalStatus: 'approved',
-        approvedBy: user?.id,
-        approvedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
-      };
-
-      await saveUser(newAdmin);
-      setShowAddAdminModal(false);
-      setNewAdminName('');
-      setNewAdminEmail('');
-      setNewAdminPhone('');
-      setNewAdminPassword('Password123!');
-      setAdminSuccessNotice(`Admin account for ${name} created successfully.`);
-      setTimeout(() => setAdminSuccessNotice(null), 5000);
-      await loadAdminUsers();
-    } catch (err) {
-      Alert.alert(getRequestErrorTitle(err), getRequestErrorMessage(err, 'Failed to create admin account.'));
-    } finally {
-      setAddAdminLoading(false);
-    }
-  };
 
   // Loads the volunteer profile plus recognition details for volunteer accounts.
   const loadVolunteerProfile = useCallback(async () => {
@@ -788,16 +732,6 @@ export default function ProfileScreen() {
           <View style={styles.headerUnderline} />
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          {user?.role === 'admin' && (
-            <TouchableOpacity
-              style={styles.headerAddAdminButton}
-              onPress={() => setShowAddAdminModal(true)}
-              activeOpacity={0.85}
-            >
-              <MaterialIcons name="person-add" size={18} color="#ffffff" style={{ marginRight: 6 }} />
-              <Text style={styles.headerAddAdminButtonText}>Add Admin</Text>
-            </TouchableOpacity>
-          )}
           <TouchableOpacity style={styles.headerEditButton} onPress={openEditModal}>
             <MaterialIcons name="edit" size={18} color="#166534" style={{ marginRight: 6 }} />
             <Text style={styles.headerEditButtonText}>Edit Profile</Text>
@@ -1248,22 +1182,7 @@ export default function ProfileScreen() {
                   <Text style={styles.adminCountBadgeText}>{adminUsers.length}</Text>
                 </View>
               </View>
-              <TouchableOpacity
-                style={styles.addAdminButton}
-                onPress={() => setShowAddAdminModal(true)}
-                activeOpacity={0.85}
-              >
-                <MaterialIcons name="person-add" size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                <Text style={styles.addAdminButtonText}>Add Admin Account</Text>
-              </TouchableOpacity>
             </View>
-
-            {adminSuccessNotice && (
-              <View style={styles.adminSuccessBanner}>
-                <MaterialIcons name="check-circle" size={18} color="#166534" />
-                <Text style={styles.adminSuccessBannerText}>{adminSuccessNotice}</Text>
-              </View>
-            )}
 
             <View style={styles.adminGrid}>
               {adminUsers.map(admin => {
@@ -1485,116 +1404,6 @@ export default function ProfileScreen() {
         onClose={() => setShowLogoutModal(false)}
         onConfirm={logout}
       />
-
-      {/* Add Admin Account Modal */}
-      <Modal
-        visible={showAddAdminModal}
-        animationType="fade"
-        transparent
-        onRequestClose={() => !addAdminLoading && setShowAddAdminModal(false)}
-      >
-        <View style={styles.addAdminModalOverlay}>
-          <View style={styles.addAdminModalCard}>
-            <View style={styles.addAdminModalHeader}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <View style={styles.addAdminModalIconWrap}>
-                  <MaterialIcons name="shield" size={22} color="#166534" />
-                </View>
-                <View>
-                  <Text style={styles.addAdminModalTitle}>Add Admin Account</Text>
-                  <Text style={styles.addAdminModalSubtitle}>Web administrator access</Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                onPress={() => setShowAddAdminModal(false)}
-                disabled={addAdminLoading}
-                style={styles.addAdminModalClose}
-              >
-                <MaterialIcons name="close" size={20} color="#64748b" />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.addAdminModalBody} showsVerticalScrollIndicator={false}>
-              <Text style={styles.addAdminFieldLabel}>Full Name *</Text>
-              <TextInput
-                style={styles.addAdminInput}
-                placeholder="e.g. Maria Santos"
-                placeholderTextColor="#94a3b8"
-                value={newAdminName}
-                onChangeText={setNewAdminName}
-                editable={!addAdminLoading}
-              />
-
-              <Text style={styles.addAdminFieldLabel}>Email Address *</Text>
-              <TextInput
-                style={styles.addAdminInput}
-                placeholder="e.g. maria.santos@nvcc.org"
-                placeholderTextColor="#94a3b8"
-                value={newAdminEmail}
-                onChangeText={setNewAdminEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                editable={!addAdminLoading}
-              />
-
-              <Text style={styles.addAdminFieldLabel}>Phone Number (Optional)</Text>
-              <TextInput
-                style={styles.addAdminInput}
-                placeholder="0918 123 4567"
-                placeholderTextColor="#94a3b8"
-                value={newAdminPhone}
-                onChangeText={setNewAdminPhone}
-                keyboardType="phone-pad"
-                editable={!addAdminLoading}
-              />
-
-              <Text style={styles.addAdminFieldLabel}>Initial Password</Text>
-              <TextInput
-                style={styles.addAdminInput}
-                placeholder="Password123!"
-                placeholderTextColor="#94a3b8"
-                value={newAdminPassword}
-                onChangeText={setNewAdminPassword}
-                secureTextEntry
-                editable={!addAdminLoading}
-              />
-
-              <View style={styles.addAdminInfoNotice}>
-                <MaterialIcons name="info-outline" size={18} color="#0369a1" />
-                <Text style={styles.addAdminInfoNoticeText}>
-                  This admin will have full administrative privileges and can log in immediately via the web portal.
-                </Text>
-              </View>
-            </ScrollView>
-
-            <View style={styles.addAdminModalFooter}>
-              <TouchableOpacity
-                style={styles.addAdminCancelBtn}
-                onPress={() => setShowAddAdminModal(false)}
-                disabled={addAdminLoading}
-              >
-                <Text style={styles.addAdminCancelBtnText}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.addAdminSubmitBtn, addAdminLoading && { opacity: 0.7 }]}
-                onPress={handleAddAdminAccount}
-                disabled={addAdminLoading}
-                activeOpacity={0.85}
-              >
-                {addAdminLoading ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
-                  <>
-                    <MaterialIcons name="person-add" size={18} color="#ffffff" style={{ marginRight: 6 }} />
-                    <Text style={styles.addAdminSubmitBtnText}>Create Admin Account</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       {/* Edit Profile Modal */}
       <Modal visible={showEditModal} animationType="slide" onRequestClose={handleCancelEdit}>

@@ -175,9 +175,18 @@ export default function ScreenBrandHeader({
           });
           break;
         case 'report':
-          navigation.navigate('Reports', {
-            projectId: item.data?.projectId,
-          });
+          try {
+            const routeNames = navigation.getState?.()?.routeNames;
+            if (!routeNames || routeNames.includes('Reports')) {
+              navigation.navigate('Reports', {
+                projectId: item.data?.projectId,
+              });
+            } else {
+              navigation.navigate('Dashboard');
+            }
+          } catch {
+            navigation.navigate('Dashboard');
+          }
           break;
         case 'partner-application':
           navigation.navigate('Projects', {

@@ -380,9 +380,12 @@ export default function AdminNavigator() {
     );
   }, [unreadMessages, user?.id]);
 
+  const isMessagesRoute = tabBarProps?.state?.routes?.[tabBarProps.state.index]?.name === 'Messages';
+
   const navigator = (
     <Tab.Navigator
       tabBar={isWeb ? props => <SidebarCapture {...props} onPropsChange={(p, s) => { setTabBarProps(p); setTabBarSignature(s); }} /> : undefined}
+      sceneContainerStyle={isWeb ? { flex: 1, height: '100%', width: '100%' } : undefined}
       screenOptions={({ route }) => ({
         headerShown: !isWeb && route.name !== 'Messages',
         header: ({ options, navigation }) => (
@@ -762,7 +765,19 @@ export default function AdminNavigator() {
           )}
         </View>
         <View style={styles.webMainPane}>
-          <View style={[styles.webContent, { paddingHorizontal: collapsed ? CONTENT_GUTTER_COLLAPSED : CONTENT_GUTTER }]}>
+          <View
+            style={[
+              styles.webContent,
+              { paddingHorizontal: collapsed ? CONTENT_GUTTER_COLLAPSED : CONTENT_GUTTER },
+              isMessagesRoute && {
+                paddingVertical: 0,
+                paddingHorizontal: 0,
+                backgroundColor: '#ffffff',
+                overflow: 'hidden',
+                height: '100%',
+              },
+            ]}
+          >
             {navigator}
           </View>
         </View>

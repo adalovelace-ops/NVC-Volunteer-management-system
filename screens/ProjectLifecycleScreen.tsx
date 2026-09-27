@@ -8369,7 +8369,7 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                   </View>
                 </View>
 
-                {/* All day & Repeat Row */}
+                {/* All day Row */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 24, marginTop: 16 }}>
                   <TouchableOpacity
                     style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
@@ -8380,22 +8380,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                     </View>
                     <Text style={{ fontSize: 13, color: '#334155', fontWeight: '500' }}>All day event</Text>
                   </TouchableOpacity>
-
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Text style={{ fontSize: 13, color: '#334155', fontWeight: '500' }}>Repeat</Text>
-                    <View style={{ width: 160, height: 38, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, backgroundColor: '#fff', justifyContent: 'center' }}>
-                      <Picker
-                        selectedValue={eventRepeat}
-                        onValueChange={(val: string) => setEventRepeat(val)}
-                        style={{ width: '100%', height: '100%', color: '#0f172a' }}
-                      >
-                        <Picker.Item label="Does not repeat" value="Does not repeat" />
-                        <Picker.Item label="Daily" value="Daily" />
-                        <Picker.Item label="Weekly" value="Weekly" />
-                        <Picker.Item label="Monthly" value="Monthly" />
-                      </Picker>
-                    </View>
-                  </View>
                 </View>
               </View>
 
@@ -8483,78 +8467,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
             {/* Right Column (Sidebar Cards) */}
             <View style={{ flex: 1, gap: 20 }}>
 
-              {/* Card 1: Notifications */}
-              <View style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 16, padding: 20, backgroundColor: '#ffffff' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-                  <MaterialIcons name="notifications" size={18} color="#166534" />
-                  <Text style={{ fontSize: 15, fontWeight: '800', color: '#166534', letterSpacing: 0.5 }}>NOTIFICATIONS</Text>
-                </View>
-
-                <View style={{ gap: 12 }}>
-                  {eventNotifications.map((notif, index) => (
-                    <View key={index} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <View style={{ flex: 1.5, height: 40, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, backgroundColor: '#fff', justifyContent: 'center' }}>
-                        <Picker
-                          selectedValue={notif.type}
-                          onValueChange={(val) => {
-                            const updated = [...eventNotifications];
-                            updated[index].type = val;
-                            setEventNotifications(updated);
-                          }}
-                          style={{ width: '100%', height: '100%', color: '#0f172a' }}
-                        >
-                          <Picker.Item label="Send notification" value="Notification" />
-                          <Picker.Item label="Email" value="Email" />
-                        </Picker>
-                      </View>
-                      <TextInput
-                        style={[styles.formInput, { flex: 0.8, height: 40, marginBottom: 0, textAlign: 'center' }]}
-                        keyboardType="numeric"
-                        value={notif.value}
-                        onChangeText={(val) => {
-                          const updated = [...eventNotifications];
-                          updated[index].value = val;
-                          setEventNotifications(updated);
-                        }}
-                      />
-                      <View style={{ flex: 1.2, height: 40, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 8, backgroundColor: '#fff', justifyContent: 'center' }}>
-                        <Picker
-                          selectedValue={notif.unit}
-                          onValueChange={(val) => {
-                            const updated = [...eventNotifications];
-                            updated[index].unit = val;
-                            setEventNotifications(updated);
-                          }}
-                          style={{ width: '100%', height: '100%', color: '#0f172a' }}
-                        >
-                          <Picker.Item label="minutes" value="minutes" />
-                          <Picker.Item label="hours" value="hours" />
-                          <Picker.Item label="days" value="days" />
-                        </Picker>
-                      </View>
-                      <TouchableOpacity
-                        onPress={() => {
-                          setEventNotifications(eventNotifications.filter((_, idx) => idx !== index));
-                        }}
-                        style={{ padding: 4 }}
-                      >
-                        <MaterialIcons name="close" size={18} color="#ef4444" />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-
-                  <TouchableOpacity
-                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}
-                    onPress={() => {
-                      setEventNotifications([...eventNotifications, { type: 'Notification', value: '30', unit: 'minutes' }]);
-                    }}
-                  >
-                    <MaterialIcons name="add" size={18} color="#166534" />
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#166534' }}>Add another notification</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
               {/* Card 2: Volunteer Settings */}
               <View style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 16, padding: 20, backgroundColor: '#ffffff' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
@@ -8581,24 +8493,6 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
                       placeholderTextColor="#94a3b8"
                       value={String(projectDraft.volunteersNeeded || '')}
                       onChangeText={value => handleProjectDraftChange('volunteersNeeded', value)}
-                    />
-                  </View>
-
-                  <View style={{ gap: 4 }}>
-                    <Text style={{ fontSize: 13, color: '#334155', fontWeight: '700' }}>Application Required</Text>
-                    <CustomToggle
-                      value={(projectDraft as any).applicationRequired !== false}
-                      onValueChange={value => handleProjectDraftChange('applicationRequired' as any, value)}
-                      label="Yes, volunteers must apply"
-                    />
-                  </View>
-
-                  <View style={{ gap: 4 }}>
-                    <Text style={{ fontSize: 13, color: '#334155', fontWeight: '700' }}>Review Applications Before Approval</Text>
-                    <CustomToggle
-                      value={(projectDraft as any).reviewRequired !== false}
-                      onValueChange={value => handleProjectDraftChange('reviewRequired' as any, value)}
-                      label="Yes, review applications"
                     />
                   </View>
 
@@ -12681,71 +12575,79 @@ export default function ProjectLifecycleScreen({ navigation, route }: any) {
 
                   {/* Stats Box */}
                   {activeSelectedProject.isEvent ? (
-                    <View style={[premiumDetailsStyles.statsBox, { flex: isDesktop ? 1 : undefined, padding: isDesktop ? 16 : 12, gap: isDesktop ? 16 : 8 }]}>
-                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
-                        <View style={premiumDetailsStyles.statIconRow}>
-                          <MaterialIcons name="people" size={16} color="#166534" />
+                    <View style={[premiumDetailsStyles.statsBox, { flex: isDesktop ? 1 : undefined, width: isDesktop ? undefined : '100%', gap: isDesktop ? 16 : 12 }]}>
+                      <View style={{ flexDirection: 'row', gap: isDesktop ? 16 : 10, width: '100%' }}>
+                        <View style={premiumDetailsStyles.statCell}>
+                          <View style={premiumDetailsStyles.statIconRow}>
+                            <MaterialIcons name="people" size={16} color="#166534" />
+                          </View>
+                          <Text style={premiumDetailsStyles.statValue}>
+                            {volunteerEntries.length}
+                          </Text>
+                          <Text style={premiumDetailsStyles.statLabel}>Volunteer Applications</Text>
                         </View>
-                        <Text style={premiumDetailsStyles.statValue}>
-                          {volunteerEntries.length}
-                        </Text>
-                        <Text style={premiumDetailsStyles.statLabel}>Volunteer Applications</Text>
+                        <View style={premiumDetailsStyles.statCell}>
+                          <View style={premiumDetailsStyles.statIconRow}>
+                            <MaterialIcons name="description" size={16} color="#166534" />
+                          </View>
+                          <Text style={premiumDetailsStyles.statValue}>{projectReports.length}</Text>
+                          <Text style={premiumDetailsStyles.statLabel}>Submitted Reports</Text>
+                        </View>
                       </View>
-                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
-                        <View style={premiumDetailsStyles.statIconRow}>
-                          <MaterialIcons name="description" size={16} color="#166534" />
+                      <View style={{ flexDirection: 'row', gap: isDesktop ? 16 : 10, width: '100%' }}>
+                        <View style={premiumDetailsStyles.statCell}>
+                          <View style={premiumDetailsStyles.statIconRow}>
+                            <MaterialIcons name="assignment-turned-in" size={16} color="#166534" />
+                          </View>
+                          <Text style={premiumDetailsStyles.statValue}>
+                            {internalTasks.filter(t => getTaskAssignedVolunteerIds(t).length > 0).length}
+                          </Text>
+                          <Text style={premiumDetailsStyles.statLabel}>Assigned Tasks</Text>
                         </View>
-                        <Text style={premiumDetailsStyles.statValue}>{projectReports.length}</Text>
-                        <Text style={premiumDetailsStyles.statLabel}>Submitted Reports</Text>
-                      </View>
-                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
-                        <View style={premiumDetailsStyles.statIconRow}>
-                          <MaterialIcons name="assignment-turned-in" size={16} color="#166534" />
+                        <View style={premiumDetailsStyles.statCell}>
+                          <View style={premiumDetailsStyles.statIconRow}>
+                            <MaterialIcons name="assignment" size={16} color="#166534" />
+                          </View>
+                          <Text style={premiumDetailsStyles.statValue}>
+                            {internalTasks.filter(t => getTaskAssignedVolunteerIds(t).length === 0).length}
+                          </Text>
+                          <Text style={premiumDetailsStyles.statLabel}>Unassigned Tasks</Text>
                         </View>
-                        <Text style={premiumDetailsStyles.statValue}>
-                          {internalTasks.filter(t => getTaskAssignedVolunteerIds(t).length > 0).length}
-                        </Text>
-                        <Text style={premiumDetailsStyles.statLabel}>Assigned Tasks</Text>
-                      </View>
-                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
-                        <View style={premiumDetailsStyles.statIconRow}>
-                          <MaterialIcons name="assignment" size={16} color="#166534" />
-                        </View>
-                        <Text style={premiumDetailsStyles.statValue}>
-                          {internalTasks.filter(t => getTaskAssignedVolunteerIds(t).length === 0).length}
-                        </Text>
-                        <Text style={premiumDetailsStyles.statLabel}>Unassigned Tasks</Text>
                       </View>
                     </View>
                   ) : (
-                    <View style={[premiumDetailsStyles.statsBox, { flex: isDesktop ? 1 : undefined, padding: isDesktop ? 16 : 12, gap: isDesktop ? 16 : 8 }]}>
-                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
-                        <View style={premiumDetailsStyles.statIconRow}>
-                          <MaterialIcons name="account-circle" size={16} color="#166534" />
+                    <View style={[premiumDetailsStyles.statsBox, { flex: isDesktop ? 1 : undefined, width: isDesktop ? undefined : '100%', gap: isDesktop ? 16 : 12 }]}>
+                      <View style={{ flexDirection: 'row', gap: isDesktop ? 16 : 10, width: '100%' }}>
+                        <View style={premiumDetailsStyles.statCell}>
+                          <View style={premiumDetailsStyles.statIconRow}>
+                            <MaterialIcons name="account-circle" size={16} color="#166534" />
+                          </View>
+                          <Text style={premiumDetailsStyles.statValue} numberOfLines={1} ellipsizeMode="tail">{projectAuthorName}</Text>
+                          <Text style={premiumDetailsStyles.statLabel}>Author</Text>
                         </View>
-                        <Text style={premiumDetailsStyles.statValue} numberOfLines={1} ellipsizeMode="tail">{projectAuthorName}</Text>
-                        <Text style={premiumDetailsStyles.statLabel}>Author</Text>
+                        <View style={premiumDetailsStyles.statCell}>
+                          <View style={premiumDetailsStyles.statIconRow}>
+                            <MaterialIcons name="person" size={16} color="#166534" />
+                          </View>
+                          <Text style={premiumDetailsStyles.statValue}>{volunteersCount}</Text>
+                          <Text style={premiumDetailsStyles.statLabel}>Volunteers</Text>
+                        </View>
                       </View>
-                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
-                        <View style={premiumDetailsStyles.statIconRow}>
-                          <MaterialIcons name="person" size={16} color="#166534" />
+                      <View style={{ flexDirection: 'row', gap: isDesktop ? 16 : 10, width: '100%' }}>
+                        <View style={premiumDetailsStyles.statCell}>
+                          <View style={premiumDetailsStyles.statIconRow}>
+                            <MaterialIcons name="event" size={16} color="#166534" />
+                          </View>
+                          <Text style={premiumDetailsStyles.statValue}>{linkedEvents.length}</Text>
+                          <Text style={premiumDetailsStyles.statLabel}>Events</Text>
                         </View>
-                        <Text style={premiumDetailsStyles.statValue}>{volunteersCount}</Text>
-                        <Text style={premiumDetailsStyles.statLabel}>Volunteers</Text>
-                      </View>
-                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
-                        <View style={premiumDetailsStyles.statIconRow}>
-                          <MaterialIcons name="event" size={16} color="#166534" />
+                        <View style={premiumDetailsStyles.statCell}>
+                          <View style={premiumDetailsStyles.statIconRow}>
+                            <MaterialIcons name="description" size={16} color="#166534" />
+                          </View>
+                          <Text style={premiumDetailsStyles.statValue}>{projectReports.length}</Text>
+                          <Text style={premiumDetailsStyles.statLabel}>Reports</Text>
                         </View>
-                        <Text style={premiumDetailsStyles.statValue}>{linkedEvents.length}</Text>
-                        <Text style={premiumDetailsStyles.statLabel}>Events</Text>
-                      </View>
-                      <View style={[premiumDetailsStyles.statCell, { width: isDesktop ? '45%' : '48%' }]}>
-                        <View style={premiumDetailsStyles.statIconRow}>
-                          <MaterialIcons name="description" size={16} color="#166534" />
-                        </View>
-                        <Text style={premiumDetailsStyles.statValue}>{projectReports.length}</Text>
-                        <Text style={premiumDetailsStyles.statLabel}>Reports</Text>
                       </View>
                     </View>
                   )}
@@ -20292,22 +20194,19 @@ const premiumDetailsStyles = StyleSheet.create({
     fontWeight: '500',
   },
   statsBox: {
-    flex: 1,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     backgroundColor: '#f8fafc',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     padding: 16,
-    gap: 12,
     minWidth: 0,
   },
   statCell: {
     flex: 1,
-    minWidth: '42%',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 8,
+    minWidth: 0,
   },
   statIconRow: {
     width: 32,

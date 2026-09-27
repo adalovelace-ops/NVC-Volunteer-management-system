@@ -11,7 +11,6 @@ import PartnerProgramManagementScreen from '../screens/PartnerProgramManagementS
 import PartnerProjectsScreen from '../screens/PartnerProjectsScreen';
 import MappingScreen from '../screens/MappingScreen';
 import CommunicationHubScreen from '../screens/CommunicationHubScreen';
-import PartnerReportsScreen from '../screens/PartnerReportsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import ProjectLifecycleScreen from '../screens/ProjectLifecycleScreen';
 
@@ -29,7 +28,6 @@ export type PartnerTabParamList = {
         newProposalTitle?: string;
       }
     | undefined;
-  Reports: { projectId?: string } | undefined;
   ProjectLifecycle: { projectId?: string } | undefined;
   Profile: undefined;
 };
@@ -44,7 +42,6 @@ const getIconName = (routeName: keyof PartnerTabParamList) => {
     case 'Projects': return 'assignment';
     case 'Map': return 'map';
     case 'Messages': return 'mail';
-    case 'Reports': return 'insert-chart';
     case 'Profile': return 'person';
     default: return 'help-outline';
   }
@@ -132,7 +129,6 @@ export default function PartnerNavigator() {
       <Tab.Screen name="Projects" component={PartnerProjectsScreen} options={{ title: 'My Projects', tabBarLabel: 'Projects' }} />
       <Tab.Screen name="Map" component={MappingScreen} options={{ title: 'Impact Map' }} />
       <Tab.Screen name="Messages" component={CommunicationHubScreen} options={{ title: 'Messages', tabBarBadge: messageUnreadCount > 0 ? messageUnreadCount : undefined }} />
-      <Tab.Screen name="Reports" component={PartnerReportsScreen} options={{ title: 'Reports' }} />
       <Tab.Screen name="ProjectLifecycle" component={ProjectLifecycleScreen} options={{ title: 'Project Details', tabBarButton: () => null }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ title: 'Partner Profile' }} />
     </Tab.Navigator>

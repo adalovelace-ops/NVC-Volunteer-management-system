@@ -11,6 +11,7 @@ import {
   Alert,
   Image,
   Keyboard,
+  ActivityIndicator,
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import type {
@@ -82,6 +83,13 @@ export default function ReportUploadModal({
   const [pendingSafeguardingPhoto, setPendingSafeguardingPhoto] = useState('');
   const [showSafeguardingModal, setShowSafeguardingModal] = useState(false);
   const [safeguardingResult, setSafeguardingResult] = useState<SafeguardingReviewResult | null>(null);
+  const [submissionStatus, setSubmissionStatus] = useState<'idle' | 'loading' | 'success'>('idle');
+
+  useEffect(() => {
+    if (!visible) {
+      setSubmissionStatus('idle');
+    }
+  }, [visible]);
 
   const isVolunteer = userRole === 'volunteer';
   const isPartner = userRole === 'partner';
@@ -373,6 +381,7 @@ export default function ReportUploadModal({
     });
     setErrors({});
     setShowProjectPicker(false);
+    setSubmissionStatus('idle');
     setReportType(isVolunteer ? 'event_performance' : 'volunteer_engagement');
   }, [isVolunteer]);
 
@@ -447,6 +456,8 @@ export default function ReportUploadModal({
         return;
       }
 
+      setSubmissionStatus('loading');
+
       const reportData: Omit<
         SubmittedReport,
         'id' | 'submittedAt' | 'submittedBy' | 'submitterName' | 'submitterRole' | 'viewedBy'
@@ -471,11 +482,11 @@ export default function ReportUploadModal({
       Keyboard.dismiss();
       const submissionSucceeded = await onSubmit(reportData);
       if (submissionSucceeded === false) {
+        setSubmissionStatus('idle');
         return;
       }
 
-      handleReset();
-      onClose();
+      setSubmissionStatus('success');
       return;
     }
 
@@ -539,14 +550,15 @@ export default function ReportUploadModal({
       } : {}),
     };
 
+    setSubmissionStatus('loading');
     Keyboard.dismiss();
     const submissionSucceeded = await onSubmit(reportData);
     if (submissionSucceeded === false) {
+      setSubmissionStatus('idle');
       return;
     }
 
-    handleReset();
-    onClose();
+    setSubmissionStatus('success');
 
   }, [
     collaborationFeedback,
@@ -583,7 +595,7 @@ export default function ReportUploadModal({
         <View style={styles.partnerIntroContent}>
           <Text style={styles.partnerIntroTitle}>Approved Project Report</Text>
           <Text style={styles.partnerIntroText}>
-            Choose one approved project that your account proposed. The title, description, and metrics are generated automatically from linked events, volunteer event joins, volunteer reports, and verified time logs.
+            Choose one approved project that your account proposed. The title and description are generated automatically from linked events, volunteer event joins, volunteer reports, and verified time logs.
           </Text>
         </View>
       </View>
@@ -643,54 +655,6 @@ export default function ReportUploadModal({
         numberOfLines={6}
         placeholderTextColor="#cbd5e1"
       />
-
-      <Text style={styles.sectionTitle}>Auto-Generated Metrics</Text>
-      <View style={styles.metricsGrid}>
-        <View style={styles.metricInput}>
-          <Text style={styles.metricLabel}>Active Volunteers</Text>
-          <TextInput
-            style={styles.metricInputField}
-            value={String(selectedPartnerProjectSummary?.metrics.activeVolunteers || 0)}
-            editable={false}
-            placeholder="0"
-            placeholderTextColor="#cbd5e1"
-          />
-        </View>
-        <View style={styles.metricInput}>
-          <Text style={styles.metricLabel}>Volunteer Event Joins</Text>
-          <TextInput
-            style={styles.metricInputField}
-            value={String(
-              selectedPartnerProjectSummary?.metrics.volunteerEventJoins ??
-                selectedPartnerProjectSummary?.metrics.volunteerHours ??
-                0
-            )}
-            editable={false}
-            placeholder="0"
-            placeholderTextColor="#cbd5e1"
-          />
-        </View>
-        <View style={styles.metricInput}>
-          <Text style={styles.metricLabel}>Verified Attendance</Text>
-          <TextInput
-            style={styles.metricInputField}
-            value={String(selectedPartnerProjectSummary?.metrics.verifiedAttendance || 0)}
-            editable={false}
-            placeholder="0"
-            placeholderTextColor="#cbd5e1"
-          />
-        </View>
-        <View style={styles.metricInput}>
-          <Text style={styles.metricLabel}>Beneficiaries Served</Text>
-          <TextInput
-            style={styles.metricInputField}
-            value={String(selectedPartnerProjectSummary?.metrics.beneficiariesServed || 0)}
-            editable={false}
-            placeholder="0"
-            placeholderTextColor="#cbd5e1"
-          />
-        </View>
-      </View>
 
       <Text style={styles.sectionTitle}>Partner Feedback</Text>
       <Text style={styles.label}>How Was the Collaboration?</Text>
@@ -1081,6 +1045,52 @@ export default function ReportUploadModal({
               <Text style={styles.submitButtonText}>Submit Report</Text>
             </TouchableOpacity>
           </View>
+
+          {submissionStatus !== 'idle' && (
+            <View style={styles.submissionOverlay}>
+              <View style={styles.submissionCard}>
+                {submissionStatus === 'loading' ? (
+                  <View style={styles.submissionContent}>
+                    <View style={styles.submissionSpinnerWrap}>
+                      <ActivityIndicator size="large" color="#166534" />
+                    </View>
+                    <Text style={styles.submissionTitle}>
+                      {isPartner ? 'Submitting Partner Report...' : 'Submitting Report...'}
+                    </Text>
+                    <Text style={styles.submissionSubtitle}>
+                      {isPartner
+                        ? 'Saving project feedback and sending report to documents...'
+                        : 'Submitting report details and activity data...'}
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.submissionContent}>
+                    <View style={styles.submissionSuccessIconWrap}>
+                      <MaterialIcons name="check-circle" size={54} color="#166534" />
+                    </View>
+                    <Text style={styles.submissionTitle}>Report Submitted!</Text>
+                    <Text style={styles.submissionSubtitle}>
+                      {isPartner
+                        ? 'Your partner project report has been submitted and added to Report Documents.'
+                        : 'Your report was successfully submitted.'}
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.submissionDoneButton}
+                      onPress={() => {
+                        setSubmissionStatus('idle');
+                        handleReset();
+                        onClose();
+                      }}
+                    >
+                      <Text style={styles.submissionDoneButtonText}>
+                        {isPartner ? 'View in Report Documents' : 'Done'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            </View>
+          )}
         </View>
       </View>
 
@@ -1642,5 +1652,87 @@ const styles = StyleSheet.create({
   },
   safeguardingBadgeTextFlagged: {
     color: '#dc2626',
+  },
+  submissionOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+    padding: 20,
+    borderRadius: 20,
+  },
+  submissionCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    padding: 28,
+    width: '100%',
+    maxWidth: 380,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  submissionContent: {
+    alignItems: 'center',
+    width: '100%',
+    gap: 12,
+  },
+  submissionSpinnerWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#f0fdf4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  submissionSuccessIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#f0fdf4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+  },
+  submissionTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0f172a',
+    textAlign: 'center',
+  },
+  submissionSubtitle: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: '#64748b',
+    textAlign: 'center',
+    paddingHorizontal: 8,
+  },
+  submissionDoneButton: {
+    marginTop: 12,
+    backgroundColor: '#166534',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    width: '100%',
+    alignItems: 'center',
+  },
+  submissionDoneButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
   },
 });

@@ -444,7 +444,11 @@ export default function DashboardScreen({ navigation }: any) {
 
       setUserStats({ total: users.length });
 
-      const projectNamesById = new Map(projects.map(project => [project.id, project.title]));
+      const projectNamesById = new Map([
+        ...projects.map(project => [project.id, project.title] as [string, string]),
+        ...(events || []).map(event => [event.id, event.title] as [string, string]),
+      ]);
+
       const embeddedUpdates = projects.flatMap(project =>
         (project.statusUpdates || []).map(update => ({
           ...update,
@@ -454,12 +458,80 @@ export default function DashboardScreen({ navigation }: any) {
       const uniqueUpdates = new Map(
         [...statusUpdates, ...embeddedUpdates].map(update => [update.id, update])
       );
-      const allUpdates = Array.from(uniqueUpdates.values())
-        .map(update => ({
-          ...update,
-          projectName: projectNamesById.get(update.projectId) || 'Unknown Project',
-        }))
-        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      const statusActivities = Array.from(uniqueUpdates.values()).map(update => ({
+        ...update,
+        id: update.id,
+        type: 'status_update',
+        projectName: projectNamesById.get(update.projectId) || 'Project',
+        description: update.description || 'Status updated',
+        updatedAt: update.updatedAt,
+        icon: 'update',
+        iconColor: '#166534',
+        targetTab: 'Projects',
+      }));
+
+      const volunteerJoinActivities = (volunteerProjectJoins || []).map(join => {
+        const projectName = projectNamesById.get(join.projectId) || 'Event';
+        const volunteerName = join.volunteerName || 'Volunteer';
+        return {
+          id: join.id || `join-${join.projectId}-${join.volunteerId}`,
+          type: 'volunteer_join',
+          projectId: join.projectId,
+          projectName,
+          description: `${volunteerName} joined ${projectName}`,
+          updatedAt: join.joinedAt,
+          icon: 'how-to-reg',
+          iconColor: '#16a34a',
+          targetTab: 'Projects',
+        };
+      });
+
+      const existingJoinKeys = new Set(
+        (volunteerProjectJoins || []).map(j => `${j.projectId}_${j.volunteerId}`)
+      );
+      const matchActivities = (volunteerMatches || [])
+        .filter(m => !existingJoinKeys.has(`${m.projectId}_${m.volunteerId}`))
+        .map(match => {
+          const projectName = projectNamesById.get(match.projectId) || 'Event';
+          const volunteer = (volunteers || []).find(v => v.id === match.volunteerId);
+          const volunteerName = volunteer?.name || 'Volunteer';
+          return {
+            id: match.id || `match-${match.projectId}-${match.volunteerId}`,
+            type: 'volunteer_match',
+            projectId: match.projectId,
+            projectName,
+            description: `${volunteerName} joined ${projectName}`,
+            updatedAt: match.matchedAt || match.requestedAt || new Date().toISOString(),
+            icon: 'how-to-reg',
+            iconColor: '#16a34a',
+            targetTab: 'Projects',
+          };
+        });
+
+      const partnerProposalActivities = (partnerProjectApplications || []).map(app => {
+        const proposedTitle = app.proposalDetails?.proposedTitle;
+        const projectName = proposedTitle || projectNamesById.get(app.projectId) || 'Partner Proposal';
+        const partnerName = app.partnerName || 'Partner';
+        const statusLabel = app.status ? ` (${app.status})` : '';
+        return {
+          id: app.id || `app-${app.projectId}-${app.partnerUserId}`,
+          type: 'partner_proposal',
+          projectId: app.projectId,
+          projectName,
+          description: `${partnerName} submitted proposal${statusLabel}`,
+          updatedAt: app.requestedAt || (app as any).createdAt || new Date().toISOString(),
+          icon: 'description',
+          iconColor: '#2563eb',
+          targetTab: 'Partners',
+        };
+      });
+
+      const allUpdates = [
+        ...statusActivities,
+        ...volunteerJoinActivities,
+        ...matchActivities,
+        ...partnerProposalActivities,
+      ].sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
 
       setRecentUpdates(allUpdates.slice(0, 6));
       setAllActivityUpdates(allUpdates);
@@ -1274,17 +1346,20 @@ export default function DashboardScreen({ navigation }: any) {
                   style={styles.activityItem}
                   activeOpacity={0.7}
                   onPress={() => {
-                    if (update.projectId && navigation) {
+                    if (!navigation) return;
+                    if (update.targetTab === 'Partners') {
+                      navigation.navigate('Partners');
+                    } else if (update.projectId) {
                       navigation.navigate('Projects', { projectId: update.projectId });
                     }
                   }}
                 >
-                  <View style={styles.activityIcon}>
-                    <MaterialIcons name="update" size={16} color="#166534" />
+                  <View style={[styles.activityIcon, update.iconColor ? { backgroundColor: `${update.iconColor}18` } : null]}>
+                    <MaterialIcons name={(update.icon as any) || 'update'} size={16} color={update.iconColor || '#166534'} />
                   </View>
                   <View style={styles.activityCopy}>
                     <Text style={styles.activityText} numberOfLines={2}>
-                      <Text style={styles.activityProject}>{update.projectName || 'Project'}: </Text>
+                      <Text style={styles.activityProject}>{update.projectName || 'Activity'}: </Text>
                       {update.description || 'Status updated'}
                     </Text>
                     <Text style={styles.activityTime}>{formatShortDate(update.updatedAt)}</Text>
@@ -1547,17 +1622,20 @@ export default function DashboardScreen({ navigation }: any) {
                     activeOpacity={0.7}
                     onPress={() => {
                       setShowAllActivityModal(false);
-                      if (update.projectId && navigation) {
+                      if (!navigation) return;
+                      if (update.targetTab === 'Partners') {
+                        navigation.navigate('Partners');
+                      } else if (update.projectId) {
                         navigation.navigate('Projects', { projectId: update.projectId });
                       }
                     }}
                   >
-                    <View style={styles.allActivityItemIcon}>
-                      <MaterialIcons name="update" size={18} color="#166534" />
+                    <View style={[styles.allActivityItemIcon, update.iconColor ? { backgroundColor: `${update.iconColor}18` } : null]}>
+                      <MaterialIcons name={(update.icon as any) || 'update'} size={18} color={update.iconColor || '#166534'} />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.allActivityItemProject} numberOfLines={1}>
-                        {update.projectName || 'Project'}
+                        {update.projectName || 'Activity'}
                       </Text>
                       <Text style={styles.allActivityItemDesc} numberOfLines={2}>
                         {update.description || 'Status updated'}

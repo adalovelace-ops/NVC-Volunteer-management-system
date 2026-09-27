@@ -37,7 +37,7 @@ import { NVCSector, Partner, User, UserRole, UserType, Volunteer } from '../mode
 import { isImageMediaUri, openAttachmentUri, getAttachmentLabel } from '../utils/media';
 import { getRequestErrorMessage, getRequestErrorTitle } from '../utils/requestErrors';
 
-const roleOptions: UserRole[] = ['admin', 'partner', 'volunteer'];
+const roleOptions: UserRole[] = ['partner', 'volunteer'];
 
 export default function UserManagementScreen() {
   const { user, isAdmin } = useAuth();
@@ -142,12 +142,12 @@ export default function UserManagementScreen() {
     setSelectedUser(null);
   };
 
-  const openAddModal = (initialRole: UserRole = 'admin') => {
+  const openAddModal = (initialRole: UserRole = 'volunteer') => {
     setNameDraft('');
     setEmailDraft('');
     setPhoneDraft('');
     setPasswordDraft('Password123!');
-    setRoleDraft(initialRole);
+    setRoleDraft(initialRole === 'admin' ? 'volunteer' : initialRole);
     setUserTypeDraft('Adult');
     setPillarsDraft([]);
     setShowAddModal(true);
@@ -396,9 +396,9 @@ export default function UserManagementScreen() {
             </View>
           </View>
           <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.primaryAddAdminButton} onPress={() => openAddModal('admin')} activeOpacity={0.85}>
-              <MaterialIcons name="shield" size={18} color="#ffffff" />
-              <Text style={styles.primaryAddButtonText}>Add Admin</Text>
+            <TouchableOpacity style={styles.primaryAddButton} onPress={() => openAddModal('volunteer')} activeOpacity={0.85}>
+              <MaterialIcons name="add" size={20} color="#ffffff" />
+              <Text style={styles.primaryAddButtonText}>Add New User</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondaryExportButton} onPress={handleExportCSV} activeOpacity={0.85}>
               <MaterialIcons name="file-download" size={18} color="#475569" />
@@ -804,7 +804,7 @@ export default function UserManagementScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContentCard}>
             <View style={styles.modalHeaderBar}>
-              <Text style={styles.modalHeadingTitle}>{roleDraft === 'admin' ? 'Add Admin Account' : 'Add New User'}</Text>
+              <Text style={styles.modalHeadingTitle}>Add New User</Text>
               <TouchableOpacity onPress={closeAddModal}>
                 <MaterialIcons name="close" size={22} color="#64748b" />
               </TouchableOpacity>
@@ -850,7 +850,7 @@ export default function UserManagementScreen() {
                 <Text style={styles.cancelFormButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.submitFormButton} onPress={handleAddUser}>
-                <Text style={styles.submitFormButtonText}>{roleDraft === 'admin' ? 'Create Admin Account' : 'Create User'}</Text>
+                <Text style={styles.submitFormButtonText}>Create User</Text>
               </TouchableOpacity>
             </View>
           </View>

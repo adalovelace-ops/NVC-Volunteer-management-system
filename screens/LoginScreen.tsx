@@ -530,6 +530,7 @@ export default function LoginScreen() {
   const yearPickerListRef = useRef<ScrollView | null>(null);
   const { login } = useAuth();
   const mountedRef = useRef(true);
+  const signupCancelledRef = useRef(false);
   const visibleDemoAccounts = getVisibleDemoAccounts(isWeb, selectedMobileRole);
 
   useEffect(() => {
@@ -669,22 +670,38 @@ export default function LoginScreen() {
       try {
         setBackendStatus("checking");
         setBackendMessage("Checking backend and Supabase connection...");
-        const response = await fetch(`${getApiBaseUrl()}/db-health`, {
+        let response = await fetch(`${getApiBaseUrl()}/db-health`, {
           signal: controller.signal,
-        });
-        const payload = (await response.json().catch(() => null)) as {
-          status?: string;
-          mode?: string;
-          detail?: string;
-          available?: boolean;
-          error?: string;
-        } | null;
+        }).catch(() => null);
+
+        let payload = response && response.ok
+          ? ((await response.json().catch(() => null)) as {
+              status?: string;
+              mode?: string;
+              detail?: string;
+              available?: boolean;
+              error?: string;
+            } | null)
+          : null;
+
+        // Fallback check to /health if /db-health was not ok
+        if (!payload || payload.status !== "ok" || payload.available === false) {
+          const healthRes = await fetch(`${getApiBaseUrl()}/health`, {
+            signal: controller.signal,
+          }).catch(() => null);
+          if (healthRes && healthRes.ok) {
+            const healthPayload = await healthRes.json().catch(() => null);
+            if (healthPayload?.status === "ok") {
+              payload = { status: "ok", available: true };
+            }
+          }
+        }
 
         if (
-          !response.ok ||
+          !payload ||
           payload?.status !== "ok" ||
-          payload?.mode !== "postgres" ||
-          payload?.available === false
+          payload?.available === false ||
+          (payload?.mode && payload?.mode !== "postgres")
         ) {
           throw new Error(
             payload?.detail ||
@@ -697,7 +714,7 @@ export default function LoginScreen() {
           slowRetryCount = 0;
           setBackendStatus("online");
           setBackendMessage(
-            `Backend connected to Postgres: ${getApiBaseUrl()}`,
+            `Backend connected: ${getApiBaseUrl()}`,
           );
         }
       } catch (error) {
@@ -1075,9 +1092,9 @@ export default function LoginScreen() {
   const openSignupModal = () => {
     resetSignupForm();
     if (isWeb) {
-      setSignupRole("admin");
-      setSignupUserType("Adult");
-      setSignupStep("details");
+      setSignupRole("volunteer");
+      setSignupUserType("Student");
+      setSignupStep("role");
     }
     if (!isWeb && selectedMobileRole) {
       setSignupRole(selectedMobileRole);
@@ -1460,10 +1477,25 @@ export default function LoginScreen() {
     }
 
     try {
+      signupCancelledRef.current = false;
       setSignupLoading(true);
       
-      // Allow visual loading modal to be clearly seen
-      await new Promise((resolve) => setTimeout(resolve, 1400));
+      // Allow visual loading modal to be clearly seen with cancellation checks
+      const delayInterval = 100;
+      let elapsed = 0;
+      while (elapsed < 1400) {
+        if (signupCancelledRef.current) {
+          setSignupLoading(false);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, delayInterval));
+        elapsed += delayInterval;
+      }
+
+      if (signupCancelledRef.current) {
+        setSignupLoading(false);
+        return;
+      }
 
       const createdUser = await createUserAccount({
         name: signupName,
@@ -1536,6 +1568,19 @@ export default function LoginScreen() {
             : undefined,
       });
 
+      if (signupCancelledRef.current) {
+        const cleanupKey = createdUser?.id || createdUser?.email || createdUser?.phone;
+        if (cleanupKey) {
+          try {
+            await cancelUserRegistration(cleanupKey);
+          } catch {
+            // ignore
+          }
+        }
+        setSignupLoading(false);
+        return;
+      }
+
       setIdentifier(createdUser.email || createdUser.phone || "");
       setPassword(createdUser.password);
       if (!isWeb && signupRole !== "admin") {
@@ -1575,6 +1620,10 @@ export default function LoginScreen() {
         }),
       });
     } catch (error) {
+      if (signupCancelledRef.current) {
+        setSignupLoading(false);
+        return;
+      }
       const errMsg = getRequestErrorMessage(error, "Failed to create account.", {
         backendUrl: getApiBaseUrl(),
       });
@@ -1588,49 +1637,24 @@ export default function LoginScreen() {
     }
   };
 
-  // Cancels a freshly submitted or pending registration for volunteer or partner.
-  const handleCancelSubmittedRegistration = () => {
-    if (!signupSuccessData) return;
-    const roleLabel = signupSuccessData.role === 'partner' ? 'partner application' : 'volunteer registration';
-    const targetKey = signupSuccessData.userId || signupSuccessData.contact;
-
-    const performCancellation = async () => {
+  // Cancels an in-flight registration while it is actively processing.
+  const handleCancelProcessingRegistration = async () => {
+    signupCancelledRef.current = true;
+    setSignupLoading(false);
+    const targetKey = signupEmail.trim() || signupAccountPhone.trim();
+    if (targetKey) {
       try {
-        setSignupLoading(true);
-        if (targetKey) {
-          await cancelUserRegistration(targetKey);
-        }
-        setSignupSuccessData(null);
-        closeSignupModal();
-        setIdentifier("");
-        setPassword("");
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.alert(`Registration Cancelled\n\nYour ${roleLabel} has been cancelled successfully.`);
-        } else {
-          Alert.alert("Registration Cancelled", `Your ${roleLabel} has been cancelled successfully.`);
-        }
-      } catch (err) {
-        Alert.alert("Cancellation Error", "Unable to cancel registration. Please try again.");
-      } finally {
-        setSignupLoading(false);
+        await cancelUserRegistration(targetKey);
+      } catch {
+        // ignore
       }
-    };
-
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      if (window.confirm(`Are you sure you want to cancel your ${roleLabel}? This will withdraw your submitted application.`)) {
-        void performCancellation();
-      }
-      return;
     }
-
-    Alert.alert(
-      "Cancel Registration",
-      `Are you sure you want to cancel your ${roleLabel}? This will withdraw your submitted application.`,
-      [
-        { text: "No, Keep", style: "cancel" },
-        { text: "Yes, Cancel Registration", style: "destructive", onPress: () => void performCancellation() },
-      ]
-    );
+    setSignupSuccessData(null);
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.alert("Registration Cancelled\n\nYour registration was cancelled.");
+    } else {
+      Alert.alert("Registration Cancelled", "Your registration was cancelled.");
+    }
   };
 
   // Signs in immediately with a saved account shown on this device.
@@ -2079,10 +2103,6 @@ export default function LoginScreen() {
                     ))}
                   </View>
                 )}
-
-                <TouchableOpacity onPress={openSignupModal}>
-                  <Text style={styles.signupText}>Sign up as Admin</Text>
-                </TouchableOpacity>
               </View>
             </View>
           </ScrollView>
@@ -2117,6 +2137,29 @@ export default function LoginScreen() {
                         ? "Saving your volunteer membership sheet and profile details..."
                         : "Setting up your administrator credentials..."}
                   </Text>
+
+                  {signupRole !== "admin" && (
+                    <TouchableOpacity
+                      style={{
+                        marginTop: 20,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        paddingVertical: 10,
+                        paddingHorizontal: 20,
+                        borderRadius: 8,
+                        borderWidth: 1.5,
+                        borderColor: "#DC2626",
+                        backgroundColor: "#FEF2F2",
+                      }}
+                      onPress={handleCancelProcessingRegistration}
+                    >
+                      <MaterialIcons name="cancel" size={18} color="#DC2626" style={{ marginRight: 6 }} />
+                      <Text style={{ color: "#DC2626", fontWeight: "700", fontSize: 13 }}>
+                        Cancel Registration
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               ) : signupSuccessData ? (
                 <View style={{ alignItems: "center", width: "100%", paddingVertical: 10 }}>
@@ -2193,30 +2236,6 @@ export default function LoginScreen() {
                       Got It, Back to Login
                     </Text>
                   </TouchableOpacity>
-
-                  {signupSuccessData.role !== 'admin' && (
-                    <TouchableOpacity
-                      style={{
-                        marginTop: 10,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        paddingVertical: 12,
-                        paddingHorizontal: 20,
-                        borderRadius: 8,
-                        borderWidth: 1.5,
-                        borderColor: '#DC2626',
-                        backgroundColor: '#FEF2F2',
-                        width: '100%',
-                      }}
-                      onPress={handleCancelSubmittedRegistration}
-                    >
-                      <MaterialIcons name="cancel" size={18} color="#DC2626" style={{ marginRight: 6 }} />
-                      <Text style={{ color: '#DC2626', fontWeight: '700', fontSize: 13 }}>
-                        Cancel Registration
-                      </Text>
-                    </TouchableOpacity>
-                  )}
                 </View>
               ) : (
                 <>
@@ -3358,27 +3377,6 @@ export default function LoginScreen() {
                             {signupRole === "admin" ? "Cancel" : "Back"}
                           </Text>
                         </TouchableOpacity>
-
-                        {signupRole !== "admin" && (
-                          <TouchableOpacity
-                            style={[
-                              styles.modalSecondaryButton,
-                              {
-                                borderColor: "#fca5a5",
-                                backgroundColor: "#fff5f5",
-                              },
-                            ]}
-                            onPress={() => {
-                              setSignupValidationError(null);
-                              closeSignupModal();
-                            }}
-                            disabled={signupLoading}
-                          >
-                            <Text style={[styles.modalSecondaryText, { color: "#dc2626" }]}>
-                              Cancel Registration
-                            </Text>
-                          </TouchableOpacity>
-                        )}
 
                         <TouchableOpacity
                           style={[

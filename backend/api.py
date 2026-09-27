@@ -2391,13 +2391,78 @@ DEMO_ACCOUNTS = [
         "name": "Admin Account",
         "phone": "09170000001",
         "created_at": "2026-01-01T00:00:00Z",
-        "approvalStatus": "approved"
+        "approvalStatus": "approved",
+    },
+    {
+        "id": "demo-volunteer-1",
+        "email": "volunteer@nvc.org",
+        "password": "password123",
+        "role": "volunteer",
+        "name": "Volunteer Demo",
+        "phone": "09170000002",
+        "created_at": "2026-01-01T00:00:00Z",
+        "approvalStatus": "approved",
+    },
+    {
+        "id": "demo-partner-1",
+        "email": "partner@nvc.org",
+        "password": "password123",
+        "role": "partner",
+        "name": "Partner Demo",
+        "phone": "09170000003",
+        "created_at": "2026-01-01T00:00:00Z",
+        "approvalStatus": "approved",
+    },
+    {
+        "id": "volunteer-1",
+        "email": "volunteer@example.com",
+        "password": "volunteer123",
+        "role": "volunteer",
+        "name": "Volunteer Account",
+        "phone": "09123456789",
+        "created_at": "2026-01-01T00:00:00Z",
+        "approvalStatus": "approved",
+    },
+    {
+        "id": "partner-user-1",
+        "email": "partner@livelihoods.org",
+        "password": "partner123",
+        "role": "partner",
+        "name": "Partner Org Account",
+        "phone": "09198765432",
+        "created_at": "2026-01-01T00:00:00Z",
+        "approvalStatus": "approved",
+    },
+    {
+        "id": "partner-user-2",
+        "email": "partnerships@pbsp.org.ph",
+        "password": "partner123",
+        "role": "partner",
+        "name": "PBSP Account",
+        "phone": "09188188678",
+        "created_at": "2026-01-01T00:00:00Z",
+        "approvalStatus": "approved",
     },
 ]
 
 def _normalize_phone(phone: str) -> str:
     """Normalize phone for comparison"""
     return "".join(c for c in str(phone or "") if c.isdigit())
+
+def _verify_password(plain_password: str, stored_password: str) -> bool:
+    if not stored_password:
+        return False
+    if plain_password == stored_password:
+        return True
+    if stored_password.startswith("sha256:"):
+        parts = stored_password.split(":")
+        if len(parts) == 3:
+            salt = parts[1]
+            text = f"{salt}:{plain_password}".encode("utf-8")
+            import hashlib
+            expected_hex = hashlib.sha256(text).hexdigest()
+            return f"sha256:{salt}:{expected_hex}" == stored_password
+    return False
 
 def _get_demo_account(identifier: str) -> dict[str, Any] | None:
     """Find a demo account by email, email username alias, or phone."""
@@ -2447,7 +2512,7 @@ def auth_login(payload: AuthLoginPayload) -> dict[str, Any]:
             detail=_get_identifier_error_message(payload.identifier),
         )
 
-    if user.get("password") != payload.password:
+    if not _verify_password(payload.password, user.get("password") or ""):
         raise HTTPException(status_code=401, detail="Incorrect password")
 
     print(f"[DEBUG] Password correct for: {user.get('id')}")
