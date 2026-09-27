@@ -55,7 +55,9 @@ function getIsWeb(): boolean {
   return true;
 }
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+import Svg, { Path } from 'react-native-svg';
 import { Picker } from "@react-native-picker/picker";
+import { getFirebaseAuth, GoogleAuthProvider, signInWithPopup } from '../lib/firebase';
 import {
   cancelUserRegistration,
   createUserAccount,
@@ -64,6 +66,7 @@ import {
   getApiBaseUrl,
   getStorageItemFast,
   getUserByEmailOrPhone,
+  saveUser,
   validateDswdAccreditationNo,
   loginWithCredentials,
   subscribeToStorageChanges,
@@ -415,6 +418,29 @@ function getMobileRoleMismatchMessage(
   return selectedRole === "partner"
     ? "This account is registered as a volunteer. Go back and choose Volunteer before signing in."
     : "This account is registered as a partner organization. Go back and choose Partner Organization before signing in.";
+}
+
+function GoogleIcon({ size = 18 }: { size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path
+        fill="#4285F4"
+        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
+      />
+      <Path
+        fill="#34A853"
+        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24z"
+      />
+      <Path
+        fill="#FBBC05"
+        d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
+      />
+      <Path
+        fill="#EA4335"
+        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+      />
+    </Svg>
+  );
 }
 
 // Handles account login and volunteer or partner self-registration.
@@ -1047,6 +1073,72 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     await performLogin(identifier, password);
+  };
+
+  const [googleLoading, setGoogleLoading] = useState(false);
+
+  const handleGoogleSignIn = async () => {
+    setGoogleLoading(true);
+    try {
+      const auth = getFirebaseAuth();
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      const cred = await signInWithPopup(auth, provider);
+      const googleEmail = cred.user?.email?.toLowerCase().trim();
+      const googleName = cred.user?.displayName || 'Google User';
+
+      if (!googleEmail) {
+        Alert.alert('Sign In Failed', 'Could not retrieve email from your Google account.');
+        return;
+      }
+
+      // Check if user exists in database
+      const existingUser = await getUserByEmailOrPhone(googleEmail);
+      if (existingUser) {
+        await login(existingUser);
+        return;
+      }
+
+      // If user does not exist on web:
+      if (isWeb) {
+        Alert.alert(
+          'Account Not Found',
+          `No registered account found for ${googleEmail}. Only registered administrators can access the web dashboard.`
+        );
+        return;
+      }
+
+      // If on mobile, create new volunteer account for Google user
+      const newUser: User = {
+        id: `user-google-${Date.now()}`,
+        email: googleEmail,
+        name: googleName,
+        role: selectedMobileRole || 'volunteer',
+        userType: 'Adult',
+        pillarsOfInterest: ['Education', 'Livelihood', 'Nutrition'],
+        createdAt: new Date().toISOString(),
+        approvalStatus: 'approved',
+      };
+      await saveUser(newUser);
+      await login(newUser);
+    } catch (err: any) {
+      if (
+        err?.code === 'auth/popup-closed-by-user' ||
+        err?.code === 'auth/cancelled-popup-request'
+      ) {
+        return;
+      }
+      if (err?.code === 'auth/unauthorized-domain') {
+        Alert.alert(
+          'Domain Not Authorized',
+          'Please add nvcconnect.online to Firebase Console -> Authentication -> Settings -> Authorized Domains.'
+        );
+        return;
+      }
+      Alert.alert('Google Sign-In Error', err?.message || 'Unable to sign in with Google.');
+    } finally {
+      setGoogleLoading(false);
+    }
   };
 
   const handleQuickLogin = async (account: DemoLoginAccount) => {
@@ -1818,6 +1910,23 @@ export default function LoginScreen() {
                     )}
                   </TouchableOpacity>
 
+                  {/* Sign in with Google Button on Mobile */}
+                  <TouchableOpacity
+                    style={styles.glassGoogleButton}
+                    onPress={() => void handleGoogleSignIn()}
+                    disabled={loading || googleLoading}
+                    activeOpacity={0.85}
+                  >
+                    {googleLoading ? (
+                      <ActivityIndicator color="#0f172a" size="small" />
+                    ) : (
+                      <>
+                        <GoogleIcon size={18} />
+                        <Text style={styles.glassGoogleButtonText}>Sign in with Google</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+
                   {/* Sign up as Volunteer or Partner Link */}
                   <TouchableOpacity
                     onPress={openSignupModal}
@@ -1883,38 +1992,6 @@ export default function LoginScreen() {
                   screenWidth < 960 && styles.webCardShellStacked,
                 ]}
               >
-                <View
-                  style={[
-                    styles.backendStatusCard,
-                    backendStatus === "online"
-                      ? styles.backendStatusOnline
-                      : backendStatus === "offline"
-                        ? styles.backendStatusOffline
-                        : styles.backendStatusChecking,
-                  ]}
-                >
-                  <View style={styles.backendStatusRow}>
-                    <View
-                      style={[
-                        styles.backendStatusDot,
-                        backendStatus === "online"
-                          ? styles.backendStatusDotOnline
-                          : backendStatus === "offline"
-                            ? styles.backendStatusDotOffline
-                            : styles.backendStatusDotChecking,
-                      ]}
-                    />
-                    <Text style={styles.backendStatusTitle}>
-                      {backendStatus === "online"
-                        ? "Database Connected"
-                        : backendStatus === "offline"
-                          ? "Database Unavailable"
-                          : "Checking Database"}
-                    </Text>
-                  </View>
-                  <Text style={styles.backendStatusText}>{backendMessage}</Text>
-                </View>
-
                 <TextInput
                   style={[styles.input, isCompactLayout && styles.compactInput]}
                   placeholder="Email, Username, or Phone"
@@ -1966,6 +2043,30 @@ export default function LoginScreen() {
                     <ActivityIndicator color="#fff" />
                   ) : (
                     <Text style={styles.buttonText}>Log In</Text>
+                  )}
+                </TouchableOpacity>
+
+                {/* Divider */}
+                <View style={styles.orDividerContainer}>
+                  <View style={styles.orDividerLine} />
+                  <Text style={styles.orDividerText}>OR</Text>
+                  <View style={styles.orDividerLine} />
+                </View>
+
+                {/* Sign in with Google Button on Web */}
+                <TouchableOpacity
+                  style={styles.googleSignInButton}
+                  onPress={() => void handleGoogleSignIn()}
+                  disabled={loading || googleLoading}
+                  activeOpacity={0.85}
+                >
+                  {googleLoading ? (
+                    <ActivityIndicator color="#0f172a" size="small" />
+                  ) : (
+                    <>
+                      <GoogleIcon size={18} />
+                      <Text style={styles.googleSignInButtonText}>Sign in with Google</Text>
+                    </>
                   )}
                 </TouchableOpacity>
               </View>
@@ -3542,6 +3643,58 @@ const styles = StyleSheet.create({
   compactContentContainer: {
     paddingHorizontal: ModernTheme.spacing[3.5],
     paddingVertical: ModernTheme.spacing[4],
+  },
+  orDividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 14,
+    width: '100%',
+  },
+  orDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#e2e8f0',
+  },
+  orDividerText: {
+    marginHorizontal: 10,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#94a3b8',
+  },
+  googleSignInButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    width: '100%',
+  },
+  googleSignInButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  glassGoogleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    width: '100%',
+    marginTop: 10,
+  },
+  glassGoogleButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
   },
   contentShell: {
     width: "100%",

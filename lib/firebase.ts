@@ -24,8 +24,11 @@ const firebaseConfig = {
   appId:             '1:80950080445:web:3233c79830c2adc75518d4',
 };
 
+import { getAuth, type Auth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+
 let app: FirebaseApp;
 let firestore: Firestore;
+let auth: Auth;
 
 export function getFirebaseApp(): FirebaseApp {
   if (!app) {
@@ -40,3 +43,13 @@ export function getFirestoreDb(): Firestore {
   }
   return firestore;
 }
+
+export function getFirebaseAuth(): Auth {
+  if (!auth) {
+    auth = getAuth(getFirebaseApp());
+  }
+  return auth;
+}
+
+export { GoogleAuthProvider, signInWithPopup };
+
