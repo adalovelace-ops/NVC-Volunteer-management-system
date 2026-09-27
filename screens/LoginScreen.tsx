@@ -183,14 +183,10 @@ const PARTNER_DEMO_ACCOUNT: DemoLoginAccount = {
 };
 
 function getVisibleDemoAccounts(
-  isWeb: boolean,
-  selectedMobileRole: MobileEntryRole | null,
+  _isWeb: boolean,
+  _selectedMobileRole: MobileEntryRole | null,
 ): DemoLoginAccount[] {
-  if (isWeb) {
-    return [ADMIN_DEMO_ACCOUNT];
-  }
-
-  return [VOLUNTEER_DEMO_ACCOUNT, PARTNER_DEMO_ACCOUNT];
+  return [];
 }
 
 // Returns a clean volunteer membership form state for the signup modal.
@@ -1700,35 +1696,7 @@ export default function LoginScreen() {
       ? `${selectedMobileRoleLabel} Quick Sign In`
       : "Quick Demo Sign In";
 
-  const renderQuickLoginSection = () => (
-    <View style={styles.demoSection}>
-      <Text style={styles.demoTitle}>{quickLoginTitle}</Text>
-      {visibleDemoAccounts.map((account) => (
-        <TouchableOpacity
-          key={account.id}
-          style={[
-            styles.savedAccountCard,
-            loading && styles.accountCardDisabled,
-          ]}
-          onPress={() => {
-            void handleQuickLogin(account);
-          }}
-          activeOpacity={0.85}
-          disabled={loading}
-        >
-          <View style={styles.savedAccountHeader}>
-            <Text style={styles.savedAccountName}>{account.name}</Text>
-            <Text style={styles.savedAccountRole}>{account.badge}</Text>
-          </View>
-          <Text style={styles.savedAccountCredential}>
-            {account.identifier}
-          </Text>
-          <Text style={styles.savedAccountPassword}>{account.password}</Text>
-          <Text style={styles.savedAccountHint}>Tap to sign in instantly</Text>
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
+  const renderQuickLoginSection = () => null;
 
   if (loading && !initialized) {
     return (
@@ -1860,66 +1828,7 @@ export default function LoginScreen() {
                   </TouchableOpacity>
                 </View>
 
-                {/* Quick Demo Section on Mobile */}
-                {visibleDemoAccounts.length > 0 && (
-                  <View style={styles.mobileDemoContainer}>
-                    <Text style={styles.mobileDemoHeading}>Quick Demo Accounts</Text>
-                    <View style={styles.mobileDemoGrid}>
-                      {visibleDemoAccounts.map((account) => (
-                        <TouchableOpacity
-                          key={account.id}
-                          style={styles.mobileDemoChip}
-                          onPress={() => void handleQuickLogin(account)}
-                          disabled={loading}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={styles.mobileDemoChipName}>{account.name}</Text>
-                          <Text style={styles.mobileDemoChipBadge}>{account.badge}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </View>
-                )}
 
-                {/* Saved Volunteer & Partner Accounts on Mobile */}
-                {visibleSavedAccounts.length > 0 && (
-                  <View style={[styles.mobileDemoContainer, { marginTop: 14, marginBottom: 24 }]}>
-                    <Text style={styles.mobileDemoHeading}>Saved Accounts</Text>
-                    <View style={styles.mobileSavedAccountsList}>
-                      {visibleSavedAccounts.map((account) => (
-                        <TouchableOpacity
-                          key={account.id}
-                          style={styles.mobileSavedAccountCard}
-                          onPress={() => void handleUseSavedAccount(account)}
-                          disabled={loading}
-                          activeOpacity={0.8}
-                        >
-                          <View style={styles.mobileSavedAccountHeader}>
-                            <Text style={styles.mobileSavedAccountName} numberOfLines={1}>
-                              {account.name}
-                            </Text>
-                            <View
-                              style={[
-                                styles.mobileSavedAccountBadge,
-                                account.role === "partner"
-                                  ? styles.mobileSavedAccountBadgePartner
-                                  : styles.mobileSavedAccountBadgeVolunteer,
-                              ]}
-                            >
-                              <Text style={styles.mobileSavedAccountBadgeText}>
-                                {account.role ? account.role.toUpperCase() : "USER"}
-                              </Text>
-                            </View>
-                          </View>
-                          <Text style={styles.mobileSavedAccountCred} numberOfLines={1}>
-                            {account.email || account.phone || "No identifier"}
-                          </Text>
-                          <Text style={styles.mobileSavedAccountHint}>Tap to sign in</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </View>
-                )}
               </ScrollView>
             </View>
           </ImageBackground>
@@ -2056,53 +1965,9 @@ export default function LoginScreen() {
                   {loading ? (
                     <ActivityIndicator color="#fff" />
                   ) : (
-                    <Text style={styles.buttonText}>
-                      {!identifier && !password ? "Quick Sign In" : "Log In"}
-                    </Text>
+                    <Text style={styles.buttonText}>Log In</Text>
                   )}
                 </TouchableOpacity>
-
-                {renderQuickLoginSection()}
-
-                {visibleSavedAccounts.length > 0 && (
-                  <View style={styles.demoSection}>
-                    <Text style={styles.demoTitle}>Saved Admin Accounts:</Text>
-                    {visibleSavedAccounts.map((account) => (
-                      <TouchableOpacity
-                        key={account.id}
-                        style={[
-                          styles.savedAccountCard,
-                          loading && styles.accountCardDisabled,
-                        ]}
-                        onPress={() => {
-                          void handleUseSavedAccount(account);
-                        }}
-                        activeOpacity={0.85}
-                        disabled={loading}
-                      >
-                        <View style={styles.savedAccountHeader}>
-                          <Text style={styles.savedAccountName}>
-                            {account.name}
-                          </Text>
-                          <Text style={styles.savedAccountRole}>
-                            {account.role}
-                          </Text>
-                        </View>
-                        <Text style={styles.savedAccountCredential}>
-                          {account.email ||
-                            account.phone ||
-                            "No login identifier"}
-                        </Text>
-                        <Text style={styles.savedAccountPassword}>
-                          {account.password}
-                        </Text>
-                        <Text style={styles.savedAccountHint}>
-                          Tap to sign in instantly
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
               </View>
             </View>
           </ScrollView>
