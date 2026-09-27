@@ -2994,8 +2994,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sectionTabs} contentContainerStyle={styles.sectionTabsContent}>
-        {(isPartner ? ['messages', 'contacts', 'projects', 'proposals'] : ['messages', 'contacts', 'projects']).map(section => {
-          const label = section === 'messages' ? 'Messages' : section === 'contacts' ? 'Contacts' : section === 'proposals' ? 'Proposals' : 'Event Group Chat';
+        {(['messages', 'contacts', 'projects'] as const).map(section => {
+          const label = section === 'messages' ? 'Messages' : section === 'contacts' ? 'Contacts' : 'Event Group Chat';
           return (
             <TouchableOpacity
               key={section}
@@ -4258,7 +4258,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
             </View>
           ) : null}
 
-          {selectedUser && (user?.role === 'admin' || user?.role === 'partner') && (() => {
+          {selectedUser && user?.role === 'admin' && (() => {
 
             const related = proposalChats.filter(item =>
 

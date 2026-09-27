@@ -21,6 +21,7 @@ import {
   openAttachmentUri,
 } from '../utils/media';
 import { buildTextPdf, downloadPdfFile } from '../utils/pdfDownload';
+import { exportPhotosAsZip } from '../utils/photoExport';
 
 interface ReportDetailsModalProps {
   visible: boolean;
@@ -94,6 +95,7 @@ export default function ReportDetailsModal({
     report.mediaFile || '',
     ...(report.attachments || []),
   ]);
+  const photoAttachments = attachmentPreviews.filter(isImageMediaUri);
   const statusPresentation = getStatusPresentation(report.status);
   const handleOpenAttachment = async (uri: string) => {
     try {
@@ -114,6 +116,18 @@ export default function ReportDetailsModal({
       buildTextPdf(report.title, buildReportDownloadContent(report))
     );
   };
+  const handleExportPhotos = () => {
+    if (photoAttachments.length === 0) return;
+    void exportPhotosAsZip(
+      photoAttachments.map((uri, idx) => ({
+        uri,
+        name: report.submitterName,
+        date: formatDateForFilename(report.submittedAt),
+        filename: `${(report.title || 'report').replace(/[^\w.-]+/g, '_')}-photo-${idx + 1}`,
+      })),
+      `${(report.title || 'report').replace(/[^\w.-]+/g, '_')}-photos.zip`
+    );
+  };
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
@@ -126,6 +140,12 @@ export default function ReportDetailsModal({
               <Text style={styles.submitter}>Submitted by {report.submitterName}</Text>
             </View>
             <View style={styles.headerActions}>
+              {photoAttachments.length > 0 && (
+                <TouchableOpacity style={styles.downloadButton} onPress={handleExportPhotos}>
+                  <MaterialIcons name="photo-library" size={16} color="#166534" />
+                  <Text style={styles.downloadButtonText}>Photos ({photoAttachments.length})</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity style={styles.downloadButton} onPress={handleDownloadReport}>
                 <MaterialIcons name="download" size={18} color="#166534" />
                 <Text style={styles.downloadButtonText}>PDF</Text>
@@ -217,10 +237,33 @@ export default function ReportDetailsModal({
             {attachmentPreviews.length > 0 && (
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeaderRow}>
-                  <Text style={styles.sectionTitle}>Attachments</Text>
-                  <Text style={styles.sectionCaption}>
-                    {attachmentPreviews.length} file{attachmentPreviews.length === 1 ? '' : 's'}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Text style={styles.sectionTitle}>Attachments</Text>
+                    <Text style={styles.sectionCaption}>
+                      {attachmentPreviews.length} file{attachmentPreviews.length === 1 ? '' : 's'}
+                    </Text>
+                  </View>
+                  {photoAttachments.length > 0 && (
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 4,
+                        backgroundColor: '#f0fdf4',
+                        paddingHorizontal: 10,
+                        paddingVertical: 5,
+                        borderRadius: 6,
+                        borderWidth: 1,
+                        borderColor: '#bbf7d0',
+                      }}
+                      onPress={handleExportPhotos}
+                    >
+                      <MaterialIcons name="file-download" size={14} color="#166534" />
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#166534' }}>
+                        Export Photos ({photoAttachments.length})
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
                 <View style={[styles.attachmentsList, isWideLayout && styles.attachmentsListWide]}>
                   {attachmentPreviews.map(uri =>
@@ -276,29 +319,6 @@ export default function ReportDetailsModal({
               </View>
             )}
 
-            {/* Metrics */}
-            <View style={styles.sectionCard}>
-              <View style={styles.sectionHeaderRow}>
-                <Text style={styles.sectionTitle}>Key Metrics</Text>
-                <Text style={styles.sectionCaption}>
-                  {Object.values(report.metrics).filter(value => value !== undefined && value !== null).length} captured
-                </Text>
-              </View>
-                <View style={[styles.metricsDisplay, isWideLayout && styles.metricsDisplayWide]}>
-                {Object.entries(report.metrics)
-                  .filter(([key, value]) => {
-                    // Filter out volunteerHours metric and empty values
-                    if (key === 'volunteerHours') return false;
-                    return value !== undefined && value !== null;
-                  })
-                  .map(([key, value]) => (
-                    <View key={key} style={styles.metricCard}>
-                      <Text style={styles.metricCardLabel}>{formatMetricKey(key)}</Text>
-                      <Text style={styles.metricCardValue}>{value}</Text>
-                    </View>
-                  ))}
-              </View>
-            </View>
 
             {/* Approval History */}
             {report.approvedBy && (

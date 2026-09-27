@@ -24,6 +24,7 @@ import type { Project, VolunteerTimeLog, VolunteerProjectJoinRecord, Volunteer }
 import { buildTextPdf, downloadPdfFile } from '../utils/pdfDownload';
 import { getAttachmentUris, isImageMediaUri } from '../utils/media';
 import { exportVolunteerReportPdf, buildVolunteerReportData } from '../utils/volunteerReportTemplate';
+import { exportPhotosAsZip } from '../utils/photoExport';
 import Svg, { Circle, Path, G } from 'react-native-svg';
 
 function initialsPartner(name: string) {
@@ -994,6 +995,33 @@ export function PartnerReportsDashboard({
     return list;
   }, [volunteerTimeLogs, quarterReports, volunteers, currentQuarter]);
 
+  const [isExportingPhotos, setIsExportingPhotos] = useState(false);
+
+  const handleBatchExportPhotos = async () => {
+    if (volunteerPhotos.length === 0) {
+      Alert.alert('No Photos', 'There are no volunteer report photos to export for this quarter.');
+      return;
+    }
+    setIsExportingPhotos(true);
+    try {
+      const quarterTag = currentQuarter.label.replace(/\s+/g, '_');
+      await exportPhotosAsZip(
+        volunteerPhotos.map((item, idx) => ({
+          id: item.id,
+          uri: item.uri,
+          name: item.name,
+          date: item.date,
+          filename: `volunteer-photo-${String(idx + 1).padStart(2, '0')}-${(item.name || 'volunteer').replace(/\s+/g, '_')}`,
+        })),
+        `Volunteer_Report_Photos_${quarterTag}.zip`
+      );
+    } catch (err: any) {
+      Alert.alert('Export Failed', err?.message || 'Unable to batch export photos.');
+    } finally {
+      setIsExportingPhotos(false);
+    }
+  };
+
   const handleExportVolunteerPdf = async () => {
     try {
       const accountUserName = user?.name || user?.email || 'Administrator';
@@ -1585,29 +1613,55 @@ export function PartnerReportsDashboard({
             gap: 16,
           }}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
             <Text style={{ fontSize: 15, fontWeight: '800', color: '#0f172a' }}>Photos from Volunteers Report</Text>
             {volunteerPhotos.length > 0 && (
-              <TouchableOpacity
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 6,
-                  backgroundColor: '#ffffff',
-                  borderWidth: 1,
-                  borderColor: '#cbd5e1',
-                  borderRadius: 8,
-                  paddingHorizontal: 12,
-                  paddingVertical: 6,
-                }}
-                activeOpacity={0.7}
-                onPress={() => setShowAllPhotosModal(true)}
-              >
-                <MaterialIcons name="photo-camera" size={15} color="#475569" />
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>
-                  View All Photos ({volunteerPhotos.length})
-                </Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <TouchableOpacity
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                    backgroundColor: '#166534',
+                    borderRadius: 8,
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    opacity: isExportingPhotos ? 0.7 : 1,
+                  }}
+                  activeOpacity={0.8}
+                  disabled={isExportingPhotos}
+                  onPress={handleBatchExportPhotos}
+                >
+                  {isExportingPhotos ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <MaterialIcons name="file-download" size={16} color="#ffffff" />
+                  )}
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#ffffff' }}>
+                    {isExportingPhotos ? 'Exporting...' : `Export All Photos (${volunteerPhotos.length})`}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                    backgroundColor: '#ffffff',
+                    borderWidth: 1,
+                    borderColor: '#cbd5e1',
+                    borderRadius: 8,
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                  }}
+                  activeOpacity={0.7}
+                  onPress={() => setShowAllPhotosModal(true)}
+                >
+                  <MaterialIcons name="photo-camera" size={15} color="#475569" />
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>
+                    View All Photos ({volunteerPhotos.length})
+                  </Text>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
 
@@ -1757,18 +1811,43 @@ export function PartnerReportsDashboard({
               gap: 16,
             }}
           >
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
               <Text style={{ fontSize: 15, fontWeight: '800', color: '#ffffff' }}>
-                Volunteer Reports Photo Gallery
+                Volunteer Reports Photo Gallery ({volunteerPhotos.length})
               </Text>
-              <TouchableOpacity
-                onPress={() => {
-                  setShowAllPhotosModal(false);
-                  setSelectedPhotoIndex(null);
-                }}
-              >
-                <MaterialIcons name="close" size={22} color="#ffffff" />
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <TouchableOpacity
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                    backgroundColor: '#166534',
+                    borderRadius: 6,
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    opacity: isExportingPhotos ? 0.7 : 1,
+                  }}
+                  disabled={isExportingPhotos}
+                  onPress={handleBatchExportPhotos}
+                >
+                  {isExportingPhotos ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <MaterialIcons name="file-download" size={16} color="#ffffff" />
+                  )}
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#ffffff' }}>
+                    {isExportingPhotos ? 'Exporting...' : 'Export All (ZIP)'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    setShowAllPhotosModal(false);
+                    setSelectedPhotoIndex(null);
+                  }}
+                >
+                  <MaterialIcons name="close" size={22} color="#ffffff" />
+                </TouchableOpacity>
+              </View>
             </View>
             <View
               style={{
@@ -1789,24 +1868,65 @@ export function PartnerReportsDashboard({
                 style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
               />
             </View>
+            {volunteerPhotos.length > 1 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                {volunteerPhotos.map((p, idx) => {
+                  const isCurrent = (selectedPhotoIndex ?? 0) === idx;
+                  return (
+                    <TouchableOpacity
+                      key={p.id || idx}
+                      onPress={() => setSelectedPhotoIndex(idx)}
+                      style={{
+                        width: 60,
+                        height: 48,
+                        borderRadius: 6,
+                        overflow: 'hidden',
+                        borderWidth: 2,
+                        borderColor: isCurrent ? '#22c55e' : 'transparent',
+                        opacity: isCurrent ? 1 : 0.6,
+                      }}
+                    >
+                      <Image source={{ uri: p.uri }} style={{ width: '100%', height: '100%', resizeMode: 'cover' }} />
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <Text style={{ fontSize: 12, color: '#94a3b8' }}>
-                Photo by {volunteerPhotos[selectedPhotoIndex || 0]?.name} on {volunteerPhotos[selectedPhotoIndex || 0]?.date}
+                Photo {((selectedPhotoIndex ?? 0) + 1)} of {volunteerPhotos.length} • by {volunteerPhotos[selectedPhotoIndex || 0]?.name} on {volunteerPhotos[selectedPhotoIndex || 0]?.date}
               </Text>
-              <TouchableOpacity
-                style={{
-                  backgroundColor: '#334155',
-                  paddingHorizontal: 14,
-                  paddingVertical: 6,
-                  borderRadius: 6,
-                }}
-                onPress={() => {
-                  setShowAllPhotosModal(false);
-                  setSelectedPhotoIndex(null);
-                }}
-              >
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#ffffff' }}>Done</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#166534',
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 6,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                  onPress={handleBatchExportPhotos}
+                >
+                  <MaterialIcons name="file-download" size={14} color="#ffffff" />
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#ffffff' }}>Batch Export</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#334155',
+                    paddingHorizontal: 14,
+                    paddingVertical: 6,
+                    borderRadius: 6,
+                  }}
+                  onPress={() => {
+                    setShowAllPhotosModal(false);
+                    setSelectedPhotoIndex(null);
+                  }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#ffffff' }}>Done</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </View>

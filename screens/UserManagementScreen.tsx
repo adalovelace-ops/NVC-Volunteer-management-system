@@ -49,9 +49,8 @@ export default function UserManagementScreen() {
   const [pendingUserApprovals, setPendingUserApprovals] = useState<User[]>([]);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [showAddModal, setShowAddModal] = useState(false);
   const [showActionMenuUser, setShowActionMenuUser] = useState<User | null>(null);
-  const [actionLoading, setActionLoading] = useState<'save' | 'delete' | 'add' | null>(null);
+  const [actionLoading, setActionLoading] = useState<'save' | 'delete' | null>(null);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
 
   // Form state drafts
@@ -142,62 +141,6 @@ export default function UserManagementScreen() {
     setSelectedUser(null);
   };
 
-  const openAddModal = (initialRole: UserRole = 'volunteer') => {
-    setNameDraft('');
-    setEmailDraft('');
-    setPhoneDraft('');
-    setPasswordDraft('Password123!');
-    setRoleDraft(initialRole === 'admin' ? 'volunteer' : initialRole);
-    setUserTypeDraft('Adult');
-    setPillarsDraft([]);
-    setShowAddModal(true);
-  };
-
-  const closeAddModal = () => {
-    setShowAddModal(false);
-  };
-
-  // Add user logic
-  const handleAddUser = async () => {
-    if (!nameDraft.trim() || !emailDraft.trim()) {
-      Alert.alert('Validation Error', 'Name and Email are required.');
-      return;
-    }
-
-    const normalizedEmail = emailDraft.trim().toLowerCase();
-    const existing = users.find(u => u.email?.toLowerCase() === normalizedEmail);
-    if (existing) {
-      Alert.alert('Duplicate Email', 'An account with this email address already exists.');
-      return;
-    }
-
-    try {
-      const newUser: User = {
-        id: `user-${Date.now()}`,
-        name: nameDraft.trim(),
-        email: normalizedEmail,
-        phone: phoneDraft.trim() || undefined,
-        password: passwordDraft.trim() || 'Password123!',
-        role: roleDraft,
-        userType: userTypeDraft,
-        pillarsOfInterest: pillarsDraft,
-        createdAt: new Date().toISOString(),
-        approvalStatus: 'approved',
-      };
-
-      await saveUser(newUser);
-      closeAddModal();
-      setSuccessNotice({
-        title: roleDraft === 'admin' ? 'Admin Account Created' : 'User Added',
-        message: roleDraft === 'admin'
-          ? `Admin account for ${newUser.name} created successfully. Ready for web login.`
-          : `Account for ${newUser.name} created successfully.`,
-      });
-      void loadUsers();
-    } catch (error) {
-      Alert.alert(getRequestErrorTitle(error), getRequestErrorMessage(error, 'Failed to add user.'));
-    }
-  };
 
   // Save changes logic
   const handleSaveUser = async () => {
@@ -396,10 +339,6 @@ export default function UserManagementScreen() {
             </View>
           </View>
           <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.primaryAddButton} onPress={() => openAddModal('volunteer')} activeOpacity={0.85}>
-              <MaterialIcons name="add" size={20} color="#ffffff" />
-              <Text style={styles.primaryAddButtonText}>Add New User</Text>
-            </TouchableOpacity>
             <TouchableOpacity style={styles.secondaryExportButton} onPress={handleExportCSV} activeOpacity={0.85}>
               <MaterialIcons name="file-download" size={18} color="#475569" />
               <Text style={styles.secondaryExportButtonText}>Export</Text>
@@ -799,63 +738,7 @@ export default function UserManagementScreen() {
         </View>
       </ScrollView>
 
-      {/* Add New User Modal */}
-      <Modal visible={showAddModal} animationType="slide" transparent onRequestClose={closeAddModal}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContentCard}>
-            <View style={styles.modalHeaderBar}>
-              <Text style={styles.modalHeadingTitle}>Add New User</Text>
-              <TouchableOpacity onPress={closeAddModal}>
-                <MaterialIcons name="close" size={22} color="#64748b" />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.modalFormBody}>
-              <Text style={styles.inputLabel}>Full Name</Text>
-              <TextInput style={styles.formInput} placeholder="e.g. Maria Santos" value={nameDraft} onChangeText={setNameDraft} />
 
-              <Text style={styles.inputLabel}>Email Address</Text>
-              <TextInput
-                style={styles.formInput}
-                placeholder="maria.santos@email.com"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                value={emailDraft}
-                onChangeText={setEmailDraft}
-              />
-
-              <Text style={styles.inputLabel}>Phone Number</Text>
-              <TextInput style={styles.formInput} placeholder="0918 123 4567" keyboardType="phone-pad" value={phoneDraft} onChangeText={setPhoneDraft} />
-
-              <Text style={styles.inputLabel}>Role</Text>
-              <View style={styles.optionRow}>
-                {roleOptions.map(r => (
-                  <TouchableOpacity
-                    key={r}
-                    style={[styles.optionChip, roleDraft === r && styles.optionChipActive]}
-                    onPress={() => setRoleDraft(r)}
-                  >
-                    <Text style={[styles.optionChipText, roleDraft === r && styles.optionChipTextActive]}>
-                      {r.charAt(0).toUpperCase() + r.slice(1)}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <Text style={styles.inputLabel}>Default Password</Text>
-              <TextInput style={styles.formInput} placeholder="Password" value={passwordDraft} onChangeText={setPasswordDraft} secureTextEntry />
-            </ScrollView>
-
-            <View style={styles.modalFooterActions}>
-              <TouchableOpacity style={styles.cancelFormButton} onPress={closeAddModal}>
-                <Text style={styles.cancelFormButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.submitFormButton} onPress={handleAddUser}>
-                <Text style={styles.submitFormButtonText}>Create User</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       {/* Edit User Modal */}
       <Modal visible={showEditModal} animationType="slide" transparent onRequestClose={closeEditModal}>
