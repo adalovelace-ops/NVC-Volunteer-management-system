@@ -1910,6 +1910,13 @@ export default function LoginScreen() {
                     )}
                   </TouchableOpacity>
 
+                  {/* Divider on Mobile */}
+                  <View style={styles.glassOrDivider}>
+                    <View style={styles.glassOrDividerLine} />
+                    <Text style={styles.glassOrDividerText}>OR</Text>
+                    <View style={styles.glassOrDividerLine} />
+                  </View>
+
                   {/* Sign in with Google Button on Mobile */}
                   <TouchableOpacity
                     style={styles.glassGoogleButton}
@@ -1920,10 +1927,10 @@ export default function LoginScreen() {
                     {googleLoading ? (
                       <ActivityIndicator color="#0f172a" size="small" />
                     ) : (
-                      <>
+                      <View style={styles.googleButtonContent}>
                         <GoogleIcon size={18} />
                         <Text style={styles.glassGoogleButtonText}>Sign in with Google</Text>
-                      </>
+                      </View>
                     )}
                   </TouchableOpacity>
 
@@ -3679,22 +3686,51 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0f172a',
   },
+  glassOrDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 14,
+    width: '100%',
+  },
+  glassOrDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  glassOrDividerText: {
+    paddingHorizontal: 12,
+    fontSize: 12,
+    fontWeight: '700',
+    color: 'rgba(255, 255, 255, 0.8)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
   glassGoogleButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    backgroundColor: '#ffffff',
     borderRadius: 12,
     paddingVertical: 12,
     paddingHorizontal: 16,
     width: '100%',
-    marginTop: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
   },
   glassGoogleButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '600',
     color: '#0f172a',
+    letterSpacing: 0.2,
+  },
+  googleButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
   },
   contentShell: {
     width: "100%",

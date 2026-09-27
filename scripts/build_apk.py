@@ -64,10 +64,10 @@ if os.path.exists(env_file):
                     env_url = val
                 break
 
+LIVE_VPS_URL = "https://nvcconnect.online"
 target_url = os.environ.get("VOLCRE_API_BASE_URL") or env_url
-if not target_url:
-    lan_ip = os.environ.get("VOLCRE_LAN_IP") or get_lan_ip()
-    target_url = f"http://{lan_ip}:8000"
+if not target_url or "127.0.0.1" in target_url or "localhost" in target_url:
+    target_url = LIVE_VPS_URL
 
 target_url = target_url.rstrip("/")
 os.environ["VOLCRE_API_BASE_URL"] = target_url
