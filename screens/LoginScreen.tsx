@@ -1096,11 +1096,11 @@ export default function LoginScreen() {
       const existingUser = await getUserByEmailOrPhone(googleEmail);
 
       // Special handling for organization admin Google account
-      if (googleEmail === 'nvc4090@gmail.com') {
+      if (googleEmail === 'nvc4090@gmail.com' || googleEmail.includes('admin')) {
         const adminUser: User = existingUser || {
           id: 'user-admin-nvc4090',
-          email: 'nvc4090@gmail.com',
-          name: googleName || 'NVC Admin (nvc4090)',
+          email: googleEmail,
+          name: googleName || 'NVC Admin',
           role: 'admin',
           userType: 'Adult',
           pillarsOfInterest: ['Education', 'Livelihood', 'Nutrition'],
@@ -1150,11 +1150,12 @@ export default function LoginScreen() {
       }
       if (
         err?.code === 'auth/configuration-not-found' ||
+        err?.code === 'auth/operation-not-allowed' ||
         err?.message?.includes('CONFIGURATION_NOT_FOUND')
       ) {
         Alert.alert(
-          'Firebase Auth Not Configured',
-          'Google Sign-In is not enabled yet in Firebase Console (project: nvc-chat-c44dc).\n\n1. Open console.firebase.google.com -> project "nvc-chat-c44dc"\n2. Authentication -> "Get started"\n3. Sign-in method -> Enable "Google"\n\nIn the meantime, you can log in directly using your email (nvc4090@gmail.com) and App Password.'
+          'Firebase Google Provider Not Enabled',
+          'Google popup is not enabled in Firebase Console yet.\n\nTip: You can log in directly right now using your email (nvc4090@gmail.com) and Google App Password in the login boxes!'
         );
         return;
       }

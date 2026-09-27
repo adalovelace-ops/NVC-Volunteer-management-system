@@ -64,17 +64,6 @@ def build_demo_app_storage() -> dict[str, Any]:
     return {
         "users": [
             {
-                "id": "user-admin-nvc4090",
-                "email": "nvc4090@gmail.com",
-                "password": "ouvs gsvp dagi kzpx",
-                "role": "admin",
-                "name": "NVC Admin (nvc4090)",
-                "phone": "09170000002",
-                "userType": "Adult",
-                "pillarsOfInterest": ["Education", "Livelihood", "Nutrition"],
-                "createdAt": now_iso,
-            },
-            {
                 "id": "user-admin-1780189738",
                 "email": "admin@nvc.org",
                 "password": "admin123",

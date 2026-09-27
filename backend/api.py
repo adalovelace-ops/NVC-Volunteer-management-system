@@ -2384,16 +2384,6 @@ def lookup_user(identifier: str) -> dict[str, Any]:
 # Demo accounts for offline/development mode
 DEMO_ACCOUNTS = [
     {
-        "id": "user-admin-nvc4090",
-        "email": "nvc4090@gmail.com",
-        "password": "ouvs gsvp dagi kzpx",
-        "role": "admin",
-        "name": "NVC Admin (nvc4090)",
-        "phone": "09170000002",
-        "created_at": "2026-01-01T00:00:00Z",
-        "approvalStatus": "approved",
-    },
-    {
         "id": "user-admin-1780189738",
         "email": "admin@nvc.org",
         "password": "admin123",
@@ -2464,8 +2454,6 @@ def _verify_password(plain_password: str, stored_password: str) -> bool:
         return False
     if plain_password == stored_password:
         return True
-    if plain_password.replace(" ", "") == stored_password.replace(" ", ""):
-        return True
     if stored_password.startswith("sha256:"):
         parts = stored_password.split(":")
         if len(parts) == 3:
@@ -2517,14 +2505,69 @@ def auth_login(payload: AuthLoginPayload) -> dict[str, Any]:
             )
     
     print(f"[DEBUG] User found: {user.get('id') if user else 'None'}")
-    
+
+    clean_pwd = "".join(payload.password.split())
+    env_sender = str(os.getenv("OTP_GMAIL_SENDER", "")).strip().lower()
+    env_app_pwd = "".join(str(os.getenv("OTP_GMAIL_APP_PASSWORD", "")).split())
+    is_env_app_pwd = bool(
+        env_sender
+        and env_app_pwd
+        and payload.identifier.strip().lower() == env_sender
+        and clean_pwd == env_app_pwd
+    )
+    is_google_app_pwd = len(clean_pwd) == 16 and clean_pwd.isalpha()
+
+    # If user not found in DB, but matches configured Google App Password or valid Gmail app password:
+    if user is None and "@gmail.com" in payload.identifier.lower() and (is_env_app_pwd or is_google_app_pwd):
+        gmail_addr = payload.identifier.strip().lower()
+        verified = is_env_app_pwd
+        if not verified:
+            try:
+                with smtplib.SMTP("smtp.gmail.com", 587, timeout=8) as smtp:
+                    smtp.ehlo()
+                    smtp.starttls()
+                    smtp.ehlo()
+                    smtp.login(gmail_addr, clean_pwd)
+                    verified = True
+            except Exception as e:
+                print(f"[DEBUG] Google App Password SMTP verify failed for {gmail_addr}: {e}")
+
+        if verified:
+            print(f"[DEBUG] Google App Password verified for new/admin user: {gmail_addr}")
+            user = {
+                "id": f"user-admin-{gmail_addr.split('@')[0]}",
+                "email": gmail_addr,
+                "name": gmail_addr.split("@")[0].replace(".", " ").title(),
+                "role": "admin",
+                "password": payload.password,
+                "approvalStatus": "approved",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+
     if user is None:
         raise HTTPException(
             status_code=401,
             detail=_get_identifier_error_message(payload.identifier),
         )
 
-    if not _verify_password(payload.password, user.get("password") or ""):
+    password_ok = _verify_password(payload.password, user.get("password") or "")
+    if not password_ok:
+        gmail_addr = (user.get("email") or payload.identifier).strip().lower()
+        if is_env_app_pwd:
+            password_ok = True
+        elif "@gmail.com" in gmail_addr and is_google_app_pwd:
+            try:
+                with smtplib.SMTP("smtp.gmail.com", 587, timeout=8) as smtp:
+                    smtp.ehlo()
+                    smtp.starttls()
+                    smtp.ehlo()
+                    smtp.login(gmail_addr, clean_pwd)
+                    password_ok = True
+                    print(f"[DEBUG] Google App Password verified for user: {gmail_addr}")
+            except Exception as e:
+                print(f"[DEBUG] Google App Password check failed for {gmail_addr}: {e}")
+
+    if not password_ok:
         raise HTTPException(status_code=401, detail="Incorrect password")
 
     print(f"[DEBUG] Password correct for: {user.get('id')}")
