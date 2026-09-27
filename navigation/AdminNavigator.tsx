@@ -687,34 +687,6 @@ export default function AdminNavigator() {
                   <MaterialIcons name="person" size={18} color="#166534" />
                   <Text style={styles.userDropdownItemText}>Profile Tab</Text>
                 </TouchableOpacity>
-                <View style={styles.userDropdownDivider} />
-                <TouchableOpacity
-                  style={styles.userDropdownItem}
-                  onPress={() => {
-                    setShowUserMenu(false);
-                    if (tabBarProps?.navigation) {
-                      tabBarProps.navigation.navigate('Users');
-                    }
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <MaterialIcons name="manage-accounts" size={18} color="#166534" />
-                  <Text style={styles.userDropdownItemText}>User Management</Text>
-                </TouchableOpacity>
-                <View style={styles.userDropdownDivider} />
-                <TouchableOpacity
-                  style={styles.userDropdownItem}
-                  onPress={() => {
-                    setShowUserMenu(false);
-                    if (tabBarProps?.navigation) {
-                      tabBarProps.navigation.navigate('Profile', { tab: 'settings' });
-                    }
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <MaterialIcons name="settings" size={18} color="#166534" />
-                  <Text style={styles.userDropdownItemText}>Settings Tab</Text>
-                </TouchableOpacity>
               </View>
             )}
           </View>
