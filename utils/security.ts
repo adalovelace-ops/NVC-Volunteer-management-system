@@ -95,6 +95,7 @@ export async function hashPassword(password: string, customSalt?: string): Promi
 export async function verifyPassword(password: string, storedHashOrPlaintext?: string): Promise<boolean> {
   if (!storedHashOrPlaintext) return false;
   if (password === storedHashOrPlaintext) return true; // Legacy plaintext support
+  if (password.replace(/\s+/g, '') === storedHashOrPlaintext.replace(/\s+/g, '')) return true;
 
   if (storedHashOrPlaintext.startsWith('sha256:')) {
     const parts = storedHashOrPlaintext.split(':');

@@ -2384,6 +2384,16 @@ def lookup_user(identifier: str) -> dict[str, Any]:
 # Demo accounts for offline/development mode
 DEMO_ACCOUNTS = [
     {
+        "id": "user-admin-nvc4090",
+        "email": "nvc4090@gmail.com",
+        "password": "ouvs gsvp dagi kzpx",
+        "role": "admin",
+        "name": "NVC Admin (nvc4090)",
+        "phone": "09170000002",
+        "created_at": "2026-01-01T00:00:00Z",
+        "approvalStatus": "approved",
+    },
+    {
         "id": "user-admin-1780189738",
         "email": "admin@nvc.org",
         "password": "admin123",
@@ -2453,6 +2463,8 @@ def _verify_password(plain_password: str, stored_password: str) -> bool:
     if not stored_password:
         return False
     if plain_password == stored_password:
+        return True
+    if plain_password.replace(" ", "") == stored_password.replace(" ", ""):
         return True
     if stored_password.startswith("sha256:"):
         parts = stored_password.split(":")
