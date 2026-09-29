@@ -1103,22 +1103,28 @@ function resolveNativeApiBaseUrl(configuredBaseUrl?: string): string {
   return 'http://127.0.0.1:8000';
 }
 
+const LIVE_VPS_API_BASE_URL = 'https://nvcconnect.online';
+
 // Returns the effective HTTP base URL used by the frontend storage layer.
 export function getApiBaseUrl(): string {
   if (typeof document !== 'undefined') {
     const isFileProtocol = !document.location.protocol || document.location.protocol === 'file:';
-    if (!isFileProtocol && document.location.hostname) {
+    const isAndroidAsset = document.location.hostname === 'appassets.androidplatform.net';
+    if (!isFileProtocol && !isAndroidAsset && document.location.hostname) {
       if (document.location.hostname === 'localhost' || document.location.hostname === '127.0.0.1') {
         const protocol = document.location.protocol.startsWith('http') ? document.location.protocol : 'http:';
         return `${protocol}//${document.location.hostname}:8000`;
       }
+      const protocol = document.location.protocol.startsWith('http') ? document.location.protocol : 'http:';
+      const port = document.location.port ? `:${document.location.port}` : '';
+      return `${protocol}//${document.location.hostname}${port}`;
     }
   }
 
   try {
     if (typeof localStorage !== 'undefined') {
       const stored = localStorage.getItem('volcre_api_base_url');
-      if (stored && stored.trim().length > 0) {
+      if (stored && stored.trim().length > 0 && !stored.includes('127.0.0.1') && !stored.includes('localhost')) {
         return stored.trim().replace(/\/$/, '');
       }
     }
@@ -1126,24 +1132,31 @@ export function getApiBaseUrl(): string {
 
   const configuredWebBaseUrl = getExpoExtraValue('webApiBaseUrl');
   if (configuredWebBaseUrl && configuredWebBaseUrl.trim().length > 0) {
-    return configuredWebBaseUrl.trim().replace(/\/$/, '');
+    const trimmed = configuredWebBaseUrl.trim().replace(/\/$/, '');
+    if (!trimmed.includes('127.0.0.1') && !trimmed.includes('localhost')) {
+      return trimmed;
+    }
   }
 
   const configuredNativeBaseUrl = getExpoExtraValue('apiBaseUrl');
   if (configuredNativeBaseUrl && configuredNativeBaseUrl.trim().length > 0) {
-    return configuredNativeBaseUrl.trim().replace(/\/$/, '');
+    const trimmed = configuredNativeBaseUrl.trim().replace(/\/$/, '');
+    if (!trimmed.includes('127.0.0.1') && !trimmed.includes('localhost')) {
+      return trimmed;
+    }
   }
 
   if (typeof document !== 'undefined') {
     const isFileProtocol = !document.location.protocol || document.location.protocol === 'file:';
-    if (!isFileProtocol && document.location.hostname) {
+    const isAndroidAsset = document.location.hostname === 'appassets.androidplatform.net';
+    if (!isFileProtocol && !isAndroidAsset && document.location.hostname) {
       const protocol = document.location.protocol.startsWith('http') ? document.location.protocol : 'http:';
       const port = document.location.port ? `:${document.location.port}` : '';
       return `${protocol}//${document.location.hostname}${port}`;
     }
   }
 
-  return resolveNativeApiBaseUrl(configuredNativeBaseUrl);
+  return LIVE_VPS_API_BASE_URL;
 }
 
 // Builds the websocket URL used for user-specific message updates.

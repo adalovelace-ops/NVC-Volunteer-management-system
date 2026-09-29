@@ -175,6 +175,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Block non-admin logins on normal web mode.
       // In ?mode=mobile, allow volunteer and partner to log in and get their full mobile UI.
       if (getIsWeb() && userData.role !== 'admin') {
+        if (typeof window !== 'undefined' && window.location) {
+          window.location.search = '?mode=mobile';
+          return;
+        }
         Alert.alert(
           'Access Restricted',
           'Only the admin account can be opened on web. Please use the mobile app for volunteer or partner access.'

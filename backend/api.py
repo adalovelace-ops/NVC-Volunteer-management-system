@@ -60,10 +60,10 @@ def _trace(message: str) -> None:
 # Initialize FastAPI application
 app = FastAPI(title="NVC CONNECT API")
 
-# Add CORS middleware to allow frontend requests
+# Add CORS middleware to allow frontend requests (including mobile WebView, null origin, and live domain)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("ALLOWED_ORIGINS", "*").split(","),
+    allow_origin_regex=".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

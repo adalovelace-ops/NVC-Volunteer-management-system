@@ -28,8 +28,8 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> uploadMessage;
     private final static int FILECHOOSER_RESULTCODE = 1001;
 
-    // Configured LAN and offline URLs
-    private static final String LAN_URL = "http://192.168.1.21:8081/?mode=mobile";
+    // Configured live and offline URLs
+    private static final String LIVE_URL = "https://nvcconnect.online/?mode=mobile";
     private static final String OFFLINE_URL = "file:///android_asset/www/index.html?mode=mobile";
 
     @Override
@@ -72,7 +72,7 @@ public class MainActivity extends Activity {
 
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                // If LAN server fails to load, fallback seamlessly to offline bundled assets
+                // If live server fails to load, fallback seamlessly to offline bundled assets
                 if (request.isForMainFrame() && !view.getUrl().startsWith("file:///android_asset/")) {
                     view.loadUrl(OFFLINE_URL);
                 }
@@ -142,8 +142,8 @@ public class MainActivity extends Activity {
             }
         });
 
-        // Load mobile view (prefer local bundle for speed and reliability, or LAN)
-        webView.loadUrl(OFFLINE_URL);
+        // Load mobile view (live server for full database and Google Auth, fallback to offline)
+        webView.loadUrl(LIVE_URL);
     }
 
     @Override

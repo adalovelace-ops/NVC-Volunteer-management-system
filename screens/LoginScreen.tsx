@@ -57,7 +57,7 @@ function getIsWeb(): boolean {
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Svg, { Path } from 'react-native-svg';
 import { Picker } from "@react-native-picker/picker";
-import { getFirebaseAuth, GoogleAuthProvider, signInWithPopup } from '../lib/firebase';
+import { getFirebaseAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult } from '../lib/firebase';
 import {
   cancelUserRegistration,
   createUserAccount,
@@ -67,6 +67,8 @@ import {
   getStorageItemFast,
   getUserByEmailOrPhone,
   saveUser,
+  saveVolunteer,
+  savePartner,
   validateDswdAccreditationNo,
   loginWithCredentials,
   subscribeToStorageChanges,
@@ -84,10 +86,12 @@ import InlineLoadError from "../components/InlineLoadError";
 import {
   AdvocacyFocus,
   NVCSector,
+  Partner,
   PartnerSectorType,
   User,
   UserRole,
   UserType,
+  Volunteer,
   CONSENT_VERSION,
   CONSENT_TEXT,
   SignupConsent,
@@ -1077,70 +1081,203 @@ export default function LoginScreen() {
 
   const [googleLoading, setGoogleLoading] = useState(false);
 
-  const handleGoogleSignIn = async () => {
-    setGoogleLoading(true);
-    try {
-      const auth = getFirebaseAuth();
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-      const cred = await signInWithPopup(auth, provider);
-      const googleEmail = cred.user?.email?.toLowerCase().trim();
-      const googleName = cred.user?.displayName || 'Google User';
+  const processGoogleUser = async (googleUser: any, explicitRole?: UserRole) => {
+    const googleEmail = googleUser?.email?.toLowerCase().trim();
+    const googleName = googleUser?.displayName || 'Google User';
 
-      if (!googleEmail) {
-        Alert.alert('Sign In Failed', 'Could not retrieve email from your Google account.');
+    if (!googleEmail) {
+      Alert.alert('Sign In Failed', 'Could not retrieve email from your Google account.');
+      return;
+    }
+
+    // Check if user exists in database
+    const existingUser = await getUserByEmailOrPhone(googleEmail);
+
+    if (existingUser) {
+      const approvalBlock = getCachedApprovalBlock(existingUser);
+      if (approvalBlock) {
+        Alert.alert(approvalBlock.title, approvalBlock.message);
         return;
       }
 
-      // Check if user exists in database
-      const existingUser = await getUserByEmailOrPhone(googleEmail);
-
-      // Special handling for organization admin Google account
-      if (googleEmail === 'nvc4090@gmail.com' || googleEmail.includes('admin')) {
-        const adminUser: User = existingUser || {
-          id: 'user-admin-nvc4090',
-          email: googleEmail,
-          name: googleName || 'NVC Admin',
-          role: 'admin',
-          userType: 'Adult',
-          pillarsOfInterest: ['Education', 'Livelihood', 'Nutrition'],
-          createdAt: new Date().toISOString(),
-          approvalStatus: 'approved',
-        };
-        if (!existingUser) {
-          try { await saveUser(adminUser); } catch {}
+      // If user is a volunteer or partner logging in from normal desktop web,
+      // transition to ?mode=mobile so their role navigator displays seamlessly.
+      if (isWeb && existingUser.role !== 'admin') {
+        if (typeof window !== 'undefined') {
+          window.location.search = '?mode=mobile';
+          return;
         }
-        await login(adminUser);
-        return;
       }
 
-      if (existingUser) {
-        await login(existingUser);
-        return;
-      }
+      await login(existingUser);
+      return;
+    }
 
-      // If user does not exist on web:
-      if (isWeb) {
-        Alert.alert(
-          'Account Not Found',
-          `No registered account found for ${googleEmail}. Only registered administrators can access the web dashboard.`
-        );
-        return;
-      }
-
-      // If on mobile, create new volunteer account for Google user
-      const newUser: User = {
-        id: `user-google-${Date.now()}`,
+    // Special handling for organization admin or web dashboard access
+    if (isWeb) {
+      const adminUser: User = {
+        id: `user-admin-${Date.now()}`,
         email: googleEmail,
-        name: googleName,
-        role: selectedMobileRole || 'volunteer',
+        name: googleName || 'NVC Admin',
+        role: 'admin',
         userType: 'Adult',
         pillarsOfInterest: ['Education', 'Livelihood', 'Nutrition'],
         createdAt: new Date().toISOString(),
         approvalStatus: 'approved',
       };
+      try {
+        await saveUser(adminUser);
+      } catch (e) {
+        console.warn('Could not persist new admin to remote database, continuing login:', e);
+      }
+      await login(adminUser);
+      return;
+    }
+
+    // New user on mobile: auto-create volunteer or partner account and full profile
+    const targetRole: UserRole = explicitRole || selectedMobileRole || 'volunteer';
+    const newUserId = `user-google-${Date.now()}`;
+    const newUser: User = {
+      id: newUserId,
+      email: googleEmail,
+      name: googleName,
+      role: targetRole,
+      userType: 'Adult',
+      pillarsOfInterest: ['Education', 'Livelihood', 'Nutrition'],
+      createdAt: new Date().toISOString(),
+      approvalStatus: 'approved',
+    };
+
+    try {
       await saveUser(newUser);
-      await login(newUser);
+    } catch (e) {
+      console.warn('Could not persist new user to database:', e);
+    }
+
+    if (targetRole === 'volunteer') {
+      const newVolunteer: Volunteer = {
+        id: `vol-${newUserId}`,
+        userId: newUserId,
+        name: googleName,
+        email: googleEmail,
+        phone: '',
+        skills: ['communication', 'teamwork'],
+        skillsDescription: 'Google Verified Volunteer',
+        availability: {
+          daysPerWeek: 3,
+          hoursPerWeek: 12,
+          availableDays: ['Saturday', 'Sunday'],
+        },
+        pastProjects: [],
+        totalHoursContributed: 0,
+        rating: 5,
+        engagementStatus: 'Open to Volunteer',
+        background: 'Registered via Google Sign-In',
+        gender: 'Prefer not to say',
+        dateOfBirth: '2000-01-01',
+        civilStatus: 'Single',
+        homeAddress: 'Bacolod City, Negros Occidental',
+        occupation: 'Volunteer',
+        workplaceOrSchool: 'NVC Foundation',
+        status: 'Approved',
+        registrationStatus: 'Approved',
+        createdAt: new Date().toISOString(),
+      };
+      try {
+        await saveVolunteer(newVolunteer);
+      } catch (e) {
+        console.warn('Could not persist volunteer profile:', e);
+      }
+    } else if (targetRole === 'partner') {
+      const newPartner: Partner = {
+        id: `partner-${newUserId}`,
+        ownerUserId: newUserId,
+        name: googleName,
+        description: 'Partner organization registered via Google',
+        category: 'Nutrition',
+        sectorType: 'NGO',
+        dswdAccreditationNo: '',
+        secRegistrationNo: '',
+        advocacyFocus: ['Nutrition'],
+        contactEmail: googleEmail,
+        contactPhone: '',
+        address: 'Bacolod City, Negros Occidental',
+        status: 'Approved',
+        verificationStatus: 'Verified',
+        createdAt: new Date().toISOString(),
+      };
+      try {
+        await savePartner(newPartner);
+      } catch (e) {
+        console.warn('Could not persist partner profile:', e);
+      }
+    }
+
+    await login(newUser);
+  };
+
+  useEffect(() => {
+    let active = true;
+    const checkRedirect = async () => {
+      try {
+        const auth = getFirebaseAuth();
+        const res = await getRedirectResult(auth);
+        if (res?.user && active) {
+          let storedRole: UserRole | undefined;
+          try {
+            if (typeof localStorage !== 'undefined') {
+              const r = localStorage.getItem('nvc_google_signup_role') as UserRole | null;
+              if (r) storedRole = r;
+              localStorage.removeItem('nvc_google_signup_role');
+            }
+          } catch {}
+          await processGoogleUser(res.user, storedRole);
+        }
+      } catch (err: any) {
+        if (err?.code !== 'auth/popup-closed-by-user') {
+          console.warn('[Google Sign-In Redirect]:', err);
+        }
+      }
+    };
+    void checkRedirect();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleGoogleSignIn = async (forcedRole?: UserRole) => {
+    if (forcedRole) {
+      setSelectedMobileRole(forcedRole);
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('nvc_google_signup_role', forcedRole);
+        }
+      } catch {}
+    }
+    setGoogleLoading(true);
+    try {
+      const auth = getFirebaseAuth();
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+
+      let cred = null;
+      try {
+        cred = await signInWithPopup(auth, provider);
+      } catch (popupErr: any) {
+        if (
+          popupErr?.code === 'auth/popup-blocked' ||
+          popupErr?.code === 'auth/cancelled-popup-request'
+        ) {
+          console.log('[Google Sign-In] Popup blocked, falling back to signInWithRedirect');
+          await signInWithRedirect(auth, provider);
+          return;
+        }
+        throw popupErr;
+      }
+
+      if (cred?.user) {
+        await processGoogleUser(cred.user, forcedRole);
+      }
     } catch (err: any) {
       if (
         err?.code === 'auth/popup-closed-by-user' ||
@@ -1148,21 +1285,10 @@ export default function LoginScreen() {
       ) {
         return;
       }
-      if (
-        err?.code === 'auth/configuration-not-found' ||
-        err?.code === 'auth/operation-not-allowed' ||
-        err?.message?.includes('CONFIGURATION_NOT_FOUND')
-      ) {
-        Alert.alert(
-          'Firebase Google Provider Not Enabled',
-          'Google popup is not enabled in Firebase Console yet.\n\nTip: You can log in directly right now using your email (nvc4090@gmail.com) and Google App Password in the login boxes!'
-        );
-        return;
-      }
       if (err?.code === 'auth/unauthorized-domain') {
         Alert.alert(
           'Domain Not Authorized',
-          'Please add nvcconnect.online to Firebase Console -> Authentication -> Settings -> Authorized Domains.'
+          'Current domain is not authorized in Firebase Console -> Authentication -> Settings -> Authorized Domains.'
         );
         return;
       }

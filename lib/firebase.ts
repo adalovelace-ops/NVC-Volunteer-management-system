@@ -24,7 +24,7 @@ const firebaseConfig = {
   appId:             '1:80950080445:web:3233c79830c2adc75518d4',
 };
 
-import { getAuth, type Auth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { getAuth, type Auth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult } from 'firebase/auth';
 
 let app: FirebaseApp;
 let firestore: Firestore;
@@ -51,5 +51,5 @@ export function getFirebaseAuth(): Auth {
   return auth;
 }
 
-export { GoogleAuthProvider, signInWithPopup };
+export { GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult };
 

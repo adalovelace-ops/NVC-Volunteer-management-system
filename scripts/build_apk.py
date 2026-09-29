@@ -81,6 +81,8 @@ subprocess.run(cmd, cwd=ROOT, check=True, shell=True)
 print("Step 2: Syncing bundle to Android assets...")
 dist_dir = os.path.join(ROOT, "dist")
 for item in os.listdir(dist_dir):
+    if item.endswith('.apk'):
+        continue
     s = os.path.join(dist_dir, item)
     d = os.path.join(ASSETS_WWW, item)
     if os.path.isdir(s):
@@ -186,9 +188,15 @@ cmd = [APKSIGNER, "verify", "--verbose", final_apk]
 subprocess.run(cmd, check=True, shell=True)
 
 shutil.copy2(final_apk, root_copy_apk)
-# Also copy to legacy volcre-mobile.apk names
+# Also copy to web static directories and legacy volcre-mobile.apk names
 shutil.copy2(final_apk, os.path.join(ROOT, "volcre-mobile.apk"))
 shutil.copy2(final_apk, os.path.join(os.path.dirname(ROOT), "volcre-mobile.apk"))
+dist_apk = os.path.join(ROOT, "dist", "nvc-mobile.apk")
+public_apk = os.path.join(ROOT, "public", "nvc-mobile.apk")
+if os.path.exists(os.path.join(ROOT, "dist")):
+    shutil.copy2(final_apk, dist_apk)
+if os.path.exists(os.path.join(ROOT, "public")):
+    shutil.copy2(final_apk, public_apk)
 size_mb = os.path.getsize(final_apk) / (1024 * 1024)
 
 print(f"\n==========================================")
