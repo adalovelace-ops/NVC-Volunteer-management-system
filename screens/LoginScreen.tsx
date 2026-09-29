@@ -57,7 +57,7 @@ function getIsWeb(): boolean {
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import Svg, { Path } from 'react-native-svg';
 import { Picker } from "@react-native-picker/picker";
-import { getFirebaseAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult } from '../lib/firebase';
+import { triggerGoogleOAuthLogin, handleGoogleOAuthRedirect, type GoogleUserProfile } from '../lib/googleAuth';
 import {
   cancelUserRegistration,
   createUserAccount,
@@ -1083,7 +1083,7 @@ export default function LoginScreen() {
 
   const processGoogleUser = async (googleUser: any, explicitRole?: UserRole) => {
     const googleEmail = googleUser?.email?.toLowerCase().trim();
-    const googleName = googleUser?.displayName || 'Google User';
+    const googleName = googleUser?.name || googleUser?.displayName || 'Google User';
 
     if (!googleEmail) {
       Alert.alert('Sign In Failed', 'Could not retrieve email from your Google account.');
@@ -1220,9 +1220,8 @@ export default function LoginScreen() {
     let active = true;
     const checkRedirect = async () => {
       try {
-        const auth = getFirebaseAuth();
-        const res = await getRedirectResult(auth);
-        if (res?.user && active) {
+        const profile = await handleGoogleOAuthRedirect();
+        if (profile && active) {
           let storedRole: UserRole | undefined;
           try {
             if (typeof localStorage !== 'undefined') {
@@ -1231,12 +1230,10 @@ export default function LoginScreen() {
               localStorage.removeItem('nvc_google_signup_role');
             }
           } catch {}
-          await processGoogleUser(res.user, storedRole);
+          await processGoogleUser(profile, storedRole);
         }
       } catch (err: any) {
-        if (err?.code !== 'auth/popup-closed-by-user') {
-          console.warn('[Google Sign-In Redirect]:', err);
-        }
+        console.warn('[Google Sign-In Redirect error]:', err);
       }
     };
     void checkRedirect();
@@ -1256,42 +1253,21 @@ export default function LoginScreen() {
     }
     setGoogleLoading(true);
     try {
-      const auth = getFirebaseAuth();
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-
-      let cred = null;
-      try {
-        cred = await signInWithPopup(auth, provider);
-      } catch (popupErr: any) {
-        if (
-          popupErr?.code === 'auth/popup-blocked' ||
-          popupErr?.code === 'auth/cancelled-popup-request'
-        ) {
-          console.log('[Google Sign-In] Popup blocked, falling back to signInWithRedirect');
-          await signInWithRedirect(auth, provider);
-          return;
+      await triggerGoogleOAuthLogin(
+        async (profile: GoogleUserProfile) => {
+          await processGoogleUser(profile, forcedRole);
+        },
+        (err: any) => {
+          if (
+            err?.message?.includes('popup_closed_by_user') ||
+            err?.message?.includes('user_cancel')
+          ) {
+            return;
+          }
+          Alert.alert('Google Sign-In Error', err?.message || 'Unable to sign in with Google.');
         }
-        throw popupErr;
-      }
-
-      if (cred?.user) {
-        await processGoogleUser(cred.user, forcedRole);
-      }
+      );
     } catch (err: any) {
-      if (
-        err?.code === 'auth/popup-closed-by-user' ||
-        err?.code === 'auth/cancelled-popup-request'
-      ) {
-        return;
-      }
-      if (err?.code === 'auth/unauthorized-domain') {
-        Alert.alert(
-          'Domain Not Authorized',
-          'Current domain is not authorized in Firebase Console -> Authentication -> Settings -> Authorized Domains.'
-        );
-        return;
-      }
       Alert.alert('Google Sign-In Error', err?.message || 'Unable to sign in with Google.');
     } finally {
       setGoogleLoading(false);
