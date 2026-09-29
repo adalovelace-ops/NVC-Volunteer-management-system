@@ -12,7 +12,9 @@ import android.os.Bundle;
 import android.os.Message;
 import android.view.KeyEvent;
 import android.view.View;
+import android.net.http.SslError;
 import android.webkit.GeolocationPermissions;
+import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -63,11 +65,17 @@ public class MainActivity extends Activity {
 
         // Enable Hardware Acceleration
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 return false;
+            }
+
+            @Override
+            public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
+                handler.proceed();
             }
 
             @Override

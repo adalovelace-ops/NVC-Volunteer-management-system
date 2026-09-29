@@ -1133,7 +1133,7 @@ export function getApiBaseUrl(): string {
   const configuredWebBaseUrl = getExpoExtraValue('webApiBaseUrl');
   if (configuredWebBaseUrl && configuredWebBaseUrl.trim().length > 0) {
     const trimmed = configuredWebBaseUrl.trim().replace(/\/$/, '');
-    if (!trimmed.includes('127.0.0.1') && !trimmed.includes('localhost')) {
+    if (!trimmed.includes('127.0.0.1') && !trimmed.includes('localhost') && !trimmed.includes('YOUR_SYSTEM_IP')) {
       return trimmed;
     }
   }
@@ -1141,7 +1141,7 @@ export function getApiBaseUrl(): string {
   const configuredNativeBaseUrl = getExpoExtraValue('apiBaseUrl');
   if (configuredNativeBaseUrl && configuredNativeBaseUrl.trim().length > 0) {
     const trimmed = configuredNativeBaseUrl.trim().replace(/\/$/, '');
-    if (!trimmed.includes('127.0.0.1') && !trimmed.includes('localhost')) {
+    if (!trimmed.includes('127.0.0.1') && !trimmed.includes('localhost') && !trimmed.includes('YOUR_SYSTEM_IP')) {
       return trimmed;
     }
   }
