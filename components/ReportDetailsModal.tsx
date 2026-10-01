@@ -123,7 +123,7 @@ export default function ReportDetailsModal({
         uri,
         name: report.submitterName,
         date: formatDateForFilename(report.submittedAt),
-        filename: `${(report.title || 'report').replace(/[^\w.-]+/g, '_')}-photo-${idx + 1}`,
+        filename: `${(report.title || 'report').replace(/[^\w.-]+/g, '_')}-photo-${idx + 1}.jpeg`,
       })),
       `${(report.title || 'report').replace(/[^\w.-]+/g, '_')}-photos.zip`
     );

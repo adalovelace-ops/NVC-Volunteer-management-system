@@ -4,7 +4,7 @@ import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ScreenBrandHeader from '../components/ScreenBrandHeader';
 import { useAuth } from '../contexts/AuthContext';
-import { getMessagesForUser, subscribeToMessages, getAllUsers, subscribeToStorageChanges, markMessageAsRead } from '../models/storage';
+import { getMessagesForUser, subscribeToMessages, getAllUsers, subscribeToStorageChanges, markMessageAsRead, markMessagesAsRead, markAllMessagesForUserAsRead } from '../models/storage';
 import PartnerHomeScreen from '../screens/PartnerHomeScreen';
 import PartnerDashboardScreen from '../screens/PartnerDashboardScreen';
 import PartnerProgramManagementScreen from '../screens/PartnerProgramManagementScreen';
@@ -89,11 +89,11 @@ export default function PartnerNavigator() {
   }, [user?.id]);
 
   const handleNotificationsSeen = React.useCallback(async () => {
-    if (!user?.id || unreadMessages.length === 0) return;
-    await Promise.all(
-      unreadMessages.map((msg) => markMessageAsRead(msg.id).catch(() => undefined))
-    );
-  }, [unreadMessages, user?.id]);
+    if (!user?.id) return;
+    setUnreadMessages([]);
+    setMessageUnreadCount(0);
+    await markAllMessagesForUserAsRead(user.id);
+  }, [user?.id]);
 
   return (
     <Tab.Navigator
@@ -128,7 +128,20 @@ export default function PartnerNavigator() {
       <Tab.Screen name="Programs" component={PartnerProgramManagementScreen} options={{ title: 'Program Management' }} />
       <Tab.Screen name="Projects" component={PartnerProjectsScreen} options={{ title: 'My Projects', tabBarLabel: 'Projects' }} />
       <Tab.Screen name="Map" component={MappingScreen} options={{ title: 'Impact Map' }} />
-      <Tab.Screen name="Messages" component={CommunicationHubScreen} options={{ title: 'Messages', tabBarBadge: messageUnreadCount > 0 ? messageUnreadCount : undefined }} />
+      <Tab.Screen
+        name="Messages"
+        component={CommunicationHubScreen}
+        options={{ title: 'Messages', tabBarBadge: messageUnreadCount > 0 ? messageUnreadCount : undefined }}
+        listeners={{
+          focus: () => {
+            setMessageUnreadCount(0);
+            setUnreadMessages([]);
+            if (user?.id) {
+              void markAllMessagesForUserAsRead(user.id);
+            }
+          },
+        }}
+      />
       <Tab.Screen name="ProjectLifecycle" component={ProjectLifecycleScreen} options={{ title: 'Project Details', tabBarButton: () => null }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ title: 'Partner Profile' }} />
     </Tab.Navigator>

@@ -232,6 +232,23 @@ function buildPartnerGeneratedDescription(
   ].join('\n\n');
 }
 
+export const ROOT_PROGRAM_NAMES = new Set([
+  'Disaster',
+  'Education',
+  'Livelihood',
+  'Nutrition',
+  'Disaster Relief',
+]);
+
+export function isProgramTrackRecord(project: { id?: string; title?: string } | null | undefined): boolean {
+  if (!project) return false;
+  const id = String(project.id || '').trim();
+  const title = String(project.title || '').trim();
+  if (id.startsWith('program:')) return true;
+  if (ROOT_PROGRAM_NAMES.has(id) || ROOT_PROGRAM_NAMES.has(title)) return true;
+  return false;
+}
+
 function buildPartnerProjectSummaries(
   partnerUserId: string | undefined,
   projects: Project[],
@@ -251,7 +268,8 @@ function buildPartnerProjectSummaries(
         application =>
           application.status === 'Approved' &&
           Boolean(application.projectId) &&
-          !String(application.projectId).startsWith('program:')
+          !String(application.projectId).startsWith('program:') &&
+          !isProgramTrackRecord({ id: application.projectId })
       )
       .map(application => application.projectId)
   );
@@ -276,20 +294,71 @@ function buildPartnerProjectSummaries(
 
   const volunteerById = new Map(volunteers.map(volunteer => [volunteer.id, volunteer]));
 
-  return projects
-    .filter(project => {
-      if (project.isEvent || project.isDraft) return false;
-      // Match by direct project ID (normal case after approval)
-      if (approvedProjectIds.has(project.id)) return true;
-      // Match by programModule (fallback when cache has stale program: IDs)
-      if (project.programModule && approvedProgramModules.has(project.programModule)) return true;
-      // Match proposal-created projects by ID prefix
-      if (String(project.id).startsWith('project-proposal-') && approvedProgramModules.has(project.category || '')) return true;
-      return false;
-    })
+  // 1. Gather all actual project records (excluding root program pillars)
+  const partnerProjects: Project[] = [];
+  const matchedProjectIds = new Set<string>();
+
+  projects.forEach(project => {
+    if (project.isEvent || project.isDraft) return;
+    if (isProgramTrackRecord(project)) return;
+
+    if (approvedProjectIds.has(project.id)) {
+      partnerProjects.push(project);
+      matchedProjectIds.add(project.id);
+      return;
+    }
+
+    if (String(project.id).startsWith('project-proposal-') && approvedProgramModules.has(project.category || '')) {
+      partnerProjects.push(project);
+      matchedProjectIds.add(project.id);
+      return;
+    }
+  });
+
+  // 2. Synthesize project entries from approved partner applications (proposals)
+  // if no explicit non-program Project entity exists yet
+  partnerApplications
+    .filter(app => app.status === 'Approved')
+    .forEach(app => {
+      const proposal = app.proposalDetails;
+      const proposedTitle = proposal?.proposedTitle || proposal?.targetProjectTitle;
+      const appProjectId = String(app.projectId || '').trim();
+      const isCustomId = Boolean(appProjectId && !isProgramTrackRecord({ id: appProjectId }));
+      const targetId = isCustomId ? appProjectId : `partner-project-${app.id}`;
+
+      if (matchedProjectIds.has(targetId) || matchedProjectIds.has(appProjectId)) return;
+      if (partnerProjects.some(p => p.title && proposedTitle && p.title.toLowerCase() === proposedTitle.toLowerCase())) return;
+
+      const category = (proposal?.requestedProgramModule || 'Education') as Project['category'];
+      const syntheticProject: Project = {
+        id: targetId,
+        title: proposedTitle || `${category} Community Initiative`,
+        description: proposal?.proposedDescription || proposal?.targetProjectDescription || '',
+        category,
+        status: 'Active',
+        startDate: proposal?.proposedStartDate || app.reviewedAt || app.requestedAt || new Date().toISOString(),
+        endDate: proposal?.proposedEndDate,
+        location: proposal?.proposedLocation || proposal?.targetProjectAddress || 'Community Center',
+        address: proposal?.proposedLocation || proposal?.targetProjectAddress || 'Community Center',
+        volunteersNeeded: proposal?.proposedVolunteersNeeded || 0,
+        skillsNeeded: proposal?.skillsNeeded || [],
+        partnerId: app.partnerUserId || app.partnerEmail,
+        createdAt: app.requestedAt || new Date().toISOString(),
+        updatedAt: app.reviewedAt || new Date().toISOString(),
+      };
+      partnerProjects.push(syntheticProject);
+      matchedProjectIds.add(targetId);
+    });
+
+  return partnerProjects
     .map(project => {
       const linkedEvents = projects.filter(
-        candidate => candidate.isEvent && candidate.parentProjectId === project.id
+        candidate =>
+          candidate.isEvent &&
+          !candidate.isDraft &&
+          (candidate.parentProjectId === project.id ||
+            (project.category && candidate.category === project.category) ||
+            (project.partnerId && candidate.partnerId === project.partnerId))
       );
       const linkedEventIds = new Set(linkedEvents.map(event => event.id));
       const partnerReports = reports
@@ -1013,7 +1082,12 @@ export default function ReportsScreen({ navigation, route }: any) {
       return (
         <PartnerReportsDashboard
           reports={userReports}
-          projects={partnerAcceptedProjects}
+          projects={
+            partnerAcceptedProjects.length > 0
+              ? partnerAcceptedProjects
+              : projects.filter(p => !p.isEvent && !p.isDraft && !isProgramTrackRecord(p))
+          }
+          allProjects={projects}
           volunteerTimeLogs={volunteerTimeLogs}
           volunteerJoinRecords={volunteerJoinRecords}
           onUploadReport={handleOpenUploadModal}
@@ -1024,6 +1098,7 @@ export default function ReportsScreen({ navigation, route }: any) {
           projectSummaries={partnerProjectSummaries}
           isAdminView={false}
           volunteers={volunteers}
+          partnerApplications={partnerApplications}
         />
       );
     }
@@ -1072,7 +1147,8 @@ export default function ReportsScreen({ navigation, route }: any) {
       return (
         <PartnerReportsDashboard
           reports={partnerOnly}
-          projects={projects}
+          projects={projects.filter(p => !p.isEvent && !p.isDraft && !isProgramTrackRecord(p))}
+          allProjects={projects}
           volunteerTimeLogs={volunteerTimeLogs}
           volunteerJoinRecords={volunteerJoinRecords}
           onUploadReport={handleOpenUploadModal}
@@ -1083,6 +1159,7 @@ export default function ReportsScreen({ navigation, route }: any) {
           projectSummaries={partnerProjectSummaries}
           isAdminView={true}
           volunteers={volunteers}
+          partnerApplications={partnerApplications}
         />
       );
     }

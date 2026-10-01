@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "orientation": "portrait",
   "description": "Volunteer and Community Engagement Platform",
+  "scheme": "nvcconnect",
   "env": {
     "apiBaseUrl": "https://nvcconnect.online",
     "webApiBaseUrl": "https://nvcconnect.online",

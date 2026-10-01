@@ -79,6 +79,13 @@ cmd = ["npx", "vite", "build"]
 subprocess.run(cmd, cwd=ROOT, check=True, shell=True)
 
 print("Step 2: Syncing bundle to Android assets...")
+for root, _, files in os.walk(ASSETS_DIR):
+    for f in files:
+        if f.endswith('.apk'):
+            try:
+                os.remove(os.path.join(root, f))
+            except Exception:
+                pass
 dist_dir = os.path.join(ROOT, "dist")
 for item in os.listdir(dist_dir):
     if item.endswith('.apk'):

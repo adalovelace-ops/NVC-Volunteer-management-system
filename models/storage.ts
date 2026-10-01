@@ -110,8 +110,8 @@ const API_REQUEST_RETRY_BASE_MS = 800; // Reduced from 1s
 const API_REQUEST_RETRY_MAX_MS = 5000; // Reduced from 8s
 const SHARED_STORAGE_CACHE_TTL_MS = 600000; // Increased from 5m to 10m
 const PROJECTS_SNAPSHOT_CACHE_TTL_MS = 120000; // Increased from 1m to 2m
-const MESSAGES_CACHE_TTL_MS = 30000; // 30s cache for message list — invalidated on send/receive
-const CONVERSATION_CACHE_TTL_MS = 20000; // 20s cache for individual conversations
+const MESSAGES_CACHE_TTL_MS = 2000; // 2s cache for message list — fast refresh
+const CONVERSATION_CACHE_TTL_MS = 1500; // 1.5s cache for individual conversations
 const STORAGE_CHANGE_POLL_INTERVAL_MS = 5000; // Increased from 3s to 5s
 const STORAGE_CHANGE_DEBOUNCE_MS = 800; // Increased from 500ms
 const STORAGE_CHANGE_CALLBACK_COOLDOWN_MS = 1500; // Increased from 1s
@@ -2265,6 +2265,7 @@ export async function getProjectsScreenSnapshot(
 export async function setStorageItem<T>(key: string, value: T): Promise<void> {
   if (isLocalOnlyStorageKey(key)) {
     await setLocalStorageItem(key, value);
+    notifyStorageChanged([key]);
     return;
   }
 
@@ -2272,6 +2273,7 @@ export async function setStorageItem<T>(key: string, value: T): Promise<void> {
     await saveRemoteStorageItem(key, value);
     setSharedStorageCacheValue(key, value);
     projectsSnapshotCache.clear();
+    notifyStorageChanged([key]);
   } catch (error) {
     console.error(`Error saving shared ${key} to backend:`, error);
     throw error;
@@ -4815,8 +4817,8 @@ import {
   updateProjectGroupMessageContent as fbUpdateProjectGroupMessageContent,
   getMessagesForUser as fbGetMessagesForUser,
   getConversation as fbGetConversation,
-  getProjectGroupMessages as fbGetProjectGroupMessages,
   markMessageAsRead as fbMarkMessageAsRead,
+  markLocalDirectMessagesAsRead as fbMarkLocalDirectMessagesAsRead,
   type MessageSubscriptionEvent,
   subscribeToMessages as fbSubscribeToMessages,
   setTypingStatus as fbSetTypingStatus,
@@ -5074,10 +5076,10 @@ export async function getMessagesForUser(userId: string): Promise<Message[]> {
   }
 }
 
-export async function getConversation(userId1: string, userId2: string): Promise<Message[]> {
+export async function getConversation(userId1: string, userId2: string, forceFresh = false): Promise<Message[]> {
   const cacheKey = [userId1, userId2].sort().join(':');
   const cached = conversationCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CONVERSATION_CACHE_TTL_MS) {
+  if (!forceFresh && cached && Date.now() - cached.timestamp < CONVERSATION_CACHE_TTL_MS) {
     return cached.data;
   }
   try {
@@ -5097,11 +5099,12 @@ export async function getConversation(userId1: string, userId2: string): Promise
 
 export async function getProjectGroupMessages(
   projectId: string,
-  userId: string
+  userId: string,
+  forceFresh = false
 ): Promise<ProjectGroupMessage[]> {
   const cacheKey = `${projectId}:${userId}`;
   const cached = groupMessagesCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CONVERSATION_CACHE_TTL_MS) {
+  if (!forceFresh && cached && Date.now() - cached.timestamp < CONVERSATION_CACHE_TTL_MS) {
     return cached.data;
   }
   const messages = await fbGetProjectGroupMessages(projectId, userId);
@@ -5126,31 +5129,184 @@ export function invalidateMessageCache(userId?: string, conversationPartnerId?: 
   }
 }
 
-export async function markMessageAsRead(messageId: string): Promise<void> {
+export async function markAllMessagesForUserAsRead(userId: string): Promise<void> {
+  if (!userId) return;
+
+  // Directly mutate in-memory caches immediately
+  messagesForUserCache.forEach(cacheEntry => {
+    cacheEntry.data.forEach(msg => {
+      if (msg.recipientId === userId) {
+        msg.read = true;
+      }
+    });
+  });
+  conversationCache.forEach(cacheEntry => {
+    cacheEntry.data.forEach(msg => {
+      if (msg.recipientId === userId) {
+        msg.read = true;
+      }
+    });
+  });
+
+  // Clear caches so next request fetches fresh data from server
+  messagesForUserCache.clear();
+  conversationCache.clear();
+
+  // Clear local AsyncStorage direct messages
+  await fbMarkLocalDirectMessagesAsRead({ recipientId: userId }).catch(() => {});
+
   try {
-    await requestApiJson(`/messages/${encodeURIComponent(messageId)}/read`, {
-      method: 'PATCH',
+    await requestApiJson('/messages/mark-all-read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipientId: userId }),
     });
   } catch {}
-  await fbMarkMessageAsRead(messageId).catch(() => {});
+
+  notifyStorageChanged(['messages']);
   notifyWebMessageUpdate();
+}
+
+export async function markMessagesAsRead(messageIds: string[]): Promise<void> {
+  if (!messageIds || messageIds.length === 0) return;
+  const idSet = new Set(messageIds);
+
+  // Directly mutate in-memory caches immediately so any concurrent read sees read: true
+  messagesForUserCache.forEach(cacheEntry => {
+    cacheEntry.data.forEach(msg => {
+      if (idSet.has(msg.id)) {
+        msg.read = true;
+      }
+    });
+  });
+  conversationCache.forEach(cacheEntry => {
+    cacheEntry.data.forEach(msg => {
+      if (idSet.has(msg.id)) {
+        msg.read = true;
+      }
+    });
+  });
+
+  // Clear caches so next request fetches fresh data from server
+  messagesForUserCache.clear();
+  conversationCache.clear();
+
+  // Clear local AsyncStorage direct messages
+  await fbMarkLocalDirectMessagesAsRead({ messageIds }).catch(() => {});
+
+  try {
+    await requestApiJson('/messages/mark-all-read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageIds }),
+    });
+  } catch {}
+
+  // Fallback to per-item PATCH and firestore
+  await Promise.allSettled(
+    messageIds.map(id =>
+      requestApiJson(`/messages/${encodeURIComponent(id)}/read`, { method: 'PATCH' })
+        .catch(() => {})
+        .then(() => fbMarkMessageAsRead(id).catch(() => {}))
+    )
+  );
+
+  notifyStorageChanged(['messages']);
+  notifyWebMessageUpdate();
+}
+
+export async function markMessageAsRead(messageId: string): Promise<void> {
+  return markMessagesAsRead([messageId]);
 }
 
 export function subscribeToMessages(
   userId: string,
   onChange: (event: MessageSubscriptionEvent) => void
 ): () => void {
-  return fbSubscribeToMessages(userId, (event) => {
-    // Invalidate local cache on real-time event so next reload fetches fresh data
+  let isClosed = false;
+  let ws: WebSocket | null = null;
+  let reconnectTimer: any = null;
+  let heartbeatTimer: any = null;
+
+  // 1. Connect to backend websocket for instant push
+  const connectWs = () => {
+    if (isClosed) return;
+    try {
+      const wsUrl = getMessagesWebSocketUrl(userId);
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        heartbeatTimer = setInterval(() => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send('ping');
+          }
+        }, 20000);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload?.type === 'message.changed' && payload.message) {
+            const msg = payload.message as Message;
+            invalidateMessageCache(msg.senderId, msg.recipientId);
+            invalidateMessageCache(msg.recipientId, msg.senderId);
+            conversationCache.delete([msg.senderId, msg.recipientId].sort().join(':'));
+            messagesForUserCache.delete(msg.senderId);
+            messagesForUserCache.delete(msg.recipientId);
+            onChange({ type: 'message.changed', message: msg });
+          } else if (payload?.type === 'project-group-message.changed' && payload.message) {
+            invalidateMessageCache(undefined, undefined, payload.message.projectId);
+            onChange({ type: 'project-group-message.changed', message: payload.message });
+          }
+        } catch {}
+      };
+
+      ws.onerror = () => {
+        ws?.close();
+      };
+
+      ws.onclose = () => {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        ws = null;
+        if (!isClosed) {
+          reconnectTimer = setTimeout(connectWs, 2000);
+        }
+      };
+    } catch {
+      if (!isClosed) {
+        reconnectTimer = setTimeout(connectWs, 2000);
+      }
+    }
+  };
+
+  connectWs();
+
+  // 2. Also listen via Firestore as secondary channel
+  const fbUnsub = fbSubscribeToMessages(userId, (event) => {
     if (event.type === 'message.changed') {
       const msg = event.message as Message;
       invalidateMessageCache(msg.senderId, msg.recipientId);
       invalidateMessageCache(msg.recipientId, msg.senderId);
+      conversationCache.delete([msg.senderId, msg.recipientId].sort().join(':'));
     } else if (event.type === 'project-group-message.changed') {
       invalidateMessageCache(undefined, undefined, event.message.projectId);
     }
     onChange(event);
   });
+
+  return () => {
+    isClosed = true;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    if (ws) {
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.close();
+      ws = null;
+    }
+    fbUnsub();
+  };
 }
 
 // Opens a realtime websocket subscription for shared storage changes.
@@ -6097,6 +6253,7 @@ export async function savePartnerReport(report: PartnerReport): Promise<void> {
     reports.push(report);
   }
   await setStorageItem(STORAGE_KEYS.PARTNER_REPORTS, dedupeReports(reports));
+  notifyStorageChanged([STORAGE_KEYS.PARTNER_REPORTS]);
 }
 
 // Returns partner reports associated with one project.

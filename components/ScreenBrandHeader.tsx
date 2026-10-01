@@ -3,6 +3,7 @@ import { StyleSheet, Text, View, useWindowDimensions, Modal, TouchableOpacity, S
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { PartnerProjectApplication, User, VolunteerProjectMatch } from '../models/types';
+import { markMessageAsRead } from '../models/storage';
 import AppLogo from './AppLogo';
 
 type NotificationMessage = {
@@ -170,6 +171,9 @@ export default function ScreenBrandHeader({
           }
           break;
         case 'message':
+          if (item.data?.id) {
+            void markMessageAsRead(item.data.id);
+          }
           navigation.navigate('Messages', {
             conversationUserId: item.data?.senderId || item.data?.recipientId,
           });

@@ -13,25 +13,105 @@ export interface ExportablePhoto {
 
 function sanitizeName(value?: string, fallback = 'photo'): string {
   if (!value) return fallback;
-  return value
-    .trim()
-    .replace(/[^\w.-]+/g, '_')
-    .replace(/^_+|_+$/g, '') || fallback;
+  return (
+    value
+      .trim()
+      .replace(/[^\w.-]+/g, '_')
+      .replace(/^_+|_+$/g, '') || fallback
+  );
 }
 
-function getExtensionFromMimeOrUri(uri: string): string {
-  if (uri.startsWith('data:image/png')) return 'png';
-  if (uri.startsWith('data:image/webp')) return 'webp';
-  if (uri.startsWith('data:image/gif')) return 'gif';
-  if (uri.startsWith('data:image/svg')) return 'svg';
-  if (uri.startsWith('data:image/jpeg') || uri.startsWith('data:image/jpg')) return 'jpg';
-
-  const clean = uri.split('?')[0].split('#')[0];
-  const ext = clean.split('.').pop()?.toLowerCase();
-  if (ext && ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg'].includes(ext)) {
-    return ext === 'jpeg' ? 'jpg' : ext;
+function ensureJpegFilename(filename?: string, index = 1, owner = 'volunteer', date = ''): string {
+  let base = filename?.trim();
+  if (base) {
+    base = base.replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '');
+    base = base.replace(/\.(jpe?g|png|webp|gif|svg|bmp|tiff?)$/i, '');
   }
-  return 'jpg';
+  if (!base) {
+    const safeOwner = sanitizeName(owner, 'volunteer');
+    const safeDate = sanitizeName(date, '');
+    base = `photo-${String(index).padStart(2, '0')}-${safeOwner}${safeDate ? `-${safeDate}` : ''}`;
+  }
+  return `${base}.jpeg`;
+}
+
+/**
+ * Converts any image (data URI, blob, or remote URL) to true JPEG format.
+ * Uses HTML5 Canvas on web/browser with a solid white background to prevent
+ * transparent PNG/SVG elements from rendering with black backgrounds in JPEG.
+ */
+async function convertToJpeg(uri: string): Promise<{ data: Blob | string; isBase64: boolean }> {
+  // If running in browser or web environment with Canvas available
+  if (typeof document !== 'undefined' && typeof Image !== 'undefined') {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+
+      img.onload = () => {
+        try {
+          const width = img.naturalWidth || img.width || 800;
+          const height = img.naturalHeight || img.height || 600;
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            throw new Error('Canvas 2D context unavailable');
+          }
+
+          // Solid white background for transparency conversion
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+
+          if (canvas.toBlob) {
+            canvas.toBlob(
+              blob => {
+                if (blob) {
+                  resolve({ data: blob, isBase64: false });
+                } else {
+                  const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+                  const base64 = dataUrl.split(',')[1] || '';
+                  resolve({ data: base64, isBase64: true });
+                }
+              },
+              'image/jpeg',
+              0.92
+            );
+          } else {
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+            const base64 = dataUrl.split(',')[1] || '';
+            resolve({ data: base64, isBase64: true });
+          }
+        } catch (canvasErr) {
+          fallbackFetchOrBase64(uri).then(resolve).catch(reject);
+        }
+      };
+
+      img.onerror = () => {
+        fallbackFetchOrBase64(uri).then(resolve).catch(reject);
+      };
+
+      img.src = uri;
+    });
+  }
+
+  return fallbackFetchOrBase64(uri);
+}
+
+async function fallbackFetchOrBase64(uri: string): Promise<{ data: Blob | string; isBase64: boolean }> {
+  if (uri.startsWith('data:')) {
+    const commaIndex = uri.indexOf(',');
+    const base64 = commaIndex !== -1 ? uri.slice(commaIndex + 1) : uri;
+    return { data: base64, isBase64: true };
+  }
+
+  const res = await fetch(uri);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch photo at ${uri}: ${res.statusText}`);
+  }
+  const blob = await res.blob();
+  return { data: blob, isBase64: false };
 }
 
 export async function exportPhotosAsZip(
@@ -45,7 +125,6 @@ export async function exportPhotosAsZip(
 
   try {
     const zip = new JSZip();
-    const folder = zip.folder('photos') || zip;
     let addedCount = 0;
 
     for (let i = 0; i < photos.length; i++) {
@@ -53,36 +132,23 @@ export async function exportPhotosAsZip(
       const uri = (item.uri || '').trim();
       if (!uri) continue;
 
-      const ext = getExtensionFromMimeOrUri(uri);
-      const safeOwner = sanitizeName(item.name, 'volunteer');
-      const safeDate = sanitizeName(item.date, '');
-      const baseFilename = item.filename
-        ? sanitizeName(item.filename)
-        : `photo-${String(i + 1).padStart(2, '0')}-${safeOwner}${safeDate ? `-${safeDate}` : ''}.${ext}`;
+      const jpegFilename = ensureJpegFilename(item.filename, i + 1, item.name, item.date);
 
-      if (uri.startsWith('data:image/')) {
-        const commaIndex = uri.indexOf(',');
-        if (commaIndex !== -1) {
-          const base64Data = uri.slice(commaIndex + 1);
-          folder.file(baseFilename, base64Data, { base64: true });
-          addedCount++;
+      try {
+        const { data, isBase64 } = await convertToJpeg(uri);
+        if (isBase64) {
+          zip.file(jpegFilename, data as string, { base64: true });
+        } else {
+          zip.file(jpegFilename, data as Blob);
         }
-      } else {
-        try {
-          const res = await fetch(uri);
-          if (res.ok) {
-            const blob = await res.blob();
-            folder.file(baseFilename, blob);
-            addedCount++;
-          }
-        } catch (fetchErr) {
-          console.warn(`Failed to fetch photo at ${uri}:`, fetchErr);
-        }
+        addedCount++;
+      } catch (itemErr) {
+        console.warn(`Failed to process photo [${i + 1}] for JPEG ZIP export:`, itemErr);
       }
     }
 
     if (addedCount === 0) {
-      Alert.alert('Export Failed', 'None of the photo files could be bundled.');
+      Alert.alert('Export Failed', 'None of the photo files could be bundled into JPEG format.');
       return false;
     }
 
@@ -101,7 +167,7 @@ export async function exportPhotosAsZip(
       return true;
     }
 
-    // Native environment
+    // Native environment (Android / iOS)
     const zipBase64 = await zip.generateAsync({ type: 'base64' });
     const targetPath = `${RNFS.CachesDirectoryPath}/${finalZipName}`;
     await RNFS.writeFile(targetPath, zipBase64, 'base64');
@@ -115,8 +181,8 @@ export async function exportPhotosAsZip(
     if (error?.message === 'User did not share') {
       return true;
     }
-    console.error('Failed to export photos as ZIP:', error);
-    Alert.alert('Export Error', error?.message || 'Unable to batch export photos.');
+    console.error('Failed to export photos as JPEG ZIP:', error);
+    Alert.alert('Export Error', error?.message || 'Unable to batch export photos as JPEG ZIP.');
     return false;
   }
 }

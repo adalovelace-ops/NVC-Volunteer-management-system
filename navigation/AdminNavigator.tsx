@@ -29,6 +29,8 @@ import {
   getAllUsers,
   getAllPartnerProjectApplications,
   markMessageAsRead,
+  markMessagesAsRead,
+  markAllMessagesForUserAsRead,
 } from '../models/storage';
 import { User, PartnerProjectApplication } from '../models/types';
 import DashboardScreen from '../screens/DashboardScreen';
@@ -219,11 +221,14 @@ export default function AdminNavigator() {
   const [unreadReports, setUnreadReports] = useState<any[]>([]);
   const [pendingPartnerApplications, setPendingPartnerApplications] = useState<PartnerProjectApplication[]>([]);
   const [pendingVolunteerRequests, setPendingVolunteerRequests] = useState<any[]>([]);
+  const [bellNotificationsDismissed, setBellNotificationsDismissed] = useState(false);
 
   const messageUnreadCount = unreadMessages.length;
   const reportNotificationCount = unreadReports.length;
   const pendingUserApprovalCount = pendingUsers.length;
   const pendingVolunteerUserCount = pendingUsers.filter(u => u.role === 'volunteer').length;
+  const rawBellCount = pendingUserApprovalCount + messageUnreadCount + reportNotificationCount + pendingPartnerApplications.length + pendingVolunteerRequests.length;
+  const bellNotificationCount = bellNotificationsDismissed ? messageUnreadCount : rawBellCount;
   const [latestVolunteerToast, setLatestVolunteerToast] = useState<{ id: string; title: string; subtitle: string; projectId?: string } | null>(null);
   const seenVolunteerReqIdsRef = React.useRef<Set<string> | null>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -373,12 +378,21 @@ export default function AdminNavigator() {
     }
   };
 
+  const prevRawBellCountRef = React.useRef<number>(0);
+  useEffect(() => {
+    if (rawBellCount > prevRawBellCountRef.current) {
+      setBellNotificationsDismissed(false);
+    }
+    prevRawBellCountRef.current = rawBellCount;
+  }, [rawBellCount]);
+
   const handleNotificationsSeen = React.useCallback(async () => {
-    if (!user?.id || unreadMessages.length === 0) return;
-    await Promise.all(
-      unreadMessages.map((msg) => markMessageAsRead(msg.id).catch(() => undefined))
-    );
-  }, [unreadMessages, user?.id]);
+    setBellNotificationsDismissed(true);
+    setUnreadMessages([]);
+    if (user?.id) {
+      await markAllMessagesForUserAsRead(user.id);
+    }
+  }, [user?.id]);
 
   const isMessagesRoute = tabBarProps?.state?.routes?.[tabBarProps.state.index]?.name === 'Messages';
 
@@ -393,13 +407,7 @@ export default function AdminNavigator() {
             title={options.title || route.name}
             navigation={navigation}
             userId={user?.id}
-            notificationCount={
-              pendingUsers.length +
-              unreadMessages.length +
-              unreadReports.length +
-              pendingPartnerApplications.length +
-              pendingVolunteerRequests.length
-            }
+            notificationCount={bellNotificationCount}
             pendingUsers={pendingUsers}
             unreadMessages={unreadMessages}
             unreadReports={unreadReports}
@@ -433,7 +441,19 @@ export default function AdminNavigator() {
         }}
       />
       <Tab.Screen name="Map" component={MappingScreen} options={{ title: 'Map' }} />
-      <Tab.Screen name="Messages" component={CommunicationHubScreen} options={{ title: 'Messages', tabBarBadge: messageUnreadCount > 0 ? messageUnreadCount : undefined }} />
+      <Tab.Screen
+        name="Messages"
+        component={CommunicationHubScreen}
+        options={{ title: 'Messages', tabBarBadge: messageUnreadCount > 0 ? messageUnreadCount : undefined }}
+        listeners={{
+          focus: () => {
+            setUnreadMessages([]);
+            if (user?.id) {
+              void markAllMessagesForUserAsRead(user.id);
+            }
+          },
+        }}
+      />
       <Tab.Screen name="Reports" component={AdminReportsScreen} options={{ title: 'Reports', tabBarBadge: reportNotificationCount > 0 ? reportNotificationCount : undefined }} />
       <Tab.Screen name="Analytics" component={AdminAnalyticsScreen} options={{ title: 'Analytics' }} />
       <Tab.Screen name="Users" component={UserManagementScreen} options={{ title: 'User Management', tabBarBadge: pendingUserApprovalCount > 0 ? pendingUserApprovalCount : undefined }} />
@@ -451,6 +471,10 @@ export default function AdminNavigator() {
             style={styles.adminTopIconButton}
             activeOpacity={0.8}
             onPress={() => {
+              setUnreadMessages([]);
+              if (user?.id) {
+                void markAllMessagesForUserAsRead(user.id);
+              }
               if (tabBarProps?.navigation) {
                 tabBarProps.navigation.navigate('Messages');
               } else {
@@ -470,14 +494,18 @@ export default function AdminNavigator() {
               style={[styles.adminTopIconButton, showNotificationsMenu && { backgroundColor: '#f1f5f9' }]}
               activeOpacity={0.8}
               onPress={() => {
-                setShowNotificationsMenu(!showNotificationsMenu);
+                const nextOpen = !showNotificationsMenu;
+                setShowNotificationsMenu(nextOpen);
                 setShowUserMenu(false);
+                if (nextOpen) {
+                  void handleNotificationsSeen();
+                }
               }}
             >
               <MaterialIcons name="notifications-none" size={24} color="#475569" />
-              {pendingUserApprovalCount + messageUnreadCount + reportNotificationCount + pendingPartnerApplications.length + pendingVolunteerRequests.length > 0 ? (
+              {bellNotificationCount > 0 ? (
                 <View style={styles.adminTopBadge}>
-                  <Text style={styles.adminTopBadgeText}>{Math.min(pendingUserApprovalCount + messageUnreadCount + reportNotificationCount + pendingPartnerApplications.length + pendingVolunteerRequests.length, 9)}</Text>
+                  <Text style={styles.adminTopBadgeText}>{Math.min(bellNotificationCount, 9)}</Text>
                 </View>
               ) : null}
             </TouchableOpacity>
@@ -489,12 +517,20 @@ export default function AdminNavigator() {
                     <MaterialIcons name="notifications-active" size={18} color="#166534" />
                     <Text style={styles.notificationsDropdownTitle}>Notifications</Text>
                   </View>
-                  <TouchableOpacity
-                    onPress={() => setShowNotificationsMenu(false)}
-                    style={{ padding: 4 }}
-                  >
-                    <MaterialIcons name="close" size={18} color="#64748b" />
-                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <TouchableOpacity
+                      onPress={handleNotificationsSeen}
+                      style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: '#dcfce7' }}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#166534' }}>Mark all read</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setShowNotificationsMenu(false)}
+                      style={{ padding: 4 }}
+                    >
+                      <MaterialIcons name="close" size={18} color="#64748b" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
                 <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={true}>
@@ -602,6 +638,8 @@ export default function AdminNavigator() {
                       style={styles.notificationDropdownItem}
                       onPress={() => {
                         setShowNotificationsMenu(false);
+                        setUnreadMessages(prev => prev.filter(m => m.id !== msg.id));
+                        void markMessageAsRead(msg.id);
                         if (tabBarProps?.navigation) {
                           tabBarProps.navigation.navigate('Messages');
                         }
@@ -625,6 +663,7 @@ export default function AdminNavigator() {
                       style={styles.notificationDropdownItem}
                       onPress={() => {
                         setShowNotificationsMenu(false);
+                        setUnreadReports(prev => prev.filter(r => r.id !== rpt.id));
                         if (tabBarProps?.navigation) {
                           tabBarProps.navigation.navigate('Reports');
                         }

@@ -1,9 +1,17 @@
 /**
  * Google OAuth 2.0 Direct Integration for NVC Connect
- * Replaces Firebase Auth popup/redirect flow which gets blocked by cross-origin iframe / WebView cookie restrictions.
+ *
+ * Web:    Uses Google Identity Services (GIS) token popup, falling back to
+ *         direct redirect to accounts.google.com.
+ * Mobile: Uses expo-auth-session + expo-web-browser to open the system browser
+ *         for OAuth (avoids Google's WebView block on Android).
  */
 
-export const GOOGLE_CLIENT_ID = '80950080445-gi26o0fgnsta8n7sk14pk3ok1vp2prj0.apps.googleusercontent.com';
+import { Platform } from 'react-native';
+
+export const GOOGLE_CLIENT_ID =
+  (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_GOOGLE_OAUTH_CLIENT_ID) ||
+  '80950080445-5hvgpg37oe0bt4gkqnghou3cvung8mlo.apps.googleusercontent.com';
 
 declare global {
   interface Window {
@@ -42,30 +50,107 @@ export async function fetchGoogleProfile(accessToken: string): Promise<GoogleUse
   };
 }
 
-/**
- * Triggers Google OAuth 2.0 flow:
- * 1. Checks if Google Identity Services (GIS) tokenClient is ready (for in-page popup token flow)
- * 2. If token client succeeds, calls onSuccess callback
- * 3. Fallback: Full-page redirect directly to accounts.google.com OAuth2 endpoint
- */
-export async function triggerGoogleOAuthLogin(
+// ---------------------------------------------------------------------------
+// Mobile OAuth via expo-auth-session + expo-web-browser
+// ---------------------------------------------------------------------------
+
+async function triggerMobileGoogleOAuth(
   onSuccess: (profile: GoogleUserProfile) => Promise<void> | void,
-  onError: (err: any) => void
+  onError: (err: any) => void,
 ): Promise<void> {
+  try {
+    const WebBrowser = await import('expo-web-browser');
+    const { getApiBaseUrl } = await import('../models/storage');
+
+    // Backend relay endpoint: Google redirects here, backend redirects to
+    // nvcconnect://redirect?code=xxx so the app catches it via deep link.
+    // This avoids Google Console rejecting custom-scheme redirect URIs.
+    const apiBase = getApiBaseUrl();
+    const redirectUri = `${apiBase}/auth/google/mobile-callback`;
+    const appReturnScheme = 'nvcconnect://redirect';
+
+    // Build Google OAuth URL (auth code flow, no PKCE needed since relay is HTTPS)
+    const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    authUrl.searchParams.set('client_id', GOOGLE_CLIENT_ID);
+    authUrl.searchParams.set('redirect_uri', redirectUri);
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('scope', 'openid email profile');
+    authUrl.searchParams.set('prompt', 'select_account');
+    authUrl.searchParams.set('access_type', 'offline');
+
+    // Open system browser; it returns when the browser navigates to nvcconnect://
+    const result = await WebBrowser.openAuthSessionAsync(
+      authUrl.toString(),
+      appReturnScheme,
+    );
+
+    if (result.type === 'success' && result.url) {
+      const url = new URL(result.url);
+      const code = url.searchParams.get('code');
+      const error = url.searchParams.get('error');
+
+      if (error) {
+        onError(new Error(error));
+        return;
+      }
+
+      if (!code) {
+        onError(new Error('No authorization code received'));
+        return;
+      }
+
+      // Exchange authorization code for access token via backend relay
+      const tokenResponse = await fetch(`${apiBase}/auth/google/exchange-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          redirect_uri: redirectUri,
+        }),
+      });
+
+      const tokenData = await tokenResponse.json();
+
+      if (!tokenResponse.ok || !tokenData.access_token) {
+        onError(new Error(tokenData.error_description || tokenData.error || 'Token exchange failed'));
+        return;
+      }
+
+      const profile = await fetchGoogleProfile(tokenData.access_token);
+      await onSuccess(profile);
+    } else if (result.type === 'cancel' || result.type === 'dismiss') {
+      return;
+    } else {
+      onError(new Error('Google sign-in was not completed'));
+    }
+  } catch (err: any) {
+    onError(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Web OAuth via GIS popup / direct redirect
+// ---------------------------------------------------------------------------
+
+function triggerWebGoogleOAuth(
+  onSuccess: (profile: GoogleUserProfile) => Promise<void> | void,
+  onError: (err: any) => void,
+): void {
   if (typeof window === 'undefined') {
     onError(new Error('Window not available'));
     return;
   }
 
-  // Fallback direct redirect helper
+  // Fallback direct redirect helper (Auth code flow — response_type=token is deprecated by Google)
   const performDirectRedirect = () => {
     const redirectUri = window.location.origin + window.location.pathname;
     const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
     authUrl.searchParams.set('client_id', GOOGLE_CLIENT_ID);
     authUrl.searchParams.set('redirect_uri', redirectUri);
-    authUrl.searchParams.set('response_type', 'token');
+    authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('scope', 'openid email profile');
     authUrl.searchParams.set('prompt', 'select_account');
+    authUrl.searchParams.set('access_type', 'offline');
 
     window.location.href = authUrl.toString();
   };
@@ -121,25 +206,79 @@ export async function triggerGoogleOAuthLogin(
   performDirectRedirect();
 }
 
+// ---------------------------------------------------------------------------
+// Public API — delegates to the right flow per platform
+// ---------------------------------------------------------------------------
+
 /**
- * Checks URL hash for #access_token=... returned by Google OAuth redirect
+ * Triggers Google OAuth 2.0 flow:
+ * - Web: GIS popup or direct redirect
+ * - Mobile (Android/iOS): expo-auth-session system browser flow
+ */
+export async function triggerGoogleOAuthLogin(
+  onSuccess: (profile: GoogleUserProfile) => Promise<void> | void,
+  onError: (err: any) => void
+): Promise<void> {
+  if (Platform.OS === 'web') {
+    triggerWebGoogleOAuth(onSuccess, onError);
+  } else {
+    await triggerMobileGoogleOAuth(onSuccess, onError);
+  }
+}
+
+/**
+ * Checks URL for OAuth response:
+ * 1. Query parameter ?code=... (authorization code flow)
+ * 2. Hash parameter #access_token=... (implicit token flow)
  */
 export async function handleGoogleOAuthRedirect(): Promise<GoogleUserProfile | null> {
-  if (typeof window === 'undefined' || !window.location.hash) {
+  if (typeof window === 'undefined') {
     return null;
   }
 
-  const hash = window.location.hash.substring(1);
-  const params = new URLSearchParams(hash);
-  const accessToken = params.get('access_token');
+  // 1. Authorization Code Flow (?code=xxx)
+  const urlParams = new URLSearchParams(window.location.search);
+  const code = urlParams.get('code');
+  if (code) {
+    try {
+      const { getApiBaseUrl } = await import('../models/storage');
+      const apiBase = getApiBaseUrl();
+      const redirectUri = window.location.origin + window.location.pathname;
+      const tokenResponse = await fetch(`${apiBase}/auth/google/exchange-token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          redirect_uri: redirectUri,
+        }),
+      });
 
-  if (!accessToken) {
-    return null;
+      const tokenData = await tokenResponse.json();
+      if (tokenData.access_token) {
+        // Clear query parameters cleanly
+        const cleanUrl = window.location.origin + window.location.pathname;
+        window.history.replaceState(null, '', cleanUrl);
+        return await fetchGoogleProfile(tokenData.access_token);
+      }
+    } catch (err) {
+      console.warn('[GoogleAuth] Code exchange error:', err);
+    }
   }
 
-  // Clear hash from URL cleanly so token is not exposed or re-processed on reload
-  const cleanUrl = window.location.origin + window.location.pathname + window.location.search;
-  window.history.replaceState(null, '', cleanUrl);
+  // 2. Implicit Flow fallback (#access_token=xxx)
+  if (window.location.hash) {
+    const hash = window.location.hash.substring(1);
+    const params = new URLSearchParams(hash);
+    const accessToken = params.get('access_token');
 
-  return await fetchGoogleProfile(accessToken);
+    if (accessToken) {
+      // Clear hash from URL cleanly so token is not exposed or re-processed on reload
+      const cleanUrl = window.location.origin + window.location.pathname + window.location.search;
+      window.history.replaceState(null, '', cleanUrl);
+
+      return await fetchGoogleProfile(accessToken);
+    }
+  }
+
+  return null;
 }

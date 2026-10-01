@@ -13,9 +13,9 @@ from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from .app_storage_seed import (
@@ -2157,6 +2157,63 @@ def startup() -> None:
     
     seed_thread = threading.Thread(target=seed_storage, daemon=True)
     seed_thread.start()
+
+# ── Google OAuth mobile relay ──────────────────────────────────────────────────
+# Google redirects to this endpoint with ?code=xxx after mobile sign-in.
+# We redirect to the app's deep-link scheme so the app can capture the code.
+@app.get("/auth/google/mobile-callback", response_model=None)
+def google_mobile_oauth_callback(request: Request):
+    """Relay Google OAuth authorization code to the mobile app via deep link."""
+    code = request.query_params.get("code", "")
+    error = request.query_params.get("error", "")
+
+    if error:
+        return RedirectResponse(f"nvcconnect://redirect?error={error}")
+
+    if not code:
+        return RedirectResponse("nvcconnect://redirect?error=no_code")
+
+    return RedirectResponse(f"nvcconnect://redirect?code={code}")
+
+
+class GoogleExchangePayload(BaseModel):
+    code: str
+    redirect_uri: str
+
+
+@app.post("/auth/google/exchange-token", response_model=None)
+def google_exchange_token(payload: GoogleExchangePayload):
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "80950080445-5hvgpg37oe0bt4gkqnghou3cvung8mlo.apps.googleusercontent.com")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
+
+    if not client_secret:
+        return JSONResponse(status_code=500, content={"error": "GOOGLE_CLIENT_SECRET not configured on server"})
+
+    import urllib.request
+    import urllib.parse
+    import json
+
+    data = urllib.parse.urlencode({
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": payload.code,
+        "grant_type": "authorization_code",
+        "redirect_uri": payload.redirect_uri,
+    }).encode("utf-8")
+
+    req = urllib.request.Request("https://oauth2.googleapis.com/token", data=data, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8")
+        try:
+            return JSONResponse(status_code=e.code, content=json.loads(err_body))
+        except Exception:
+            return JSONResponse(status_code=e.code, content={"error": err_body})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.get("/health", response_model=None)
@@ -4486,10 +4543,20 @@ async def mark_message_read(message_id: str) -> dict[str, Any]:
             row = cursor.fetchone()
         connection.commit()
 
+    _message_query_cache.clear()
     _invalidate_collection_cache(["messages"])
-    message = serialize_message_row(row)
-    await connection_manager.broadcast_message_event(message)
-    return message
+    try:
+        await connection_manager.broadcast_storage_event(["messages"])
+    except Exception:
+        pass
+    if row:
+        message = serialize_message_row(row)
+        try:
+            await connection_manager.broadcast_message_event(message)
+        except Exception:
+            pass
+        return message
+    return {"success": True}
 
 
 @app.websocket("/ws/messages/{user_id}")
@@ -5362,18 +5429,29 @@ async def create_message(payload: MessageCreatePayload) -> dict[str, Any]:
     return {"success": True, "id": msg_id, "message": msg_dict}
 
 
-@app.patch("/messages/{message_id}/read")
-async def mark_message_read(message_id: str) -> dict[str, Any]:
-    """Mark a direct message as read and invalidate cache."""
+@app.post("/messages/mark-all-read")
+async def mark_all_messages_read(payload: dict[str, Any]) -> dict[str, Any]:
+    """Mark all direct messages as read for a recipient or a list of message IDs."""
+    ensure_message_storage()
+    recipient_id = payload.get("recipientId") or payload.get("userId")
+    message_ids = payload.get("messageIds")
+
     with get_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute(
-                "UPDATE public.messages SET read = true WHERE id = %s",
-                (message_id,),
-            )
+            if message_ids:
+                cursor.execute(
+                    "UPDATE public.messages SET read = true WHERE id = ANY(%s)",
+                    (list(message_ids),),
+                )
+            elif recipient_id:
+                cursor.execute(
+                    "UPDATE public.messages SET read = true WHERE recipient_id = %s",
+                    (recipient_id,),
+                )
         connection.commit()
 
     _message_query_cache.clear()
+    _invalidate_collection_cache(["messages"])
     try:
         await connection_manager.broadcast_storage_event(["messages"])
     except Exception:

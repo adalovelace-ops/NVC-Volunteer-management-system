@@ -1,3 +1,5 @@
+import { NVC_LOGO_BASE64 } from './nvcLogo';
+
 export interface VolunteerPhotoItem {
   uri: string;
   volunteerName: string;
@@ -25,8 +27,60 @@ export interface ReportDocumentItem {
   size: string;
 }
 
+export interface ProjectItemSummary {
+  title: string;
+  category: string;
+  status: string;
+  createdBy?: string;
+  volunteersCount: number;
+  eventsCount: number;
+}
+
+export interface SkillContributionItem {
+  eventTitle: string;
+  volunteerName: string;
+  skills: string;
+  date: string;
+  hours: number;
+}
+
+export interface EventConductedItem {
+  title: string;
+  parentProject?: string;
+  date: string;
+  status: string;
+  location?: string;
+  volunteersCount: number;
+}
+
+export interface SectorPartnerGroup {
+  sectorType: string;
+  sectorLabel: string;
+  partners: Array<{
+    name: string;
+    advocacyFocus?: string;
+    location?: string;
+  }>;
+}
+
+export interface VolunteerInvolvedItem {
+  name: string;
+  email?: string;
+  role?: string;
+  skills?: string;
+  eventsJoined: number;
+  hoursLogged: number;
+}
+
 export interface ReportTemplateData {
   reportQuarter?: string;
+  projectName?: string;
+  partnerAuthor?: string;
+  projectsList?: ProjectItemSummary[];
+  skillsList?: SkillContributionItem[];
+  eventsList?: EventConductedItem[];
+  sectorPartnerGroups?: SectorPartnerGroup[];
+  volunteersList?: VolunteerInvolvedItem[];
   title: string;
   subtitle?: string;
   period: string;
@@ -65,12 +119,19 @@ export interface ReportTemplateData {
 
 export function generateReportHtml(data: ReportTemplateData): string {
   const quarter = data.reportQuarter || '';
-  const subtitle = data.subtitle || 'NVC Foundation System Report';
-  const title = data.title || 'Executive Analytics Report';
+  const projectName = data.projectName || data.title || 'Executive Analytics Report';
+  const partnerAuthor = data.partnerAuthor || data.subtitle || 'NVC Partner';
+  const subtitle = partnerAuthor;
+  const title = projectName;
   const period = data.period || 'Current Period';
   const submittedOn = data.submittedOn || new Date().toLocaleDateString();
-  const submittedBy = data.submittedBy || 'NVC Administration';
-  const submittedRole = data.submittedRole || 'Administrator';
+  const submittedBy = data.submittedBy || partnerAuthor;
+  const submittedRole = data.submittedRole || 'Program Coordinator';
+  const projectsList = Array.isArray(data.projectsList) ? data.projectsList : [];
+  const skillsList = Array.isArray(data.skillsList) ? data.skillsList : [];
+  const eventsList = Array.isArray(data.eventsList) ? data.eventsList : [];
+  const sectorPartnerGroups = Array.isArray(data.sectorPartnerGroups) ? data.sectorPartnerGroups : [];
+  const volunteersList = Array.isArray(data.volunteersList) ? data.volunteersList : [];
 
   const totalProjectsLabel = data.totalProjectsLabel || 'Total Projects';
   const totalProjectsDelta = data.totalProjectsDelta || '';
@@ -116,8 +177,11 @@ export function generateReportHtml(data: ReportTemplateData): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(title)} - NVC Foundation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700;800;900&display=swap');
 
     * {
       box-sizing: border-box;
@@ -126,7 +190,7 @@ export function generateReportHtml(data: ReportTemplateData): string {
     }
 
     body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: 'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background-color: #f1f5f9;
       color: #1e293b;
       line-height: 1.4;
@@ -157,6 +221,14 @@ export function generateReportHtml(data: ReportTemplateData): string {
       display: flex;
       align-items: center;
       gap: 14px;
+    }
+
+    .brand-logo {
+      height: 48px;
+      width: auto;
+      max-width: 240px;
+      object-fit: contain;
+      display: block;
     }
 
     .clover-logo {
@@ -412,6 +484,224 @@ export function generateReportHtml(data: ReportTemplateData): string {
       border-radius: 2px;
     }
 
+    /* PARTNER PROJECTS TABLE SECTION */
+    .projects-table-section {
+      margin: 0 36px 20px 36px;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 16px 20px;
+    }
+
+    .partner-projects-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+
+    .partner-projects-table th {
+      background: #f8fafc;
+      color: #475569;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 8px 10px;
+      border-bottom: 2px solid #e2e8f0;
+      text-align: left;
+    }
+
+    .partner-projects-table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid #f1f5f9;
+      color: #1e293b;
+    }
+
+    .sector-tag {
+      background: #f0fdf4;
+      color: #166534;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 700;
+      font-size: 10px;
+    }
+
+    .status-pill {
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 700;
+      display: inline-block;
+    }
+
+    .status-in-progress, .status-active { background: #dcfce7; color: #15803d; }
+    .status-completed { background: #dbeafe; color: #1d4ed8; }
+    .status-planning, .status-draft, .status-pending { background: #fef3c7; color: #b45309; }
+
+    .section-title-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+
+    .title-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .title-left .icon { font-size: 16px; }
+    .title-left .heading {
+      font-size: 13px;
+      font-weight: 800;
+      color: #0f172a;
+      letter-spacing: -0.2px;
+    }
+
+    .quarter-tag {
+      font-size: 11px;
+      font-weight: 700;
+      color: #166534;
+      background: #eef7f0;
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+
+    .author-tag {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 6px;
+      display: inline-block;
+    }
+
+    .author-partner {
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px solid #dbeafe;
+    }
+
+    .author-admin {
+      background: #f1f5f9;
+      color: #475569;
+      border: 1px solid #e2e8f0;
+    }
+
+    .skill-tag {
+      background: #fef3c7;
+      color: #92400e;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 10px;
+      display: inline-block;
+    }
+
+    .empty-section-hint {
+      padding: 16px;
+      text-align: center;
+      color: #94a3b8;
+      font-size: 11px;
+      font-style: italic;
+      background: #f8fafc;
+      border-radius: 8px;
+    }
+
+    /* SECTOR GROUPS GRID */
+    .sector-groups-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+
+    .sector-group-card {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+
+    .sector-group-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    .sector-badge {
+      font-size: 9px;
+      font-weight: 800;
+      padding: 2px 6px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+    }
+
+    .badge-ngo { background: #dcfce7; color: #166534; }
+    .badge-hospital { background: #fee2e2; color: #991b1b; }
+    .badge-institution { background: #dbeafe; color: #1e40af; }
+    .badge-private { background: #fef3c7; color: #92400e; }
+
+    .sector-group-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: #1e293b;
+      flex: 1;
+    }
+
+    .sector-group-count {
+      font-size: 11px;
+      font-weight: 800;
+      color: #64748b;
+      background: #ffffff;
+      padding: 1px 6px;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+    }
+
+    .sector-partner-names {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .sector-partner-item {
+      font-size: 11px;
+      color: #334155;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .sector-partner-item .dot {
+      color: #16a34a;
+      font-weight: 800;
+    }
+
+    .partner-org-name {
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .partner-org-loc {
+      font-size: 10px;
+      color: #64748b;
+    }
+
+    .empty-sector-hint {
+      font-size: 10px;
+      color: #94a3b8;
+      font-style: italic;
+      padding: 4px 0;
+    }
+
     /* IMPACT & STATUS SECTION */
     .impact-section {
       padding: 0 36px 20px 36px;
@@ -574,11 +864,8 @@ export function generateReportHtml(data: ReportTemplateData): string {
       margin-top: 8px;
     }
 
-    /* HIGHLIGHTS & DOCUMENTS */
-    .two-col-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 18px;
+    /* HIGHLIGHTS */
+    .highlights-section {
       padding: 0 36px 20px 36px;
     }
 
@@ -636,57 +923,6 @@ export function generateReportHtml(data: ReportTemplateData): string {
       font-weight: 800;
       flex-shrink: 0;
       margin-top: 1px;
-    }
-
-    /* DOCUMENTS LIST */
-    .doc-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .doc-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border: 1px solid #f1f5f9;
-      background: #f8fafc;
-      padding: 8px 12px;
-      border-radius: 8px;
-    }
-
-    .doc-left {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .doc-badge {
-      font-size: 9px;
-      font-weight: 800;
-      padding: 2px 6px;
-      border-radius: 4px;
-      color: #ffffff;
-    }
-
-    .badge-pdf { background: #ef4444; }
-    .badge-xlsx { background: #16a34a; }
-    .badge-doc { background: #2563eb; }
-
-    .doc-name {
-      font-size: 11px;
-      font-weight: 700;
-      color: #1e293b;
-    }
-
-    .doc-size {
-      font-size: 9px;
-      color: #64748b;
-    }
-
-    .doc-dl-icon {
-      font-size: 14px;
-      color: #64748b;
     }
 
     /* PHOTOS GALLERY */
@@ -856,18 +1092,7 @@ export function generateReportHtml(data: ReportTemplateData): string {
     <!-- HEADER -->
     <div class="header">
       <div class="brand-block">
-        <svg class="clover-logo" viewBox="0 0 100 100">
-          <g fill="#22c55e">
-            <path d="M50 48 C42 35 30 35 30 45 C30 55 45 65 50 68 C55 65 70 55 70 45 C70 35 58 35 50 48 Z" transform="rotate(0 50 50) translate(0 -16)" />
-            <path d="M50 48 C42 35 30 35 30 45 C30 55 45 65 50 68 C55 65 70 55 70 45 C70 35 58 35 50 48 Z" transform="rotate(-90 50 50) translate(0 -16)" />
-            <path d="M50 48 C42 35 30 35 30 45 C30 55 45 65 50 68 C55 65 70 55 70 45 C70 35 58 35 50 48 Z" transform="rotate(90 50 50) translate(0 -16)" />
-            <path d="M48 54 Q44 74 38 82 Q42 82 50 60 Z" fill="#15803d" />
-          </g>
-        </svg>
-        <div class="brand-text-block">
-          <div class="brand-nvc">nvc <span style="font-weight: 700; color: #166534;">FOUNDATION</span></div>
-          <div class="brand-sub">Measuring Success</div>
-        </div>
+        <img src="${NVC_LOGO_BASE64}" alt="NVC Foundation Logo" class="brand-logo" />
       </div>
 
       <div class="report-quarter-badge-wrap">
@@ -879,8 +1104,8 @@ export function generateReportHtml(data: ReportTemplateData): string {
     <!-- HERO SECTION -->
     <div class="hero-section">
       <div class="hero-info">
-        <div class="program-subtitle">${escapeHtml(subtitle)}</div>
-        <div class="program-title">${escapeHtml(title)}</div>
+        <div class="program-subtitle">PARTNER / AUTHOR: ${escapeHtml(partnerAuthor)}</div>
+        <div class="program-title">${escapeHtml(projectName)}</div>
 
         <div class="meta-row">
           <div class="meta-item">
@@ -888,6 +1113,14 @@ export function generateReportHtml(data: ReportTemplateData): string {
             <div class="meta-content">
               <span class="meta-label">Reporting Period</span>
               <span class="meta-value">${escapeHtml(period)}</span>
+            </div>
+          </div>
+
+          <div class="meta-item">
+            <div class="meta-icon-box">🏢</div>
+            <div class="meta-content">
+              <span class="meta-label">Partner / Author</span>
+              <span class="meta-value">${escapeHtml(partnerAuthor)}</span>
             </div>
           </div>
 
@@ -902,8 +1135,8 @@ export function generateReportHtml(data: ReportTemplateData): string {
           <div class="meta-item">
             <div class="meta-icon-box">👤</div>
             <div class="meta-content">
-              <span class="meta-label">Submitted By</span>
-              <span class="meta-value">${escapeHtml(submittedBy)} (${escapeHtml(submittedRole)})</span>
+              <span class="meta-label">Author Role</span>
+              <span class="meta-value">${escapeHtml(submittedRole)}</span>
             </div>
           </div>
         </div>
@@ -961,7 +1194,7 @@ export function generateReportHtml(data: ReportTemplateData): string {
             ${sectors.length > 0 ? sectors.slice(0, 4).map(s => `
               <div class="sector-item">
                 <div class="sector-dot" style="background: ${s.color};"></div>
-                <span>${escapeHtml(s.sector)} (${s.count})</span>
+                <span>${escapeHtml(s.sector)} (${s.count > 0 ? `${s.count} • ` : ''}${s.percent}%)</span>
               </div>
             `).join('') : '<span style="font-size: 9px; color: #94a3b8;">No sector data</span>'}
           </div>
@@ -976,6 +1209,205 @@ export function generateReportHtml(data: ReportTemplateData): string {
         <div class="kpi-value">${data.volunteersInvolved}</div>
         ${volunteersDelta ? `<div class="kpi-delta">${escapeHtml(volunteersDelta)}</div>` : ''}
       </div>
+    </div>
+
+    <!-- 1. TOTAL PROJECTS (all projects and who made it: created by partner or admin) -->
+    <div class="projects-table-section">
+      <div class="section-title-bar">
+        <div class="title-left">
+          <span class="icon">📁</span>
+          <span class="heading">Total Projects (${projectsList.length})</span>
+        </div>
+        <span class="quarter-tag">${escapeHtml(quarter)}</span>
+      </div>
+      ${projectsList.length > 0 ? `
+        <table class="partner-projects-table">
+          <thead>
+            <tr>
+              <th style="width: 28px;">#</th>
+              <th>Project Name</th>
+              <th>Sector / Category</th>
+              <th>Created By</th>
+              <th>Execution Status</th>
+              <th style="text-align: center;">Events</th>
+              <th style="text-align: center;">Volunteers</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${projectsList.map((p, idx) => `
+              <tr>
+                <td style="color: #94a3b8; font-weight: 600;">${idx + 1}</td>
+                <td><strong>${escapeHtml(p.title)}</strong></td>
+                <td><span class="sector-tag">${escapeHtml(p.category)}</span></td>
+                <td><span class="author-tag ${(p.createdBy || '').toLowerCase().includes('admin') ? 'author-admin' : 'author-partner'}">${escapeHtml(p.createdBy || 'NVC Administration')}</span></td>
+                <td><span class="status-pill status-${escapeHtml((p.status || 'active').toLowerCase().replace(/\s+/g, '-'))}">${escapeHtml(p.status || 'Active')}</span></td>
+                <td style="text-align: center; font-weight: 600;">${p.eventsCount}</td>
+                <td style="text-align: center; font-weight: 800; color: #166534;">${p.volunteersCount}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      ` : `
+        <div class="empty-section-hint">No projects recorded for ${escapeHtml(quarter)}.</div>
+      `}
+    </div>
+
+    <!-- 2. SKILLS CONTRIBUTED (skills by volunteers per event) -->
+    <div class="projects-table-section">
+      <div class="section-title-bar">
+        <div class="title-left">
+          <span class="icon">🎯</span>
+          <span class="heading">Skills Contributed by Volunteers (${skillsList.length})</span>
+        </div>
+        <span class="quarter-tag">${escapeHtml(quarter)}</span>
+      </div>
+      ${skillsList.length > 0 ? `
+        <table class="partner-projects-table">
+          <thead>
+            <tr>
+              <th style="width: 28px;">#</th>
+              <th>Event / Activity</th>
+              <th>Volunteer Name</th>
+              <th>Skills Contributed</th>
+              <th>Date</th>
+              <th style="text-align: center;">Hours Logged</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${skillsList.map((s, idx) => `
+              <tr>
+                <td style="color: #94a3b8; font-weight: 600;">${idx + 1}</td>
+                <td><strong>${escapeHtml(s.eventTitle)}</strong></td>
+                <td><span style="font-weight: 700; color: #1e293b;">${escapeHtml(s.volunteerName)}</span></td>
+                <td><span class="skill-tag">${escapeHtml(s.skills)}</span></td>
+                <td style="color: #64748b; font-size: 11px;">${escapeHtml(s.date)}</td>
+                <td style="text-align: center; font-weight: 800; color: #166534;">${s.hours} hrs</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      ` : `
+        <div class="empty-section-hint">No volunteer skills logged for ${escapeHtml(quarter)}.</div>
+      `}
+    </div>
+
+    <!-- 3. EVENTS CONDUCTED (all events made, listed, date, status) -->
+    <div class="projects-table-section">
+      <div class="section-title-bar">
+        <div class="title-left">
+          <span class="icon">📅</span>
+          <span class="heading">Events Conducted (${eventsList.length})</span>
+        </div>
+        <span class="quarter-tag">${escapeHtml(quarter)}</span>
+      </div>
+      ${eventsList.length > 0 ? `
+        <table class="partner-projects-table">
+          <thead>
+            <tr>
+              <th style="width: 28px;">#</th>
+              <th>Event Title</th>
+              <th>Parent Project / Category</th>
+              <th>Date</th>
+              <th>Location</th>
+              <th>Status</th>
+              <th style="text-align: center;">Volunteers</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${eventsList.map((e, idx) => `
+              <tr>
+                <td style="color: #94a3b8; font-weight: 600;">${idx + 1}</td>
+                <td><strong>${escapeHtml(e.title)}</strong></td>
+                <td style="color: #475569;">${escapeHtml(e.parentProject || 'General Initiative')}</td>
+                <td style="font-weight: 700; color: #1e293b;">${escapeHtml(e.date)}</td>
+                <td style="color: #64748b;">${escapeHtml(e.location || 'Negros Occidental')}</td>
+                <td><span class="status-pill status-${escapeHtml((e.status || 'completed').toLowerCase().replace(/\s+/g, '-'))}">${escapeHtml(e.status || 'Completed')}</span></td>
+                <td style="text-align: center; font-weight: 800; color: #166534;">${e.volunteersCount}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      ` : `
+        <div class="empty-section-hint">No events conducted during ${escapeHtml(quarter)}.</div>
+      `}
+    </div>
+
+    <!-- 4. SECTORS PARTNER (NGO, Hospitals, Institute, Private with all names) -->
+    <div class="projects-table-section">
+      <div class="section-title-bar">
+        <div class="title-left">
+          <span class="icon">🏢</span>
+          <span class="heading">Partner Organizations by Sector</span>
+        </div>
+        <span class="quarter-tag">${escapeHtml(quarter)}</span>
+      </div>
+      ${sectorPartnerGroups.length > 0 ? `
+        <div class="sector-groups-grid">
+          ${sectorPartnerGroups.map(group => `
+            <div class="sector-group-card">
+              <div class="sector-group-header">
+                <span class="sector-badge badge-${group.sectorType.toLowerCase()}">${escapeHtml(group.sectorType.toUpperCase())}</span>
+                <span class="sector-group-title">${escapeHtml(group.sectorLabel)}</span>
+                <span class="sector-group-count">${group.partners.length}</span>
+              </div>
+              ${group.partners.length > 0 ? `
+                <ul class="sector-partner-names">
+                  ${group.partners.map(partner => `
+                    <li class="sector-partner-item">
+                      <span class="dot">•</span>
+                      <span class="partner-org-name">${escapeHtml(partner.name)}</span>
+                      ${partner.location ? `<span class="partner-org-loc">(${escapeHtml(partner.location)})</span>` : ''}
+                    </li>
+                  `).join('')}
+                </ul>
+              ` : `
+                <div class="empty-sector-hint">No partners registered under this sector for this quarter.</div>
+              `}
+            </div>
+          `).join('')}
+        </div>
+      ` : `
+        <div class="empty-section-hint">No partner sectors recorded for ${escapeHtml(quarter)}.</div>
+      `}
+    </div>
+
+    <!-- 5. VOLUNTEERS INVOLVED (all volunteers in this quarter) -->
+    <div class="projects-table-section">
+      <div class="section-title-bar">
+        <div class="title-left">
+          <span class="icon">👥</span>
+          <span class="heading">Volunteers Involved (${volunteersList.length})</span>
+        </div>
+        <span class="quarter-tag">${escapeHtml(quarter)}</span>
+      </div>
+      ${volunteersList.length > 0 ? `
+        <table class="partner-projects-table">
+          <thead>
+            <tr>
+              <th style="width: 28px;">#</th>
+              <th>Volunteer Name</th>
+              <th>Role / Focus</th>
+              <th>Primary Skills</th>
+              <th style="text-align: center;">Events Joined</th>
+              <th style="text-align: center;">Hours Logged</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${volunteersList.map((v, idx) => `
+              <tr>
+                <td style="color: #94a3b8; font-weight: 600;">${idx + 1}</td>
+                <td><strong>${escapeHtml(v.name)}</strong></td>
+                <td><span style="font-size: 11px; color: #475569;">${escapeHtml(v.role || 'Community Volunteer')}</span></td>
+                <td><span class="skill-tag">${escapeHtml(v.skills || 'General Support')}</span></td>
+                <td style="text-align: center; font-weight: 700;">${v.eventsJoined}</td>
+                <td style="text-align: center; font-weight: 800; color: #166534;">${v.hoursLogged} hrs</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      ` : `
+        <div class="empty-section-hint">No volunteers participated in ${escapeHtml(quarter)}.</div>
+      `}
     </div>
 
     <!-- IMPACT & STATUS SECTION -->
@@ -1043,9 +1475,8 @@ export function generateReportHtml(data: ReportTemplateData): string {
       </div>
     </div>
 
-    <!-- TWO-COLUMN SECTION: HIGHLIGHTS & DOCUMENTS -->
-    <div class="two-col-grid">
-      <!-- Left: Real Highlights -->
+    <!-- EXECUTION HIGHLIGHTS -->
+    <div class="highlights-section">
       <div class="section-card">
         <div class="section-header">
           <span class="section-icon">⭐</span>
@@ -1059,28 +1490,6 @@ export function generateReportHtml(data: ReportTemplateData): string {
             </li>
           `).join('')}
         </ul>
-      </div>
-
-      <!-- Right: Documents -->
-      <div class="section-card">
-        <div class="section-header">
-          <span class="section-icon">📑</span>
-          <span class="section-title">Attached & Generated Documents</span>
-        </div>
-        <div class="doc-list">
-          ${documents.map(d => `
-            <div class="doc-item">
-              <div class="doc-left">
-                <span class="doc-badge ${d.type === 'pdf' ? 'badge-pdf' : d.type === 'xlsx' ? 'badge-xlsx' : 'badge-doc'}">${d.type.toUpperCase()}</span>
-                <div>
-                  <div class="doc-name">${escapeHtml(d.name)}</div>
-                  <div class="doc-size">${escapeHtml(d.size)}</div>
-                </div>
-              </div>
-              <span class="doc-dl-icon">↓</span>
-            </div>
-          `).join('')}
-        </div>
       </div>
     </div>
 

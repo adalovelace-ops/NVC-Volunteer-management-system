@@ -192,9 +192,30 @@ export async function saveMessage(message: Message): Promise<void> {
   ]);
 }
 
+export async function markLocalDirectMessagesAsRead(filter: { messageIds?: string[]; recipientId?: string }): Promise<void> {
+  try {
+    const list = await getLocalDirectMessages();
+    let changed = false;
+    const nextList = list.map(m => {
+      const match = filter.messageIds ? filter.messageIds.includes(m.id) : (filter.recipientId ? m.recipientId === filter.recipientId : false);
+      if (match && !m.read) {
+        changed = true;
+        return { ...m, read: true };
+      }
+      return m;
+    });
+    if (changed) {
+      await AsyncStorage.setItem(LOCAL_DM_KEY, JSON.stringify(nextList));
+    }
+  } catch {}
+}
+
 export async function markMessageAsRead(messageId: string): Promise<void> {
-  const ref = doc(db(), DM_COLLECTION, messageId);
-  await updateDoc(ref, { read: true });
+  await markLocalDirectMessagesAsRead({ messageIds: [messageId] });
+  try {
+    const ref = doc(db(), DM_COLLECTION, messageId);
+    await updateDoc(ref, { read: true });
+  } catch {}
 }
 
 export async function updateMessageContent(messageId: string, content: string): Promise<void> {

@@ -65,6 +65,8 @@ import {
   joinProjectEvent,
 
   markMessageAsRead,
+  markMessagesAsRead,
+  markAllMessagesForUserAsRead,
 
   saveMessage,
 
@@ -1190,7 +1192,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
       if (selectedUser) {
         const targetUserId = selectedUser.id;
-        const chat = await getConversation(user.id, targetUserId);
+        const chat = await getConversation(user.id, targetUserId, true);
 
         // Ensure user hasn't switched conversation while fetch was in flight
         if (selectedUserRef.current?.id !== targetUserId) return;
@@ -1232,12 +1234,15 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         const unread = chat.filter(m => !m.read && m.recipientId === user.id);
 
         if (unread.length > 0) {
-          await Promise.all(unread.map(m => markMessageAsRead(m.id)));
+          setConversations(prev =>
+            prev.map(c => (c.user.id === targetUserId ? { ...c, unreadCount: 0 } : c))
+          );
+          await markMessagesAsRead(unread.map(m => m.id));
         }
 
       } else if (selectedProjectChat) {
         const targetProjectId = selectedProjectChat.project.id;
-        const chat = await getProjectGroupMessages(targetProjectId, user.id);
+        const chat = await getProjectGroupMessages(targetProjectId, user.id, true);
 
         // Ensure project chat hasn't switched while in flight
         if (selectedProjectChatRef.current?.project.id !== targetProjectId) return;
@@ -1311,11 +1316,11 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
   useFocusEffect(useCallback(() => {
-
     void loadData();
-
-    return subscribeToStorageChanges(['users', 'projects', 'partnerProjectApplications'], loadData);
-
+    return subscribeToStorageChanges(['messages', 'users', 'projects', 'partnerProjectApplications'], () => {
+      void loadData();
+      void loadMessages(false);
+    });
   }, [loadData]));
 
 
@@ -1454,12 +1459,12 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
     }
 
     // STEP 2: Background refresh (hits client TTL cache or backend index)
-    if (view === 'detail' && (selectedUser || selectedProjectChat)) {
+    if (selectedUser || selectedProjectChat) {
       void loadMessages(true);
 
       const timer = setInterval(() => {
         void loadMessages(false);
-      }, 3000);
+      }, 1500);
 
       return () => clearInterval(timer);
     }
@@ -2955,31 +2960,48 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
       <View style={styles.sidebarHeader}>
         <AppLogo />
-        <TouchableOpacity
-          style={styles.sidebarHeaderAction}
-          onPress={() => {
-            const adminUser = allUsers.find(u => u.role === 'admin') || allUsers[0];
-            if ((isVolunteer || isPartner) && adminUser) {
-              setSelectedUser(adminUser);
-              setSelectedProjectChat(null);
-              setSelectedProposalApplication(null);
-              setProposalIntent(null);
-              setView('detail');
-            } else if (availableSections.includes('contacts')) {
-              setActiveSection('contacts');
-            } else if (allUsers.length > 0) {
-              setSelectedUser(allUsers[0]);
-              setSelectedProjectChat(null);
-              setSelectedProposalApplication(null);
-              setProposalIntent(null);
-              setView('detail');
-            }
-          }}
-          activeOpacity={0.8}
-          accessibilityLabel="New conversation"
-        >
-          <MaterialIcons name="add" size={24} color="#166534" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          {conversations.some(c => c.unreadCount > 0) && (
+            <TouchableOpacity
+              style={styles.sidebarHeaderAction}
+              onPress={() => {
+                if (user?.id) {
+                  void markAllMessagesForUserAsRead(user.id);
+                  setConversations(prev => prev.map(c => ({ ...c, unreadCount: 0 })));
+                }
+              }}
+              activeOpacity={0.8}
+              accessibilityLabel="Mark all as read"
+            >
+              <MaterialIcons name="done-all" size={20} color="#166534" />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={styles.sidebarHeaderAction}
+            onPress={() => {
+              const adminUser = allUsers.find(u => u.role === 'admin') || allUsers[0];
+              if ((isVolunteer || isPartner) && adminUser) {
+                setSelectedUser(adminUser);
+                setSelectedProjectChat(null);
+                setSelectedProposalApplication(null);
+                setProposalIntent(null);
+                setView('detail');
+              } else if (availableSections.includes('contacts')) {
+                setActiveSection('contacts');
+              } else if (allUsers.length > 0) {
+                setSelectedUser(allUsers[0]);
+                setSelectedProjectChat(null);
+                setSelectedProposalApplication(null);
+                setProposalIntent(null);
+                setView('detail');
+              }
+            }}
+            activeOpacity={0.8}
+            accessibilityLabel="New conversation"
+          >
+            <MaterialIcons name="add" size={24} color="#166534" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.searchBox}>
@@ -3064,7 +3086,16 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                       c.user.name,
                       formatMessageSubtitle(c.lastMessage, 'Tap to chat with Admin'),
                       selectedUser?.id === c.user.id,
-                      () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
+                      () => {
+                        setSelectedUser(c.user);
+                        setSelectedProjectChat(null);
+                        setSelectedProposalApplication(null);
+                        setProposalIntent(null);
+                        setView('detail');
+                        setConversations(prev =>
+                          prev.map(item => (item.user.id === c.user.id ? { ...item, unreadCount: 0 } : item))
+                        );
+                      },
                       { badge: c.unreadCount }
                     ))}
                   </>
@@ -3078,7 +3109,16 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                       c.user.name,
                       formatMessageSubtitle(c.lastMessage, 'Start a conversation'),
                       selectedUser?.id === c.user.id,
-                      () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
+                      () => {
+                        setSelectedUser(c.user);
+                        setSelectedProjectChat(null);
+                        setSelectedProposalApplication(null);
+                        setProposalIntent(null);
+                        setView('detail');
+                        setConversations(prev =>
+                          prev.map(item => (item.user.id === c.user.id ? { ...item, unreadCount: 0 } : item))
+                        );
+                      },
                       { badge: c.unreadCount, onDelete: () => handleDeleteConversation(c) }
                     ))}
                   </>
@@ -3092,7 +3132,16 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                       c.user.name,
                       formatMessageSubtitle(c.lastMessage, 'Start a conversation'),
                       selectedUser?.id === c.user.id,
-                      () => { setSelectedUser(c.user); setSelectedProjectChat(null); setSelectedProposalApplication(null); setProposalIntent(null); setView('detail'); },
+                      () => {
+                        setSelectedUser(c.user);
+                        setSelectedProjectChat(null);
+                        setSelectedProposalApplication(null);
+                        setProposalIntent(null);
+                        setView('detail');
+                        setConversations(prev =>
+                          prev.map(item => (item.user.id === c.user.id ? { ...item, unreadCount: 0 } : item))
+                        );
+                      },
                       { badge: c.unreadCount, onDelete: () => handleDeleteConversation(c) }
                     ))}
                   </>

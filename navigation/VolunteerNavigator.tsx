@@ -13,7 +13,7 @@ import CommunicationHubScreen from '../screens/CommunicationHubScreen';
 import VolunteerReportsScreen from '../screens/VolunteerReportsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import VolunteerProjectDetailsScreen from '../screens/VolunteerProjectDetailsScreen';
-import { getMessagesForUser, subscribeToMessages, getAllUsers, subscribeToStorageChanges, markMessageAsRead } from '../models/storage';
+import { getMessagesForUser, subscribeToMessages, getAllUsers, subscribeToStorageChanges, markMessageAsRead, markMessagesAsRead, markAllMessagesForUserAsRead } from '../models/storage';
 
 export type VolunteerTabParamList = {
   Home: undefined;
@@ -91,11 +91,11 @@ export default function VolunteerNavigator() {
   }, [user?.id]);
 
   const handleNotificationsSeen = React.useCallback(async () => {
-    if (!user?.id || unreadMessages.length === 0) return;
-    await Promise.all(
-      unreadMessages.map((msg) => markMessageAsRead(msg.id).catch(() => undefined))
-    );
-  }, [unreadMessages, user?.id]);
+    if (!user?.id) return;
+    setUnreadMessages([]);
+    setMessageUnreadCount(0);
+    await markAllMessagesForUserAsRead(user.id);
+  }, [user?.id]);
 
   return (
     <View style={{ flex: 1 }} {...({ 'data-theme': 'volunteer', className: 'volunteer-side-active' } as any)}>
@@ -131,7 +131,20 @@ export default function VolunteerNavigator() {
         <Tab.Screen name="Events" component={VolunteerEventsScreen} options={{ title: 'Events' }} />
         <Tab.Screen name="ProjectDetails" component={VolunteerProjectDetailsScreen} options={{ title: 'Project Details', tabBarButton: () => null }} />
         <Tab.Screen name="Tasks" component={VolunteerTasksScreen} options={{ title: 'My Tasks' }} />
-        <Tab.Screen name="Messages" component={CommunicationHubScreen} options={{ title: 'Messages', tabBarBadge: messageUnreadCount > 0 ? messageUnreadCount : undefined }} />
+        <Tab.Screen
+          name="Messages"
+          component={CommunicationHubScreen}
+          options={{ title: 'Messages', tabBarBadge: messageUnreadCount > 0 ? messageUnreadCount : undefined }}
+          listeners={{
+            focus: () => {
+              setMessageUnreadCount(0);
+              setUnreadMessages([]);
+              if (user?.id) {
+                void markAllMessagesForUserAsRead(user.id);
+              }
+            },
+          }}
+        />
         <Tab.Screen name="Reports" component={VolunteerReportsScreen} options={{ title: 'My Reports' }} />
         <Tab.Screen name="Profile" component={ProfileScreen} options={{ title: 'My Profile' }} />
       </Tab.Navigator>

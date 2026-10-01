@@ -850,55 +850,27 @@ export default function AnalyticsReportPreviewModal({
                   </View>
                 </View>
 
-                {/* 5. Two Columns: Highlights & Documents */}
-                <View style={styles.twoColGrid}>
-                  {/* Left: Highlights */}
-                  <View style={styles.sectionCard}>
-                    <View style={styles.sectionHeader}>
-                      <MaterialIcons name="star" size={18} color="#16a34a" />
-                      <Text style={styles.sectionTitle}>Execution Highlights</Text>
-                    </View>
-                    <View style={styles.highlightsList}>
-                      {reportData.highlights.map((h, i) => (
-                        <View key={i} style={styles.highlightRow}>
-                          <View style={styles.checkCircle}>
-                            <MaterialIcons name="check" size={11} color="#ffffff" />
+                {/* 5. Highlights */}
+                {Array.isArray(reportData.highlights) && reportData.highlights.length > 0 && (
+                  <View style={styles.highlightsSection}>
+                    <View style={styles.sectionCard}>
+                      <View style={styles.sectionHeader}>
+                        <MaterialIcons name="star" size={18} color="#16a34a" />
+                        <Text style={styles.sectionTitle}>Execution Highlights</Text>
+                      </View>
+                      <View style={styles.highlightsList}>
+                        {reportData.highlights.map((h, i) => (
+                          <View key={i} style={styles.highlightRow}>
+                            <View style={styles.checkCircle}>
+                              <MaterialIcons name="check" size={11} color="#ffffff" />
+                            </View>
+                            <Text style={styles.highlightText}>{h}</Text>
                           </View>
-                          <Text style={styles.highlightText}>{h}</Text>
-                        </View>
-                      ))}
+                        ))}
+                      </View>
                     </View>
                   </View>
-
-                  {/* Right: Documents */}
-                  <View style={styles.sectionCard}>
-                    <View style={styles.sectionHeader}>
-                      <MaterialIcons name="description" size={18} color="#16a34a" />
-                      <Text style={styles.sectionTitle}>Attached & Generated Documents</Text>
-                    </View>
-                    <View style={styles.docList}>
-                      {(reportData.documents || []).map((doc, idx) => (
-                        <View key={idx} style={styles.docItem}>
-                          <View style={styles.docLeft}>
-                            <View
-                              style={[
-                                styles.docTypeBadge,
-                                { backgroundColor: doc.type === 'pdf' ? '#ef4444' : '#16a34a' },
-                              ]}
-                            >
-                              <Text style={styles.docTypeText}>{doc.type.toUpperCase()}</Text>
-                            </View>
-                            <View>
-                              <Text style={styles.docName}>{doc.name}</Text>
-                              <Text style={styles.docSize}>{doc.size}</Text>
-                            </View>
-                          </View>
-                          <MaterialIcons name="file-download" size={18} color="#64748b" />
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                </View>
+                )}
 
                 {/* 6. Volunteer Photos Gallery (REAL PHOTOS ONLY) */}
                 <View style={styles.photosSection}>
@@ -1482,7 +1454,11 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
 
-  /* TWO COLUMNS */
+  /* HIGHLIGHTS */
+  highlightsSection: {
+    paddingHorizontal: 28,
+    paddingBottom: 16,
+  },
   twoColGrid: {
     flexDirection: 'row',
     gap: 14,

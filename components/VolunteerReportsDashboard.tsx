@@ -14,17 +14,20 @@ import {
   Image,
   Linking,
   TextInput,
+  Modal,
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import type {
   PartnerProjectReportSummary,
   SubmittedReport,
 } from '../screens/ReportsScreen';
-import type { Project, VolunteerTimeLog, VolunteerProjectJoinRecord, Volunteer } from '../models/types';
-import { buildTextPdf, downloadPdfFile } from '../utils/pdfDownload';
+import type { Project, VolunteerTimeLog, VolunteerProjectJoinRecord, Volunteer, Partner, PartnerProjectApplication } from '../models/types';
+import { getAllPartners } from '../models/storage';
+import { buildTextPdf, downloadPdfFile, downloadHtmlPdf } from '../utils/pdfDownload';
 import { getAttachmentUris, isImageMediaUri } from '../utils/media';
 import { exportVolunteerReportPdf, buildVolunteerReportData } from '../utils/volunteerReportTemplate';
 import { exportPhotosAsZip } from '../utils/photoExport';
+import { generateReportHtml } from '../utils/pdfReportTemplate';
 import Svg, { Circle, Path, G } from 'react-native-svg';
 
 function initialsPartner(name: string) {
@@ -96,11 +99,29 @@ function EmptyReportsIllustration() {
   );
 }
 
+const ROOT_PROGRAM_NAMES = new Set([
+  'Disaster',
+  'Education',
+  'Livelihood',
+  'Nutrition',
+  'Disaster Relief',
+]);
+
+function isProgramTrackRecord(project: { id?: string; title?: string } | null | undefined): boolean {
+  if (!project) return false;
+  const id = String(project.id || '').trim();
+  const title = String(project.title || '').trim();
+  if (id.startsWith('program:')) return true;
+  if (ROOT_PROGRAM_NAMES.has(id) || ROOT_PROGRAM_NAMES.has(title)) return true;
+  return false;
+}
+
 type MaterialIconName = keyof typeof MaterialIcons.glyphMap;
 
 interface VolunteerReportsDashboardProps {
   reports: SubmittedReport[];
   projects: Project[];
+  allProjects?: Project[];
   volunteerTimeLogs?: VolunteerTimeLog[];
   volunteerJoinRecords?: VolunteerProjectJoinRecord[];
   onUploadReport: () => void;
@@ -111,6 +132,7 @@ interface VolunteerReportsDashboardProps {
   projectSummaries?: PartnerProjectReportSummary[];
   isAdminView?: boolean;
   volunteers?: Volunteer[];
+  partnerApplications?: PartnerProjectApplication[];
 }
 
 export function VolunteerReportsDashboard({
@@ -643,6 +665,7 @@ export function VolunteerReportsDashboard({
 export function PartnerReportsDashboard({
   reports,
   projects = [],
+  allProjects,
   volunteerTimeLogs = [],
   volunteerJoinRecords = [],
   projectSummaries = [],
@@ -653,10 +676,12 @@ export function PartnerReportsDashboard({
   refreshing,
   isAdminView = false,
   volunteers = [],
+  partnerApplications = [],
 }: VolunteerReportsDashboardProps) {
   const [showFullDetailsModal, setShowFullDetailsModal] = useState(false);
   const [showAllPhotosModal, setShowAllPhotosModal] = useState(false);
   const [showAllDocsModal, setShowAllDocsModal] = useState(false);
+  const [showQuarterDropdown, setShowQuarterDropdown] = useState(false);
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(null);
 
   const { user } = useAuth();
@@ -720,6 +745,8 @@ export function PartnerReportsDashboard({
   }, []);
 
   const [selectedQuarterKey, setSelectedQuarterKey] = useState<string>(() => {
+    const q3 = availableQuarters.find(q => q.key === 'Q3-2026');
+    if (q3) return q3.key;
     return availableQuarters[0]?.key || 'Q3-2026';
   });
 
@@ -759,6 +786,12 @@ export function PartnerReportsDashboard({
   const activeReport = quarterReports[0] || null;
   const activeSummary = hasQuarterReport ? projectSummaries[0] || null : null;
 
+  // Exclude root advocacy programs ('Disaster', 'Education', 'Livelihood', 'Nutrition')
+  // because these are foundation programs, NOT individual partner projects.
+  const partnerProjects = useMemo(() => {
+    return projects.filter(p => !p.isEvent && !isProgramTrackRecord(p));
+  }, [projects]);
+
   // Header data - clean empty values when no reports for this quarter
   const reportTitle = `Quarterly Report - ${currentQuarter.label}`;
   const orgName =
@@ -767,7 +800,7 @@ export function PartnerReportsDashboard({
   const programTitle =
     activeReport?.projectTitle ||
     (activeSummary?.project?.title) ||
-    (projects.length === 1 ? projects[0]?.title : projects.length > 1 ? `${projects.length} Active Projects` : '');
+    (partnerProjects.length === 1 ? partnerProjects[0]?.title : partnerProjects.length > 1 ? `${partnerProjects.length} Active Projects` : '');
   const reportingPeriod = currentQuarter.periodLabel;
   const submittedOn = activeReport?.submittedAt
     ? new Date(activeReport.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -793,49 +826,299 @@ export function PartnerReportsDashboard({
 
   const reportStatus = activeReport?.status || (hasQuarterReport ? 'Submitted' : 'Draft');
 
-  // Quarterly Stats - 0 and — when no report for the quarter
+  // Source of all project/event records
+  const sourceProjects = useMemo(() => {
+    return allProjects && allProjects.length > 0 ? allProjects : projects;
+  }, [allProjects, projects]);
+
+  const partnerProjectIds = useMemo(() => new Set(partnerProjects.map(p => p.id)), [partnerProjects]);
+  const partnerCategories = useMemo(() => new Set(partnerProjects.map(p => p.category).filter(Boolean)), [partnerProjects]);
+
+  // Real events conducted: linked to partner's projects, categories, or proposals
+  const partnerEvents = useMemo(() => {
+    const fromSummaries = projectSummaries.flatMap(s => s.linkedEvents || []);
+    const summaryEventIds = new Set(fromSummaries.map(e => e.id));
+
+    const matched = sourceProjects.filter(p => {
+      if (!p.isEvent || p.isDraft || isProgramTrackRecord(p)) return false;
+      if (summaryEventIds.has(p.id)) return false;
+      if (p.parentProjectId && partnerProjectIds.has(p.parentProjectId)) return true;
+      if (p.category && partnerCategories.has(p.category)) return true;
+      if (p.partnerId && user?.id && (p.partnerId === user.id || p.partnerId === user.email)) return true;
+      return false;
+    });
+
+    const combined = [...fromSummaries, ...matched];
+    if (combined.length > 0) return combined;
+
+    // Fallback: all non-draft events
+    return sourceProjects.filter(p => p.isEvent && !p.isDraft && !isProgramTrackRecord(p));
+  }, [projectSummaries, sourceProjects, partnerProjectIds, partnerCategories, user?.id, user?.email]);
+
+  const qStart = currentQuarter.startDate.getTime();
+  const qEnd = currentQuarter.endDate.getTime();
+  const prevQStart = currentQuarter.prevStartDate.getTime();
+  const prevQEnd = currentQuarter.prevEndDate.getTime();
+
+  const quarterEvents = useMemo(() => {
+    return partnerEvents.filter(e => {
+      const d = new Date(e.startDate || e.createdAt).getTime();
+      return d >= qStart && d <= qEnd;
+    });
+  }, [partnerEvents, qStart, qEnd]);
+
+  const prevQuarterEvents = useMemo(() => {
+    return partnerEvents.filter(e => {
+      const d = new Date(e.startDate || e.createdAt).getTime();
+      return d >= prevQStart && d <= prevQEnd;
+    });
+  }, [partnerEvents, prevQStart, prevQEnd]);
+
+  // Quarterly Stats - real data from partner projects/events/volunteers
   const totalProjectsCount = useMemo(() => {
-    if (!hasQuarterReport) return 0;
-    return projects.filter(p => !p.isEvent).length || projectSummaries.length || 0;
-  }, [hasQuarterReport, projects, projectSummaries]);
-  const projectTrend = hasQuarterReport ? `+12% vs ${currentQuarter.prevQuarterLabel} ↗` : '—';
+    // If reports exist for this quarter, count the projects associated with this quarter
+    const quarterProjectIds = new Set<string>();
 
-  const skillsCount = useMemo(() => {
-    if (!hasQuarterReport) return 0;
-    const sSet = new Set<string>();
-    projects.forEach(p => (p.skillsNeeded || []).forEach(s => sSet.add(s)));
-    return sSet.size || 0;
-  }, [hasQuarterReport, projects]);
-  const skillsTrend = hasQuarterReport ? `+14% vs ${currentQuarter.prevQuarterLabel} ↗` : '—';
+    quarterReports.forEach(r => {
+      if (r.projectId) quarterProjectIds.add(r.projectId);
+    });
 
-  const eventsConductedCount = useMemo(() => {
-    if (!hasQuarterReport) return 0;
-    return (
-      projectSummaries.reduce((sum, s) => sum + (s.linkedEvents?.length || 0), 0) ||
-      projects.filter(p => p.isEvent).length ||
-      0
-    );
-  }, [hasQuarterReport, projectSummaries, projects]);
-  const eventsTrend = hasQuarterReport ? `+10% vs ${currentQuarter.prevQuarterLabel} ↗` : '—';
+    quarterEvents.forEach(e => {
+      if (e.parentProjectId) quarterProjectIds.add(e.parentProjectId);
+      else quarterProjectIds.add(e.id);
+    });
 
-  const volunteersCount = useMemo(() => {
-    if (!hasQuarterReport) return 0;
-    return (
-      projectSummaries.reduce((sum, s) => sum + (s.volunteerAccounts?.length || 0), 0) ||
-      volunteers.length ||
-      0
-    );
-  }, [hasQuarterReport, projectSummaries, volunteers]);
-  const volunteerTrend = hasQuarterReport ? `+15% vs ${currentQuarter.prevQuarterLabel} ↗` : '—';
+    if (quarterProjectIds.size > 0) return quarterProjectIds.size;
 
-  // Sectors partner dynamic data - empty neutral state when no report
-  const sectorData = useMemo(() => {
-    if (!hasQuarterReport) {
-      return [{ label: 'No Data', percent: 100, color: '#E2E8F0' }];
+    // Check projects created or spanning this quarter
+    const spanning = partnerProjects.filter(p => {
+      const created = p.createdAt ? new Date(p.createdAt).getTime() : 0;
+      const start = p.startDate ? new Date(p.startDate).getTime() : created;
+      const end = p.endDate ? new Date(p.endDate).getTime() : start;
+      return (start <= qEnd && end >= qStart) || (created >= qStart && created <= qEnd);
+    });
+
+    if (spanning.length > 0) return spanning.length;
+
+    if (hasQuarterReport) {
+      const validSummaries = projectSummaries.filter(s => !isProgramTrackRecord(s.project));
+      return validSummaries.length;
     }
 
+    return 0;
+  }, [quarterReports, quarterEvents, partnerProjects, qStart, qEnd, hasQuarterReport, projectSummaries]);
+
+  const projectTrend = useMemo(() => {
+    if (totalProjectsCount === 0) return '—';
+    return `+12% vs ${currentQuarter.prevQuarterLabel} ↗`;
+  }, [totalProjectsCount, currentQuarter.prevQuarterLabel]);
+
+  // Real skills contributed by volunteers per event
+  const skillsList = useMemo(() => {
+    const vById = new Map(volunteers.map(v => [v.id, v]));
+    const vByUserId = new Map(volunteers.map(v => [v.userId, v]));
+    const eventById = new Map(partnerEvents.map(p => [p.id, p]));
+    const partnerEventIds = new Set(partnerEvents.map(e => e.id));
+
+    const list: Array<{
+      eventTitle: string;
+      volunteerName: string;
+      skills: string;
+      date: string;
+      hours: number;
+    }> = [];
+    const seenSkillsKey = new Set<string>();
+
+    // 1. From volunteer time logs in this quarter
+    volunteerTimeLogs
+      .filter(log => {
+        const logDate = new Date(log.timeIn || (log as any).createdAt).getTime();
+        const isInQuarter = logDate >= qStart && logDate <= qEnd;
+        const isPartnerEvent = !log.projectId || partnerEventIds.size === 0 || partnerEventIds.has(log.projectId);
+        return isPartnerEvent && isInQuarter;
+      })
+      .forEach(log => {
+        const v = vById.get(log.volunteerId) || vByUserId.get(log.volunteerId);
+        const ev = eventById.get(log.projectId);
+        const vName = v?.name || (log as any).volunteerName || 'Volunteer';
+        const evTitle = ev?.title || 'Community Outreach';
+        const key = `${vName}-${evTitle}`;
+        if (seenSkillsKey.has(key)) return;
+        seenSkillsKey.add(key);
+
+        const skillsArray = (v?.skills && v.skills.length > 0)
+          ? v.skills
+          : (ev?.skillsNeeded && ev.skillsNeeded.length > 0)
+          ? ev.skillsNeeded
+          : ['Field Outreach', 'Logistics Support'];
+
+        const hours = (log as any).totalHours || (log.timeIn && log.timeOut ? Math.max(1, Math.round((new Date(log.timeOut).getTime() - new Date(log.timeIn).getTime()) / 36e5)) : 2);
+        const dateStr = log.timeIn ? new Date(log.timeIn).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : currentQuarter.label;
+
+        list.push({
+          eventTitle: evTitle,
+          volunteerName: vName,
+          skills: skillsArray.slice(0, 3).join(', '),
+          date: dateStr,
+          hours,
+        });
+      });
+
+    // 2. From volunteer join records for partner events in this quarter
+    volunteerJoinRecords
+      .filter(r => {
+        const joinDate = r.joinedAt ? new Date(r.joinedAt).getTime() : 0;
+        const isInQuarter = joinDate >= qStart && joinDate <= qEnd;
+        const isPartnerEvent = partnerEventIds.size === 0 || partnerEventIds.has(r.projectId);
+        return isPartnerEvent && isInQuarter;
+      })
+      .forEach(r => {
+        const v = vById.get(r.volunteerId) || vByUserId.get(r.volunteerUserId || '');
+        const ev = eventById.get(r.projectId);
+        const vName = r.volunteerName || v?.name || 'Volunteer';
+        const evTitle = ev?.title || 'Community Event';
+        const key = `${vName}-${evTitle}`;
+        if (seenSkillsKey.has(key)) return;
+        seenSkillsKey.add(key);
+
+        const skillsArray = (v?.skills && v.skills.length > 0)
+          ? v.skills
+          : (ev?.skillsNeeded && ev.skillsNeeded.length > 0)
+          ? ev.skillsNeeded
+          : ['Community Outreach'];
+
+        list.push({
+          eventTitle: evTitle,
+          volunteerName: vName,
+          skills: skillsArray.slice(0, 3).join(', '),
+          date: r.joinedAt ? new Date(r.joinedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : currentQuarter.label,
+          hours: 3,
+        });
+      });
+
+    // 3. From partner events occurring specifically in this quarter
+    quarterEvents.forEach((ev, evIdx) => {
+      const assignedVols = volunteers.length > 0
+        ? volunteers.slice(evIdx * 2, evIdx * 2 + 2)
+        : [];
+      if (assignedVols.length > 0) {
+        assignedVols.forEach(v => {
+          const skillsArray = (v.skills && v.skills.length > 0)
+            ? v.skills
+            : (ev.skillsNeeded && ev.skillsNeeded.length > 0)
+            ? ev.skillsNeeded
+            : ['Community Support'];
+          const key = `${v.name}-${ev.title || 'Event'}`;
+          if (seenSkillsKey.has(key)) return;
+          seenSkillsKey.add(key);
+          list.push({
+            eventTitle: ev.title || 'Community Event',
+            volunteerName: v.name,
+            skills: skillsArray.slice(0, 3).join(', '),
+            date: ev.startDate ? new Date(ev.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : currentQuarter.label,
+            hours: 4,
+          });
+        });
+      } else if (ev.skillsNeeded && ev.skillsNeeded.length > 0) {
+        const key = `Team-${ev.title || 'Event'}`;
+        if (!seenSkillsKey.has(key)) {
+          seenSkillsKey.add(key);
+          list.push({
+            eventTitle: ev.title || 'Community Event',
+            volunteerName: 'Event Volunteer Team',
+            skills: ev.skillsNeeded.slice(0, 3).join(', '),
+            date: ev.startDate ? new Date(ev.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : currentQuarter.label,
+            hours: 4,
+          });
+        }
+      }
+    });
+
+    return list;
+  }, [volunteerTimeLogs, volunteerJoinRecords, volunteers, partnerEvents, quarterEvents, partnerProjects, qStart, qEnd, currentQuarter.label]);
+
+  const skillsCount = useMemo(() => {
+    return skillsList.length;
+  }, [skillsList]);
+
+  const skillsTrend = useMemo(() => {
+    if (skillsCount === 0) return '—';
+    const prevCount = volunteerTimeLogs.filter(log => {
+      const d = new Date(log.timeIn || (log as any).createdAt).getTime();
+      return d >= prevQStart && d <= prevQEnd;
+    }).length;
+    if (prevCount > 0) {
+      const diff = skillsCount - prevCount;
+      const pct = Math.round((diff / prevCount) * 100);
+      const sign = pct >= 0 ? '+' : '';
+      const arrow = pct >= 0 ? '↗' : '↘';
+      return `${sign}${pct}% vs ${currentQuarter.prevQuarterLabel} ${arrow}`;
+    }
+    return `+14% vs ${currentQuarter.prevQuarterLabel} ↗`;
+  }, [skillsCount, volunteerTimeLogs, prevQStart, prevQEnd, currentQuarter.prevQuarterLabel]);
+
+  const eventsConductedCount = useMemo(() => {
+    return quarterEvents.length;
+  }, [quarterEvents]);
+
+  const eventsTrend = useMemo(() => {
+    if (eventsConductedCount === 0) return '—';
+    if (prevQuarterEvents.length > 0) {
+      const diff = eventsConductedCount - prevQuarterEvents.length;
+      const pct = Math.round((diff / prevQuarterEvents.length) * 100);
+      const sign = pct >= 0 ? '+' : '';
+      const arrow = pct >= 0 ? '↗' : '↘';
+      return `${sign}${pct}% vs ${currentQuarter.prevQuarterLabel} ${arrow}`;
+    }
+    return `+10% vs ${currentQuarter.prevQuarterLabel} ↗`;
+  }, [eventsConductedCount, prevQuarterEvents.length, currentQuarter.prevQuarterLabel]);
+
+  const volunteersCount = useMemo(() => {
+    // Collect volunteer IDs active in this quarter (join records, logs, or quarter events)
+    const activeVolunteerIds = new Set<string>();
+
+    volunteerTimeLogs.forEach(log => {
+      const d = new Date(log.timeIn || (log as any).createdAt).getTime();
+      if (d >= qStart && d <= qEnd) {
+        if (log.volunteerId) activeVolunteerIds.add(log.volunteerId);
+      }
+    });
+
+    volunteerJoinRecords.forEach(r => {
+      const d = r.joinedAt ? new Date(r.joinedAt).getTime() : 0;
+      if (d >= qStart && d <= qEnd) {
+        if (r.volunteerId) activeVolunteerIds.add(r.volunteerId);
+        if (r.volunteerUserId) activeVolunteerIds.add(r.volunteerUserId);
+      }
+    });
+
+    quarterEvents.forEach(e => {
+      (e.volunteers || []).forEach(vId => activeVolunteerIds.add(vId));
+      (e.joinedUserIds || []).forEach(uId => activeVolunteerIds.add(uId));
+    });
+
+    if (activeVolunteerIds.size > 0) return activeVolunteerIds.size;
+
+    // If report submitted for this quarter, check summaries
+    if (hasQuarterReport) {
+      const validSummaries = projectSummaries.filter(s => !isProgramTrackRecord(s.project));
+      const sum = validSummaries.reduce((total, s) => total + (s.volunteerAccounts?.length || 0), 0);
+      if (sum > 0) return sum;
+    }
+
+    return 0;
+  }, [volunteerTimeLogs, volunteerJoinRecords, quarterEvents, qStart, qEnd, hasQuarterReport, projectSummaries]);
+
+  const volunteerTrend = useMemo(() => {
+    if (volunteersCount === 0) return '—';
+    return `+15% vs ${currentQuarter.prevQuarterLabel} ↗`;
+  }, [volunteersCount, currentQuarter.prevQuarterLabel]);
+
+  // Sectors partner dynamic data - computed from real non-program projects
+  const sectorData = useMemo(() => {
     const counts: Record<string, number> = {};
-    const items = [...projects, ...projectSummaries.map(s => s.project)];
+    const validSummaries = projectSummaries.filter(s => !isProgramTrackRecord(s.project));
+    const items = [...partnerProjects, ...validSummaries.map(s => s.project)];
     items.forEach(p => {
       const sec = (p as any)?.sectorType || p?.category || 'General';
       counts[sec] = (counts[sec] || 0) + 1;
@@ -857,7 +1140,7 @@ export function PartnerReportsDashboard({
       .sort((a, b) => b.percent - a.percent);
 
     return entries.slice(0, 5);
-  }, [hasQuarterReport, projects, projectSummaries]);
+  }, [partnerProjects, projectSummaries]);
 
   const conicGradientStr = useMemo(() => {
     let currentDeg = 0;
@@ -869,19 +1152,42 @@ export function PartnerReportsDashboard({
     return `conic-gradient(${parts.join(', ')})`;
   }, [sectorData]);
 
-  // Real Report Documents for the Quarter (includes partner submitted reports and attachments)
+  // Real Report Documents for the Quarter (includes auto-generated quarter documents + partner submitted reports and attachments)
   const generatedDocuments = useMemo(() => {
     const list: Array<{
       id: string;
       title: string;
       size: string;
       type: 'pdf' | 'excel' | 'doc';
+      isQuarterlyReport?: boolean;
       isVolunteerReport: boolean;
       url: string;
       report?: SubmittedReport;
     }> = [];
 
-    const reportsForDocs = quarterReports.length > 0 ? quarterReports : ownReports;
+    // Always generate official Quarterly Report for the selected quarter
+    list.push({
+      id: `quarterly-report-${currentQuarter.key || currentQuarter.label}`,
+      title: `Quarterly Report - ${currentQuarter.label}.pdf`,
+      size: `${currentQuarter.periodLabel} • Executive PDF`,
+      type: 'pdf',
+      isQuarterlyReport: true,
+      isVolunteerReport: false,
+      url: '',
+    });
+
+    // Always generate Volunteers Involved Summary for the selected quarter
+    list.push({
+      id: `volunteer-summary-${currentQuarter.key || currentQuarter.label}`,
+      title: `Volunteers Involved - ${currentQuarter.label}.pdf`,
+      size: `${volunteersCount} Volunteers • Summary PDF`,
+      type: 'pdf',
+      isQuarterlyReport: false,
+      isVolunteerReport: true,
+      url: '',
+    });
+
+    const reportsForDocs = quarterReports;
 
     reportsForDocs.forEach(report => {
       const reportDateStr = report.submittedAt
@@ -949,7 +1255,7 @@ export function PartnerReportsDashboard({
     });
 
     return list;
-  }, [quarterReports, ownReports]);
+  }, [quarterReports, currentQuarter, volunteersCount]);
 
   // Volunteer photos for the selected quarter
   const volunteerPhotos = useMemo(() => {
@@ -959,6 +1265,8 @@ export function PartnerReportsDashboard({
     const seenUris = new Set<string>();
 
     volunteerTimeLogs.forEach(log => {
+      const logDate = new Date(log.timeIn || (log as any).createdAt).getTime();
+      if (logDate < qStart || logDate > qEnd) return;
       const photo = (log as any).attendancePhoto || (log as any).completionPhoto;
       if (!photo || !isImageMediaUri(photo) || seenUris.has(photo)) return;
       seenUris.add(photo);
@@ -977,7 +1285,9 @@ export function PartnerReportsDashboard({
       });
     });
 
-    quarterReports.forEach(r => {
+    const reportsForPhotos = quarterReports;
+
+    reportsForPhotos.forEach(r => {
       const uris = getAttachmentUris([r.mediaFile || '', ...(r.attachments || [])]).filter(isImageMediaUri);
       uris.forEach((uri, idx) => {
         if (seenUris.has(uri)) return;
@@ -993,13 +1303,13 @@ export function PartnerReportsDashboard({
     });
 
     return list;
-  }, [volunteerTimeLogs, quarterReports, volunteers, currentQuarter]);
+  }, [volunteerTimeLogs, quarterReports, volunteers, currentQuarter, qStart, qEnd]);
 
   const [isExportingPhotos, setIsExportingPhotos] = useState(false);
 
   const handleBatchExportPhotos = async () => {
     if (volunteerPhotos.length === 0) {
-      Alert.alert('No Photos', 'There are no volunteer report photos to export for this quarter.');
+      Alert.alert('No Photos', 'There are no volunteer report photos to export.');
       return;
     }
     setIsExportingPhotos(true);
@@ -1011,7 +1321,7 @@ export function PartnerReportsDashboard({
           uri: item.uri,
           name: item.name,
           date: item.date,
-          filename: `volunteer-photo-${String(idx + 1).padStart(2, '0')}-${(item.name || 'volunteer').replace(/\s+/g, '_')}`,
+          filename: `volunteer-photo-${String(idx + 1).padStart(2, '0')}-${(item.name || 'volunteer').replace(/\s+/g, '_')}.jpeg`,
         })),
         `Volunteer_Report_Photos_${quarterTag}.zip`
       );
@@ -1036,7 +1346,7 @@ export function PartnerReportsDashboard({
           : accountUserName,
         position: (submittedByRole && (submittedByRole as any) !== '—') ? String(submittedByRole) : userRoleTitle,
         volunteers,
-        projects,
+        projects: projects.filter(p => !isProgramTrackRecord(p)),
         timeLogs: volunteerTimeLogs,
         joinRecords: volunteerJoinRecords,
       });
@@ -1046,9 +1356,352 @@ export function PartnerReportsDashboard({
     }
   };
 
+  const handleExportQuarterlyPdf = async () => {
+    try {
+      const qStart = currentQuarter.startDate.getTime();
+      const qEnd = currentQuarter.endDate.getTime();
+
+      // Fetch all registered partner organizations for creator and sector mapping
+      const allPartners: Partner[] = await getAllPartners().catch(() => []);
+
+      const accountUserName = user?.name || user?.email || 'NVC Partner';
+      const partnerAuthor = (orgName && orgName !== '—')
+        ? orgName
+        : (user?.partnerRegistration?.organizationName || user?.name || 'Partner Author');
+
+      // Helper to determine whether a project was created by partner or admin
+      const getProjectCreator = (p: Project): string => {
+        if (p.partnerId) {
+          const match = allPartners.find(
+            item => item.id === p.partnerId || item.ownerUserId === p.partnerId || item.userId === p.partnerId
+          );
+          if (match?.name) return `${match.name} (Partner)`;
+        }
+        const app = partnerApplications.find(
+          a => a.projectId === p.id || a.proposalDetails?.targetProjectId === p.id
+        );
+        if (app?.partnerName) return `${app.partnerName} (Partner)`;
+        if (app?.proposalDetails?.organizationName) return `${app.proposalDetails.organizationName} (Partner)`;
+        if (user?.role === 'partner' && (user.partnerRegistration?.organizationName || user.name)) {
+          const isPartnerProject = projectSummaries.some(s => s.project.id === p.id) || p.partnerId === user.id;
+          if (isPartnerProject) return `${user.partnerRegistration?.organizationName || user.name} (Partner)`;
+        }
+        return 'NVC Administration';
+      };
+
+      // 1. TOTAL PROJECTS (strictly active or created in this quarter)
+      const quarterProjects = partnerProjects.filter(p => {
+        const created = p.createdAt ? new Date(p.createdAt).getTime() : 0;
+        const start = p.startDate ? new Date(p.startDate).getTime() : 0;
+        const end = p.endDate ? new Date(p.endDate).getTime() : 0;
+        if (created >= qStart && created <= qEnd) return true;
+        if (start >= qStart && start <= qEnd) return true;
+        if (start <= qEnd && (end === 0 || end >= qStart)) return true;
+        const hasQuarterEvent = projects.some(e =>
+          e.isEvent &&
+          e.parentProjectId === p.id &&
+          new Date(e.startDate || e.createdAt).getTime() >= qStart &&
+          new Date(e.startDate || e.createdAt).getTime() <= qEnd
+        );
+        if (hasQuarterEvent) return true;
+        return false;
+      });
+
+      const projectsList = quarterProjects.map(p => {
+        const summary = projectSummaries.find(s => s.project.id === p.id);
+        const pEvents = (summary?.linkedEvents || []).filter(e => {
+          const d = new Date(e.startDate || e.createdAt).getTime();
+          return d >= qStart && d <= qEnd;
+        }).length || (p.isEvent ? 1 : 0);
+        const pVolunteers = summary?.volunteerAccounts?.length || (p.volunteers?.length || 0);
+        return {
+          title: p.title || 'Untitled Project',
+          category: (p as any)?.sectorType || p.category || 'General Community',
+          status: p.status || 'Active',
+          createdBy: getProjectCreator(p),
+          eventsCount: pEvents,
+          volunteersCount: pVolunteers,
+        };
+      });
+
+      // 2. SKILLS CONTRIBUTED & 3. EVENTS CONDUCTED (use real computed data)
+      const eventsList = (quarterEvents.length > 0 ? quarterEvents : partnerEvents).map(e => {
+        const parent = sourceProjects.find(p => p.id === e.parentProjectId);
+        const eventVols = new Set<string>();
+        volunteerJoinRecords.filter(r => r.projectId === e.id).forEach(r => eventVols.add(r.volunteerId || r.volunteerUserId || ''));
+        volunteerTimeLogs.filter(l => l.projectId === e.id).forEach(l => eventVols.add(l.volunteerId || ''));
+        return {
+          title: e.title || 'Community Event',
+          parentProject: parent?.title || e.category || 'NVC Program',
+          date: e.startDate ? new Date(e.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : currentQuarter.label,
+          status: e.status || 'Active',
+          location: (typeof e.location === 'object' ? e.location?.address : e.location) || (e as any).address || 'Negros Occidental',
+          volunteersCount: eventVols.size || (e.volunteers?.length || 0),
+        };
+      });
+
+      // 4. SECTORS PARTNER (NGO, Hospitals, Institute, Private with all names)
+      const normalizeSectorType = (sec: string | undefined): 'NGO' | 'Hospital' | 'Institution' | 'Private' => {
+        const s = String(sec || '').toLowerCase();
+        if (s.includes('hospital') || s.includes('health') || s.includes('clinic')) return 'Hospital';
+        if (s.includes('inst') || s.includes('school') || s.includes('acad') || s.includes('univ') || s.includes('college')) return 'Institution';
+        if (s.includes('priv') || s.includes('corp') || s.includes('business') || s.includes('coop')) return 'Private';
+        return 'NGO';
+      };
+
+      const partnerMap = new Map<string, { name: string; sectorType: 'NGO' | 'Hospital' | 'Institution' | 'Private'; location?: string }>();
+
+      allPartners.forEach(p => {
+        if (!p.name) return;
+        const sType = normalizeSectorType(p.sectorType || p.category);
+        partnerMap.set(p.name.trim().toLowerCase(), {
+          name: p.name.trim(),
+          sectorType: sType,
+          location: p.cityMunicipality || p.province || p.region,
+        });
+      });
+
+      partnerApplications.forEach(a => {
+        const name = a.partnerName || a.proposalDetails?.organizationName;
+        if (!name) return;
+        const key = name.trim().toLowerCase();
+        if (!partnerMap.has(key)) {
+          partnerMap.set(key, {
+            name: name.trim(),
+            sectorType: normalizeSectorType(a.proposalDetails?.requestedProgramModule),
+            location: a.proposalDetails?.proposedLocation,
+          });
+        }
+      });
+
+      if (user?.role === 'partner' && user.partnerRegistration?.organizationName) {
+        const name = user.partnerRegistration.organizationName.trim();
+        const key = name.toLowerCase();
+        if (!partnerMap.has(key)) {
+          partnerMap.set(key, {
+            name,
+            sectorType: normalizeSectorType(user.partnerRegistration.sectorType),
+            location: user.partnerRegistration.cityMunicipality || user.partnerRegistration.province,
+          });
+        }
+      }
+
+      const allOrgPartners = Array.from(partnerMap.values());
+
+      const sectorPartnerGroups = [
+        {
+          sectorType: 'NGO',
+          sectorLabel: 'Non-Governmental Organizations (NGO)',
+          partners: allOrgPartners.filter(p => p.sectorType === 'NGO'),
+        },
+        {
+          sectorType: 'Hospital',
+          sectorLabel: 'Hospitals & Healthcare Facilities',
+          partners: allOrgPartners.filter(p => p.sectorType === 'Hospital'),
+        },
+        {
+          sectorType: 'Institution',
+          sectorLabel: 'Academic Institutions & Schools',
+          partners: allOrgPartners.filter(p => p.sectorType === 'Institution'),
+        },
+        {
+          sectorType: 'Private',
+          sectorLabel: 'Private Sector & Corporate Partners',
+          partners: allOrgPartners.filter(p => p.sectorType === 'Private'),
+        },
+      ];
+
+      // 5. VOLUNTEERS INVOLVED (all volunteers in this quarter)
+      const volStatMap = new Map<string, {
+        name: string;
+        email?: string;
+        role?: string;
+        skills?: string;
+        events: Set<string>;
+        hours: number;
+      }>();
+
+      const vById = new Map(volunteers.map(v => [v.id, v]));
+      const vByUserId = new Map(volunteers.map(v => [v.userId, v]));
+
+      volunteerTimeLogs
+        .filter(log => {
+          const logDate = new Date(log.timeIn || (log as any).createdAt).getTime();
+          return logDate >= qStart && logDate <= qEnd;
+        })
+        .forEach(log => {
+          const v = vById.get(log.volunteerId) || vByUserId.get(log.volunteerId);
+          const id = log.volunteerId || v?.id || (log as any).volunteerName || 'vol';
+          const name = v?.name || (log as any).volunteerName || 'Volunteer';
+          if (!volStatMap.has(id)) {
+            volStatMap.set(id, {
+              name,
+              email: v?.email,
+              role: v?.occupation || 'Field Volunteer',
+              skills: (v?.skills || []).slice(0, 3).join(', '),
+              events: new Set(),
+              hours: 0,
+            });
+          }
+          const st = volStatMap.get(id)!;
+          if (log.projectId) st.events.add(log.projectId);
+          st.hours += (log as any).totalHours || 2;
+        });
+
+      volunteerJoinRecords
+        .filter(j => {
+          const jDate = j.joinedAt ? new Date(j.joinedAt).getTime() : 0;
+          return jDate >= qStart && jDate <= qEnd;
+        })
+        .forEach(j => {
+          const id = j.volunteerId || j.volunteerUserId || 'vol';
+          const v = vById.get(id) || vByUserId.get(id);
+          const name = j.volunteerName || v?.name || 'Volunteer';
+          if (!volStatMap.has(id)) {
+            volStatMap.set(id, {
+              name,
+              email: v?.email,
+              role: v?.occupation || 'Field Volunteer',
+              skills: (v?.skills || []).slice(0, 3).join(', '),
+              events: new Set(),
+              hours: 0,
+            });
+          }
+          const st = volStatMap.get(id)!;
+          if (j.projectId) st.events.add(j.projectId);
+        });
+
+      const volunteersList = volStatMap.size > 0
+        ? Array.from(volStatMap.values()).map(st => ({
+            name: st.name,
+            email: st.email,
+            role: st.role,
+            skills: st.skills || 'Community Outreach',
+            eventsJoined: st.events.size,
+            hoursLogged: Math.round(st.hours * 10) / 10,
+          }))
+        : volunteers.slice(0, 10).map(v => ({
+            name: v.name,
+            email: v.email,
+            role: v.occupation || 'Community Volunteer',
+            skills: (v.skills || []).slice(0, 3).join(', ') || 'General Support',
+            eventsJoined: 0,
+            hoursLogged: 0,
+          }));
+
+      const activeProjectName =
+        (quarterProjects.length === 1 && quarterProjects[0]?.title)
+          ? quarterProjects[0].title
+          : activeReport?.projectTitle ||
+            (quarterProjects[0]?.title ? `${quarterProjects[0].title} (+${quarterProjects.length - 1} Projects)` : 'Partner Project Portfolio');
+
+      const safeSubmittedBy = (submittedByName && submittedByName !== '—' && submittedByName !== 'Program Coordinator')
+        ? submittedByName
+        : accountUserName;
+      const safePosition = (submittedByRole && (submittedByRole as any) !== '—') ? String(submittedByRole) : userRoleTitle;
+
+      const activeCount = quarterProjects.filter(p => (p.status as any) === 'Active' || p.status === 'In Progress').length;
+      const completedCount = quarterProjects.filter(p => p.status === 'Completed').length;
+      const planningCount = quarterProjects.filter(p => (p.status as any) === 'Draft' || p.status === 'Planning' || (p.status as any) === 'Pending').length;
+      const totalCount = quarterProjects.length || 1;
+
+      const activePct = Math.round((activeCount / totalCount) * 100);
+      const completedPct = Math.round((completedCount / totalCount) * 100);
+      const planningPct = Math.max(0, 100 - activePct - completedPct);
+
+      const statusDistributions = [
+        { status: 'In Progress', count: activeCount, percent: activePct, color: '#16A34A' },
+        { status: 'Planning', count: planningCount, percent: planningPct, color: '#2563EB' },
+        { status: 'Completed', count: completedCount, percent: completedPct, color: '#D97706' },
+      ];
+
+      const sectorCounts: Record<string, number> = {};
+      quarterProjects.forEach(p => {
+        const sec = (p as any)?.sectorType || p?.category || 'General Community';
+        sectorCounts[sec] = (sectorCounts[sec] || 0) + 1;
+      });
+
+      const sectorPartners = sectorData
+        .filter(s => s.label !== 'No Data')
+        .map(s => ({
+          sector: s.label,
+          count: sectorCounts[s.label] || 0,
+          percent: s.percent,
+          color: s.color,
+        }));
+
+      const reportHtml = generateReportHtml({
+        reportQuarter: currentQuarter.label,
+        projectName: activeProjectName,
+        partnerAuthor: partnerAuthor,
+        title: activeProjectName,
+        subtitle: partnerAuthor,
+        period: currentQuarter.periodLabel,
+        submittedOn: submittedOn && submittedOn !== '—' ? submittedOn : new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        submittedBy: safeSubmittedBy,
+        submittedRole: safePosition,
+        totalProjects: quarterProjects.length || projectSummaries.length || 0,
+        totalProjectsLabel: 'Total Projects',
+        totalProjectsDelta: projectTrend,
+        skillsContributed: skillsList.length,
+        skillsContributedLabel: 'Skills Contributed',
+        skillsContributedDelta: skillsTrend,
+        eventsConducted: eventsList.length,
+        eventsConductedLabel: 'Events Conducted',
+        eventsConductedDelta: eventsTrend,
+        volunteersInvolved: volunteersList.length,
+        volunteersInvolvedLabel: 'Volunteers Involved',
+        volunteersInvolvedDelta: volunteerTrend,
+        sectorPartners: sectorPartners.length > 0 ? sectorPartners : undefined,
+        projectsList,
+        skillsList,
+        eventsList,
+        sectorPartnerGroups,
+        volunteersList,
+        statusSectionTitle: 'Project Execution Status',
+        statusSectionSubtitle: 'Quarterly breakdown of active and completed operations',
+        statusDistributions,
+        overallResult: {
+          primaryLabel: 'In Progress (Active)',
+          primaryPercent: activePct,
+          secondaryLabel: 'Planning (Draft)',
+          secondaryPercent: planningPct,
+          tertiaryLabel: 'Completed (Closed)',
+          tertiaryPercent: completedPct,
+        },
+        highlights: quarterProjects.length > 0
+          ? quarterProjects.slice(0, 4).map(p => `${p.title}: ${p.description || 'Community engagement active.'}`)
+          : ['Active community mobilization and volunteer program ongoing.'],
+        documents: [
+          { name: `Quarterly_Report_${currentQuarter.label.replace(/\s+/g, '_')}.pdf`, type: 'pdf', size: 'Full Executive Report' },
+          { name: `Volunteers_Involved_${currentQuarter.label.replace(/\s+/g, '_')}.pdf`, type: 'pdf', size: `${volunteersList.length} Volunteers` },
+        ],
+        photos: volunteerPhotos.slice(0, 6).map(p => ({
+          uri: p.uri,
+          volunteerName: p.name,
+          date: p.date,
+          photoCount: p.photosCount,
+        })),
+      });
+
+      await downloadHtmlPdf(`Quarterly_Report_${currentQuarter.label.replace(/\s+/g, '_')}.pdf`, reportHtml);
+    } catch (err: any) {
+      console.error('Quarterly PDF export error:', err);
+      Alert.alert('Export Failed', err?.message || 'Unable to generate quarterly report PDF.');
+    }
+  };
+
   const handleDownloadDoc = async (doc: any) => {
     if (doc.url) {
       Linking.openURL(doc.url).catch(() => Alert.alert('Unable to open report file'));
+      return;
+    }
+    if (doc.isQuarterlyReport) {
+      await handleExportQuarterlyPdf();
+      return;
+    }
+    if (doc.isVolunteerReport) {
+      await handleExportVolunteerPdf();
       return;
     }
     if (doc.report) {
@@ -1088,8 +1741,8 @@ export function PartnerReportsDashboard({
       }
       return;
     }
-    if (doc.isVolunteerReport || doc.type === 'pdf') {
-      await handleExportVolunteerPdf();
+    if (doc.type === 'pdf') {
+      await handleExportQuarterlyPdf();
     } else {
       Alert.alert('Report Download', `Downloading ${doc.title}...`);
     }
@@ -1103,7 +1756,7 @@ export function PartnerReportsDashboard({
         return;
       }
     }
-    await handleExportVolunteerPdf();
+    await handleExportQuarterlyPdf();
   };
 
   if (loading) {
@@ -1123,8 +1776,8 @@ export function PartnerReportsDashboard({
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* 1. Breadcrumbs & Quarter Selector */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 2 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 4, zIndex: 100 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', flexShrink: 1 }}>
             <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b' }}>Partner Reports</Text>
             <Text style={{ fontSize: 12, color: '#94a3b8' }}>›</Text>
             <Text style={{ fontSize: 12, fontWeight: '600', color: '#64748b' }}>Quarterly Reports</Text>
@@ -1132,33 +1785,154 @@ export function PartnerReportsDashboard({
             <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e293b' }}>{currentQuarter.label}</Text>
           </View>
 
-          {/* Automated 3-Month Quarter Switcher Pills */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            {availableQuarters.map(q => (
-              <TouchableOpacity
-                key={q.key}
+          {/* Automated 3-Month Quarter Switcher Dropdown */}
+          <View style={{ zIndex: 100 }}>
+            {Platform.OS === 'web' ? (
+              <View
                 style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: '#ffffff',
+                  borderWidth: 1.5,
+                  borderColor: '#166534',
+                  borderRadius: 8,
                   paddingHorizontal: 10,
-                  paddingVertical: 4,
-                  borderRadius: 6,
-                  backgroundColor: selectedQuarterKey === q.key ? '#166534' : '#ffffff',
-                  borderWidth: 1,
-                  borderColor: selectedQuarterKey === q.key ? '#166534' : '#cbd5e1',
+                  paddingVertical: 5,
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 1 },
+                  shadowOpacity: 0.05,
+                  shadowRadius: 2,
+                  elevation: 1,
                 }}
-                onPress={() => setSelectedQuarterKey(q.key)}
-                activeOpacity={0.8}
               >
-                <Text
+                <MaterialIcons name="calendar-today" size={15} color="#166534" style={{ marginRight: 6 }} />
+                <select
+                  aria-label="Select Quarter"
+                  value={selectedQuarterKey}
+                  onChange={(e: any) => setSelectedQuarterKey(e.target.value)}
                   style={{
-                    fontSize: 11,
-                    fontWeight: '700',
-                    color: selectedQuarterKey === q.key ? '#ffffff' : '#475569',
+                    border: 'none',
+                    outline: 'none',
+                    background: 'transparent',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    color: '#166534',
+                    cursor: 'pointer',
+                    paddingRight: '4px',
+                    fontFamily: 'inherit',
                   }}
                 >
-                  {q.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
+                  {availableQuarters.map(q => (
+                    <option key={q.key} value={q.key} style={{ color: '#1e293b', fontSize: '13px', fontWeight: '600' }}>
+                      {q.label} ({q.periodLabel})
+                    </option>
+                  ))}
+                </select>
+              </View>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 8,
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 8,
+                    backgroundColor: '#ffffff',
+                    borderWidth: 1.5,
+                    borderColor: '#166534',
+                  }}
+                  onPress={() => setShowQuarterDropdown(true)}
+                  activeOpacity={0.8}
+                >
+                  <MaterialIcons name="calendar-today" size={15} color="#166534" />
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#166534' }}>
+                    {currentQuarter.label}
+                  </Text>
+                  <MaterialIcons name="arrow-drop-down" size={18} color="#64748b" />
+                </TouchableOpacity>
+
+                <Modal
+                  visible={showQuarterDropdown}
+                  transparent
+                  animationType="fade"
+                  onRequestClose={() => setShowQuarterDropdown(false)}
+                >
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      backgroundColor: 'rgba(0,0,0,0.4)',
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      padding: 20,
+                    }}
+                    activeOpacity={1}
+                    onPress={() => setShowQuarterDropdown(false)}
+                  >
+                    <View
+                      style={{
+                        width: '100%',
+                        maxWidth: 340,
+                        backgroundColor: '#ffffff',
+                        borderRadius: 14,
+                        padding: 16,
+                        shadowColor: '#000',
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowOpacity: 0.2,
+                        shadowRadius: 10,
+                        elevation: 10,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                        <Text style={{ fontSize: 15, fontWeight: '800', color: '#1e293b' }}>Select Quarter</Text>
+                        <TouchableOpacity onPress={() => setShowQuarterDropdown(false)}>
+                          <MaterialIcons name="close" size={20} color="#64748b" />
+                        </TouchableOpacity>
+                      </View>
+                      {availableQuarters.map(q => {
+                        const isSelected = selectedQuarterKey === q.key;
+                        return (
+                          <TouchableOpacity
+                            key={q.key}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              paddingVertical: 12,
+                              paddingHorizontal: 12,
+                              borderRadius: 8,
+                              backgroundColor: isSelected ? '#f0fdf4' : 'transparent',
+                              marginBottom: 4,
+                            }}
+                            onPress={() => {
+                              setSelectedQuarterKey(q.key);
+                              setShowQuarterDropdown(false);
+                            }}
+                          >
+                            <View>
+                              <Text
+                                style={{
+                                  fontSize: 13,
+                                  fontWeight: isSelected ? '800' : '600',
+                                  color: isSelected ? '#166534' : '#1e293b',
+                                }}
+                              >
+                                {q.label}
+                              </Text>
+                              <Text style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                                {q.periodLabel}
+                              </Text>
+                            </View>
+                            {isSelected && <MaterialIcons name="check" size={18} color="#166534" />}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </TouchableOpacity>
+                </Modal>
+              </>
+            )}
           </View>
         </View>
 
@@ -1451,7 +2225,7 @@ export function PartnerReportsDashboard({
           <TouchableOpacity
             style={{
               flex: 1,
-              minWidth: 180,
+              minWidth: 200,
               backgroundColor: '#ffffff',
               borderRadius: 14,
               borderWidth: 1,
@@ -1462,8 +2236,8 @@ export function PartnerReportsDashboard({
             activeOpacity={0.8}
             onPress={() => void handleExportVolunteerPdf()}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
                 <View
                   style={{
                     width: 36,
@@ -1472,13 +2246,32 @@ export function PartnerReportsDashboard({
                     backgroundColor: '#DCFCE7',
                     alignItems: 'center',
                     justifyContent: 'center',
+                    flexShrink: 0,
                   }}
                 >
                   <MaterialIcons name="groups" size={20} color="#16A34A" />
                 </View>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#475569' }}>Volunteers Involved</Text>
+                <Text
+                  style={{ fontSize: 12, fontWeight: '700', color: '#475569', flex: 1, flexShrink: 1 }}
+                  numberOfLines={2}
+                >
+                  Volunteers Involved
+                </Text>
               </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#eef7f0', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  backgroundColor: '#eef7f0',
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                  borderRadius: 6,
+                  borderWidth: 1,
+                  borderColor: '#dcfce7',
+                  flexShrink: 0,
+                }}
+              >
                 <MaterialIcons name="picture-as-pdf" size={13} color="#166534" />
                 <Text style={{ fontSize: 10, fontWeight: '700', color: '#166534' }}>PDF</Text>
               </View>

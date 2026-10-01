@@ -618,10 +618,9 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
         [
 
+          'messages',
           'partners',
-
           'projects',
-
           'partnerProjectApplications',
 
           'adminPlanningCalendars',
