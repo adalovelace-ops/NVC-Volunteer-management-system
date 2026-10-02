@@ -1,6 +1,8 @@
-import React, { Fragment, useEffect, useMemo, useState } from 'react';
+import React, { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+
+  ActivityIndicator,
 
   Alert,
 
@@ -497,6 +499,31 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
   const [selectedCityCode, setSelectedCityCode] = useState('');
 
   const [filteredCities, setFilteredCities] = useState<PHCityMunicipality[]>([]);
+
+  const [proposalSubmittingStatus, setProposalSubmittingStatus] = useState<
+    'idle' | 'submitting' | 'success' | 'error'
+  >('idle');
+
+  const [proposalSubmittingError, setProposalSubmittingError] = useState<string>('');
+
+  const submissionTimeoutRef = useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+      if (submissionTimeoutRef.current) {
+        clearTimeout(submissionTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleGoToAdminMessages = () => {
+    if (submissionTimeoutRef.current) {
+      clearTimeout(submissionTimeoutRef.current);
+      submissionTimeoutRef.current = null;
+    }
+    setProposalSubmittingStatus('idle');
+    navigation.navigate('Messages', { conversationUserId: 'admin' });
+  };
 
   const [showProposalDatePicker, setShowProposalDatePicker] = useState(false);
 
@@ -1370,6 +1397,10 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
       setActionProjectId(proposalProjectId);
 
+      setProposalSubmittingStatus('submitting');
+
+      setProposalSubmittingError('');
+
       const existingApp = programApplicationByModule.get(selectedModule);
       const isRevision = existingApp?.status === 'Rejected' || existingApp?.status === 'Revision Requested' || existingApp?.status === 'Needs Revision';
       const enrichedProposalDetails = {
@@ -1390,18 +1421,24 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
       setProposalForm(createEmptyProposalForm(selectedModule));
 
-      Alert.alert('Proposal Sent', 'Your project proposal has been sent to the admin for review.');
-
       void loadDashboardData();
+
+      setProposalSubmittingStatus('success');
+
+      if (submissionTimeoutRef.current) {
+        clearTimeout(submissionTimeoutRef.current);
+      }
+      submissionTimeoutRef.current = setTimeout(() => {
+        setProposalSubmittingStatus('idle');
+        navigation.navigate('Messages', { conversationUserId: 'admin' });
+      }, 1600);
 
     } catch (error) {
 
-      Alert.alert(
+      setProposalSubmittingStatus('error');
 
-        getRequestErrorTitle(error),
-
+      setProposalSubmittingError(
         getRequestErrorMessage(error, 'Failed to send the project proposal.')
-
       );
 
     } finally {
@@ -2295,6 +2332,76 @@ export default function PartnerDashboardScreen({ navigation, route }: any) {
 
         </View>
 
+      </Modal>
+
+      <Modal
+        visible={proposalSubmittingStatus !== 'idle'}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (proposalSubmittingStatus === 'error') {
+            setProposalSubmittingStatus('idle');
+          }
+        }}
+      >
+        <View style={styles.loadingModalBackdrop}>
+          <View style={styles.loadingModalCard}>
+            {proposalSubmittingStatus === 'submitting' && (
+              <View style={styles.loadingModalBody}>
+                <View style={styles.loadingIconCircle}>
+                  <ActivityIndicator size="large" color="#166534" />
+                </View>
+                <Text style={styles.loadingModalTitle}>Submitting Proposal for Review</Text>
+                <Text style={styles.loadingModalSubtext}>
+                  Sending your project specifications and requirements to the NVC Administrator...
+                </Text>
+                <View style={styles.loadingPulseBadge}>
+                  <MaterialIcons name="hourglass-top" size={14} color="#166534" />
+                  <Text style={styles.loadingPulseBadgeText}>Please wait a moment</Text>
+                </View>
+              </View>
+            )}
+
+            {proposalSubmittingStatus === 'success' && (
+              <View style={styles.loadingModalBody}>
+                <View style={[styles.loadingIconCircle, { backgroundColor: '#dcfce7', borderColor: '#86efac' }]}>
+                  <MaterialIcons name="check-circle" size={48} color="#16a34a" />
+                </View>
+                <Text style={styles.loadingModalTitle}>Proposal Submitted!</Text>
+                <Text style={styles.loadingModalSubtext}>
+                  Your proposal has been submitted for administrative review. Directing you to admin messages now...
+                </Text>
+                <TouchableOpacity
+                  style={styles.loadingModalDirectButton}
+                  onPress={handleGoToAdminMessages}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.loadingModalDirectButtonText}>Go to Admin Messages</Text>
+                  <MaterialIcons name="arrow-forward" size={18} color="#ffffff" style={{ marginLeft: 6 }} />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {proposalSubmittingStatus === 'error' && (
+              <View style={styles.loadingModalBody}>
+                <View style={[styles.loadingIconCircle, { backgroundColor: '#fee2e2', borderColor: '#fca5a5' }]}>
+                  <MaterialIcons name="error-outline" size={48} color="#dc2626" />
+                </View>
+                <Text style={styles.loadingModalTitle}>Submission Failed</Text>
+                <Text style={[styles.loadingModalSubtext, { color: '#dc2626' }]}>
+                  {proposalSubmittingError || 'Unable to submit your proposal. Please check your connection and try again.'}
+                </Text>
+                <TouchableOpacity
+                  style={[styles.loadingModalDirectButton, { backgroundColor: '#334155' }]}
+                  onPress={() => setProposalSubmittingStatus('idle')}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.loadingModalDirectButtonText}>Back to Proposal</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
       </Modal>
 
       <LogoutConfirmationModal
@@ -3853,6 +3960,98 @@ const styles = StyleSheet.create({
 
     color: '#94a3b8',
 
+  },
+
+  loadingModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.72)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    zIndex: 9999,
+  },
+  loadingModalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    paddingVertical: 32,
+    paddingHorizontal: 26,
+    width: '100%',
+    maxWidth: 420,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.25,
+    shadowRadius: 24,
+    elevation: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  loadingModalBody: {
+    alignItems: 'center',
+    width: '100%',
+  },
+  loadingIconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1.5,
+    borderColor: '#bbf7d0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  loadingModalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0f172a',
+    textAlign: 'center',
+    marginBottom: 8,
+    letterSpacing: -0.3,
+  },
+  loadingModalSubtext: {
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 20,
+    paddingHorizontal: 8,
+  },
+  loadingPulseBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0fdf4',
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    gap: 6,
+  },
+  loadingPulseBadgeText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#166534',
+  },
+  loadingModalDirectButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#166534',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    width: '100%',
+    shadowColor: '#166534',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  loadingModalDirectButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
   },
 
 });

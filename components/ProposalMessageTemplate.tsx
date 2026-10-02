@@ -148,18 +148,6 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
           <Text style={styles.approvedProjectDescription} numberOfLines={2}>
             {description}
           </Text>
-          {communityNeed ? (
-            <View style={styles.statusDetailBlock}>
-              <Text style={styles.statusDetailLabel}>Community Need:</Text>
-              <Text style={styles.statusDetailText} numberOfLines={2}>{communityNeed}</Text>
-            </View>
-          ) : null}
-          {expectedOutcome ? (
-            <View style={styles.statusDetailBlock}>
-              <Text style={styles.statusDetailLabel}>Expected Outcome:</Text>
-              <Text style={styles.statusDetailText} numberOfLines={2}>{expectedOutcome}</Text>
-            </View>
-          ) : null}
           <View style={styles.approvedMetaRow}>
             <View style={styles.approvedMetaItem}>
               <MaterialIcons name="calendar-today" size={12} color="#166534" />
@@ -228,18 +216,6 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
           <Text style={styles.approvedProjectDescription} numberOfLines={2}>
             {description}
           </Text>
-          {communityNeed ? (
-            <View style={styles.statusDetailBlock}>
-              <Text style={styles.statusDetailLabel}>Community Need:</Text>
-              <Text style={styles.statusDetailText} numberOfLines={2}>{communityNeed}</Text>
-            </View>
-          ) : null}
-          {expectedOutcome ? (
-            <View style={styles.statusDetailBlock}>
-              <Text style={styles.statusDetailLabel}>Expected Outcome:</Text>
-              <Text style={styles.statusDetailText} numberOfLines={2}>{expectedOutcome}</Text>
-            </View>
-          ) : null}
           <View style={styles.approvedMetaRow}>
             <View style={styles.approvedMetaItem}>
               <MaterialIcons name="calendar-today" size={12} color="#64748b" />
@@ -290,18 +266,6 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
           <Text style={styles.approvedProjectDescription} numberOfLines={2}>
             {description}
           </Text>
-          {communityNeed ? (
-            <View style={styles.statusDetailBlock}>
-              <Text style={styles.statusDetailLabel}>Community Need:</Text>
-              <Text style={styles.statusDetailText} numberOfLines={2}>{communityNeed}</Text>
-            </View>
-          ) : null}
-          {expectedOutcome ? (
-            <View style={styles.statusDetailBlock}>
-              <Text style={styles.statusDetailLabel}>Expected Outcome:</Text>
-              <Text style={styles.statusDetailText} numberOfLines={2}>{expectedOutcome}</Text>
-            </View>
-          ) : null}
           <View style={styles.approvedMetaRow}>
             <View style={styles.approvedMetaItem}>
               <MaterialIcons name="calendar-today" size={12} color="#2563eb" />
@@ -361,18 +325,6 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
           <Text style={styles.approvedProjectDescription} numberOfLines={2}>
             {description}
           </Text>
-          {communityNeed ? (
-            <View style={styles.statusDetailBlock}>
-              <Text style={styles.statusDetailLabel}>Community Need:</Text>
-              <Text style={styles.statusDetailText} numberOfLines={2}>{communityNeed}</Text>
-            </View>
-          ) : null}
-          {expectedOutcome ? (
-            <View style={styles.statusDetailBlock}>
-              <Text style={styles.statusDetailLabel}>Expected Outcome:</Text>
-              <Text style={styles.statusDetailText} numberOfLines={2}>{expectedOutcome}</Text>
-            </View>
-          ) : null}
           <View style={styles.approvedMetaRow}>
             <View style={styles.approvedMetaItem}>
               <MaterialIcons name="calendar-today" size={12} color="#64748b" />
@@ -451,14 +403,6 @@ export default function ProposalMessageTemplate({ application, onEdit, onSubmit,
           <View style={styles.field}>
             <Text style={styles.label}>Project Description</Text>
             <Text style={styles.value}>{description}</Text>
-          </View>
-          <View style={styles.field}>
-            <Text style={styles.label}>Community Need</Text>
-            <Text style={styles.value}>{communityNeed || 'N/A'}</Text>
-          </View>
-          <View style={styles.field}>
-            <Text style={styles.label}>Expected Outcome</Text>
-            <Text style={styles.value}>{expectedOutcome || 'N/A'}</Text>
           </View>
           <View style={styles.field}>
             <Text style={styles.label}>Target Location</Text>

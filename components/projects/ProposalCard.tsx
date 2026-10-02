@@ -74,24 +74,6 @@ export default function ProposalCard({
           {proposalDetails?.proposedDescription || 'No description provided.'}
         </Text>
 
-        {proposalDetails?.communityNeed ? (
-          <View style={styles.narrativeSection}>
-            <Text style={styles.narrativeLabel}>Community Need</Text>
-            <Text style={styles.narrativeText} numberOfLines={2}>
-              {proposalDetails.communityNeed}
-            </Text>
-          </View>
-        ) : null}
-
-        {(proposalDetails?.expectedDeliverables || (proposalDetails as any)?.expectedOutcome) ? (
-          <View style={styles.narrativeSection}>
-            <Text style={styles.narrativeLabel}>Expected Outcome</Text>
-            <Text style={styles.narrativeText} numberOfLines={2}>
-              {proposalDetails?.expectedDeliverables || (proposalDetails as any)?.expectedOutcome}
-            </Text>
-          </View>
-        ) : null}
-
         <View style={styles.infoGrid}>
           <View style={styles.infoItem}>
             <MaterialIcons name="event" size={14} color="#64748b" />

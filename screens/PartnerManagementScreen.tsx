@@ -241,9 +241,8 @@ export default function PartnerManagementScreen({ navigation, route }: any) {
       await loadPartners();
       await loadProjects();
       
-      if (reviewedApp.projectId) {
-        navigateToAvailableRoute(navigation, 'Projects', { projectId: reviewedApp.projectId });
-      }
+      const targetPid = reviewedApp.projectId || application.projectId;
+      navigateToAvailableRoute(navigation, 'Projects', targetPid ? { projectId: targetPid } : undefined);
     } catch (error) {
       Alert.alert('Error', error instanceof Error ? error.message : 'Failed to approve proposal.');
     }

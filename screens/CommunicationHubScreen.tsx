@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 
 import {
   Alert,
+  AppState,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -77,8 +78,8 @@ import {
   saveProject,
 
   subscribeToMessages,
-
   subscribeToStorageChanges,
+  subscribeToWebMessageSync,
 
   submitPartnerProgramProposal,
   reviewPartnerProjectApplication,
@@ -647,6 +648,7 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
   const [isSending, setIsSending] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
+  const [isSubmittingProposal, setIsSubmittingProposal] = useState(false);
   const [reviewNotice, setReviewNotice] = useState<{
 
     title: string;
@@ -1350,34 +1352,19 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
 
   useEffect(() => {
-
     if (!user?.id) {
-
       return;
-
     }
 
-
-
     return subscribeToMessages(user.id, event => {
-
       if (event.type === 'message.changed') {
-
         const incoming = event.message;
-
         const activeUser = selectedUserRef.current;
-
         const isActiveConversation = Boolean(
-
           activeUser &&
-
           ((incoming.senderId === user.id && incoming.recipientId === activeUser.id) ||
-
             (incoming.senderId === activeUser.id && incoming.recipientId === user.id))
-
         );
-
-
 
         if (isActiveConversation) {
           setMessages(current => upsertChatMessage(current, incoming));
@@ -1388,9 +1375,28 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
               void loadData();
             });
           }
-        } else {
-          void loadData();
         }
+
+        // Live update the conversation preview & unread badge in sidebar instantly
+        const partnerId = incoming.senderId === user.id ? incoming.recipientId : incoming.senderId;
+        setConversations(curr => {
+          const matchIndex = curr.findIndex(c => c.user.id === partnerId);
+          if (matchIndex < 0) {
+            void loadData();
+            return curr;
+          }
+          return curr.map((c, i) =>
+            i === matchIndex
+              ? {
+                  ...c,
+                  lastMessage: incoming,
+                  unreadCount: isActiveConversation ? 0 : (incoming.recipientId === user.id && !incoming.read ? (c.unreadCount || 0) + 1 : c.unreadCount),
+                }
+              : c
+          );
+        });
+
+        void loadData();
         return;
       }
 
@@ -1402,13 +1408,62 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
           setMessages(current => upsertChatMessage(current, incoming));
           directMessagesRef.current = upsertChatMessage(directMessagesRef.current, incoming);
         }
+        void loadData();
       }
-
     });
-
   }, [loadData, user?.id]);
 
+  // Real-time synchronization across web tabs, window focus, and mobile AppState wake-up
+  useEffect(() => {
+    const handleSync = () => {
+      void loadData();
+      if (selectedUserRef.current || selectedProjectChatRef.current) {
+        void loadMessages(false);
+      }
+    };
 
+    const unsubWebSync = subscribeToWebMessageSync(handleSync);
+
+    const appStateSub = AppState.addEventListener('change', state => {
+      if (state === 'active') {
+        handleSync();
+      }
+    });
+
+    const handleWindowFocus = () => {
+      handleSync();
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', handleWindowFocus);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') handleSync();
+      });
+    }
+
+    return () => {
+      unsubWebSync();
+      appStateSub.remove();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', handleWindowFocus);
+      }
+    };
+  }, [loadData]);
+
+  // Continuous real-time background sync interval (app & web sync with no refresh needed)
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const liveSyncTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void loadData();
+      if (selectedUserRef.current || selectedProjectChatRef.current) {
+        void loadMessages(false);
+      }
+    }, 2000);
+
+    return () => clearInterval(liveSyncTimer);
+  }, [user?.id, loadData]);
 
   useEffect(() => {
     if (!user?.id || !selectedUser?.id) {
@@ -1458,15 +1513,9 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
       setMessages([]);
     }
 
-    // STEP 2: Background refresh (hits client TTL cache or backend index)
+    // STEP 2: Background refresh
     if (selectedUser || selectedProjectChat) {
       void loadMessages(true);
-
-      const timer = setInterval(() => {
-        void loadMessages(false);
-      }, 1500);
-
-      return () => clearInterval(timer);
     }
   }, [selectedUser?.id, selectedProjectChat?.project?.id, view, user?.id]);
 
@@ -1829,9 +1878,17 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
           projectId: reviewed.projectId,
         });
 
-        Alert.alert('Approved', 'Proposal approved! New project has been created.');
         void loadMessages();
         void loadData();
+
+        const targetPid = reviewed.projectId || app.projectId;
+        setTimeout(() => {
+          navigateToAvailableRoute(
+            navigation,
+            'Projects',
+            targetPid ? { projectId: targetPid, programSuiteView: 'projects' } : { programSuiteView: 'projects' }
+          );
+        }, 300);
       } catch (e: any) {
         Alert.alert('Error', e?.message || 'Failed to approve proposal.');
       } finally {
@@ -1996,16 +2053,19 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
   }, [messages]);
 
   useEffect(() => {
-    if (!reviewNotice || reviewNotice.tone !== 'success' || !reviewNotice.projectId) {
+    if (!reviewNotice || reviewNotice.tone !== 'success') {
       return;
     }
 
     const timer = setTimeout(() => {
+      const navParams = reviewNotice.projectId
+        ? { projectId: reviewNotice.projectId, programSuiteView: 'projects' }
+        : { programSuiteView: 'projects' };
       navigateToAvailableRoute(
         navigation,
         'Projects',
-        { projectId: reviewNotice.projectId, programSuiteView: 'projects' },
-        { routeName: 'Projects', params: { projectId: reviewNotice.projectId, programSuiteView: 'projects' } }
+        navParams,
+        { routeName: 'Projects', params: navParams }
       );
     }, 250);
 
@@ -2617,6 +2677,8 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
     try {
 
+      setIsSubmittingProposal(true);
+
       const proposalAttachments = proposalForm.photoAttachment
         ? [{ url: proposalForm.photoAttachment, type: 'image' as const }]
         : [];
@@ -2643,13 +2705,24 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
       closeProposalComposer();
 
-      Alert.alert('Success', 'Your proposal has been submitted for review.');
+      const admin = allUsers.find(u => u.role === 'admin');
+      if (admin) {
+        setSelectedUser(admin);
+        setSelectedProjectChat(null);
+        setSelectedProposalApplication(null);
+        setView('detail');
+      }
 
       void loadData();
+      void loadMessages();
 
-    } catch (e) {
+    } catch (e: any) {
 
-      Alert.alert('Error', 'Failed to submit proposal. Please check your connection.');
+      Alert.alert('Error', e?.message || 'Failed to submit proposal. Please check your connection.');
+
+    } finally {
+
+      setIsSubmittingProposal(false);
 
     }
 
@@ -2788,6 +2861,14 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
 
       if (status === 'Approved') {
         setIsApproving(false);
+        const targetPid = reviewedApplication.projectId || app.projectId || app.proposalDetails?.targetProjectId;
+        setTimeout(() => {
+          navigateToAvailableRoute(
+            navigation,
+            'Projects',
+            targetPid ? { projectId: targetPid, programSuiteView: 'projects' } : { programSuiteView: 'projects' }
+          );
+        }, 300);
       }
 
     } catch (e) {
@@ -5265,32 +5346,6 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
                         </View>
                       </View>
 
-                      {/* Row 2b: Community Need + Expected Outcome */}
-                      <View style={[inlineStyles.draftRow, !isWide && inlineStyles.draftRowMobile]}>
-                        <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
-                          <Text style={inlineStyles.draftLabel}>Community Need</Text>
-                          <TextInput
-                            style={[inlineStyles.draftInput, { height: 70, textAlignVertical: 'top' }]}
-                            multiline
-                            value={draft.communityNeed}
-                            onChangeText={t => setInlineDraftProposal(p => p ? { ...p, communityNeed: t } : p)}
-                            placeholder="Describe the urgent community need..."
-                            placeholderTextColor="#94a3b8"
-                          />
-                        </View>
-                        <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
-                          <Text style={inlineStyles.draftLabel}>Expected Outcome</Text>
-                          <TextInput
-                            style={[inlineStyles.draftInput, { height: 70, textAlignVertical: 'top' }]}
-                            multiline
-                            value={draft.expectedDeliverables}
-                            onChangeText={t => setInlineDraftProposal(p => p ? { ...p, expectedDeliverables: t } : p)}
-                            placeholder="Expected results, deliverables, metrics..."
-                            placeholderTextColor="#94a3b8"
-                          />
-                        </View>
-                      </View>
-
                       {/* Row 3: Target Location + City/Municipality */}
                       <View style={[inlineStyles.draftRow, !isWide && inlineStyles.draftRowMobile]}>
                         <View style={[inlineStyles.draftGroup, { flex: 1 }]}>
@@ -6048,11 +6103,13 @@ export default function CommunicationHubScreen({ navigation, route }: any) {
         );
       })()}
 
-      <Modal visible={isApproving} transparent={true} animationType="fade">
+      <Modal visible={isApproving || isSubmittingProposal} transparent={true} animationType="fade">
         <View style={styles.loadingModalOverlay}>
           <View style={styles.loadingModalContent}>
             <ActivityIndicator size="large" color="#166534" />
-            <Text style={styles.loadingModalText}>Approving Proposal...</Text>
+            <Text style={styles.loadingModalText}>
+              {isApproving ? 'Approving Proposal...' : 'Submitting Proposal for Review...'}
+            </Text>
           </View>
         </View>
       </Modal>

@@ -5056,9 +5056,9 @@ export async function deleteProjectGroupMessage(messageId: string, projectId?: s
   }
 }
 
-export async function getMessagesForUser(userId: string): Promise<Message[]> {
+export async function getMessagesForUser(userId: string, forceFresh = false): Promise<Message[]> {
   const cached = messagesForUserCache.get(userId);
-  if (cached && Date.now() - cached.timestamp < MESSAGES_CACHE_TTL_MS) {
+  if (!forceFresh && cached && Date.now() - cached.timestamp < MESSAGES_CACHE_TTL_MS) {
     return cached.data;
   }
   try {
@@ -5232,6 +5232,9 @@ export function subscribeToMessages(
   const connectWs = () => {
     if (isClosed) return;
     try {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
       const wsUrl = getMessagesWebSocketUrl(userId);
       ws = new WebSocket(wsUrl);
 
@@ -5254,9 +5257,13 @@ export function subscribeToMessages(
             conversationCache.delete([msg.senderId, msg.recipientId].sort().join(':'));
             messagesForUserCache.delete(msg.senderId);
             messagesForUserCache.delete(msg.recipientId);
+            notifyStorageChanged(['messages']);
+            notifyWebMessageUpdate();
             onChange({ type: 'message.changed', message: msg });
           } else if (payload?.type === 'project-group-message.changed' && payload.message) {
             invalidateMessageCache(undefined, undefined, payload.message.projectId);
+            notifyStorageChanged(['messages', 'projectGroupMessages']);
+            notifyWebMessageUpdate();
             onChange({ type: 'project-group-message.changed', message: payload.message });
           }
         } catch {}
@@ -5282,6 +5289,36 @@ export function subscribeToMessages(
 
   connectWs();
 
+  // Instant wake-up on network recovery, focus, or tab visibility change
+  const handleWakeup = () => {
+    if (isClosed) return;
+    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      connectWs();
+    }
+  };
+
+  let cleanupListeners = () => {};
+  if (typeof document !== 'undefined') {
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') handleWakeup();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    cleanupListeners = () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }
+  if (typeof window !== 'undefined') {
+    const prevCleanup = cleanupListeners;
+    window.addEventListener('online', handleWakeup);
+    window.addEventListener('focus', handleWakeup);
+    cleanupListeners = () => {
+      prevCleanup();
+      window.removeEventListener('online', handleWakeup);
+      window.removeEventListener('focus', handleWakeup);
+    };
+  }
+
   // 2. Also listen via Firestore as secondary channel
   const fbUnsub = fbSubscribeToMessages(userId, (event) => {
     if (event.type === 'message.changed') {
@@ -5297,6 +5334,7 @@ export function subscribeToMessages(
 
   return () => {
     isClosed = true;
+    cleanupListeners();
     if (reconnectTimer) clearTimeout(reconnectTimer);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     if (ws) {
@@ -5306,6 +5344,19 @@ export function subscribeToMessages(
       ws = null;
     }
     fbUnsub();
+  };
+}
+
+export function subscribeToWebMessageSync(onSync: () => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const handler = (e: StorageEvent) => {
+    if (e.key === WEB_MESSAGE_SYNC_KEY) {
+      onSync();
+    }
+  };
+  window.addEventListener('storage', handler);
+  return () => {
+    window.removeEventListener('storage', handler);
   };
 }
 

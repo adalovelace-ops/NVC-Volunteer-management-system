@@ -455,6 +455,7 @@ export default function LoginScreen() {
   const stackSelectionCards = screenWidth < 420;
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [pendingApprovalMessage, setPendingApprovalMessage] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(true);
@@ -501,6 +502,7 @@ export default function LoginScreen() {
   }, [signupEmail]);
   const [signupAccountPhone, setSignupAccountPhone] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [signupUserType, setSignupUserType] = useState<UserType>("Student");
   const [signupPillars, setSignupPillars] = useState<NVCSector[]>([]);
   const [signupRole, setSignupRole] = useState<UserRole>("volunteer");
@@ -2003,19 +2005,33 @@ export default function LoginScreen() {
                   />
 
                   {/* Password Input */}
-                  <TextInput
-                    style={styles.glassInput}
-                    placeholder="Password"
-                    placeholderTextColor="#94a3b8"
-                    value={password}
-                    onChangeText={(val) => {
-                      setPassword(val);
-                      if (loginError) setLoginError(null);
-                    }}
-                    secureTextEntry
-                    autoCapitalize="none"
-                    editable={!loading}
-                  />
+                  <View style={styles.glassPasswordWrapper}>
+                    <TextInput
+                      style={[styles.glassInput, styles.glassPasswordInput]}
+                      placeholder="Password"
+                      placeholderTextColor="#94a3b8"
+                      value={password}
+                      onChangeText={(val) => {
+                        setPassword(val);
+                        if (loginError) setLoginError(null);
+                      }}
+                      secureTextEntry={!showPassword}
+                      autoCapitalize="none"
+                      editable={!loading}
+                    />
+                    <TouchableOpacity
+                      style={styles.glassPasswordEye}
+                      onPress={() => setShowPassword((prev) => !prev)}
+                      activeOpacity={0.7}
+                      accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+                    >
+                      <MaterialIcons
+                        name={showPassword ? "visibility" : "visibility-off"}
+                        size={20}
+                        color="#64748b"
+                      />
+                    </TouchableOpacity>
+                  </View>
 
                   {/* Error Box */}
                   {loginError ? (
@@ -2146,20 +2162,34 @@ export default function LoginScreen() {
                   editable={!loading}
                 />
 
-                <TextInput
-                  style={[styles.input, isCompactLayout && styles.compactInput]}
-                  placeholder="Password"
-                  placeholderTextColor="#999"
-                  value={password}
-                  onChangeText={(value) => {
-                    setPassword(value);
-                    if (loginError) {
-                      setLoginError(null);
-                    }
-                  }}
-                  secureTextEntry
-                  editable={!loading}
-                />
+                <View style={[styles.passwordInputWrapper, isCompactLayout && { marginBottom: 12 }]}>
+                  <TextInput
+                    style={[styles.input, isCompactLayout && styles.compactInput, styles.passwordInput]}
+                    placeholder="Password"
+                    placeholderTextColor="#999"
+                    value={password}
+                    onChangeText={(value) => {
+                      setPassword(value);
+                      if (loginError) {
+                        setLoginError(null);
+                      }
+                    }}
+                    secureTextEntry={!showPassword}
+                    editable={!loading}
+                  />
+                  <TouchableOpacity
+                    style={styles.passwordEye}
+                    onPress={() => setShowPassword((prev) => !prev)}
+                    activeOpacity={0.7}
+                    accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+                  >
+                    <MaterialIcons
+                      name={showPassword ? "visibility" : "visibility-off"}
+                      size={22}
+                      color="#64748b"
+                    />
+                  </TouchableOpacity>
+                </View>
 
                 {loginError ? (
                   <InlineLoadError
@@ -2484,16 +2514,30 @@ export default function LoginScreen() {
                               </TouchableOpacity>
                             ) : null}
                           </View>
-                          <TextInput
-                            style={styles.input}
-                            placeholder="Password"
-                            placeholderTextColor="#999"
-                            secureTextEntry
-                            value={signupPassword}
-                            onChangeText={setSignupPassword}
-                            editable={!signupLoading}
-                            autoCapitalize="none"
-                          />
+                          <View style={styles.passwordInputWrapper}>
+                            <TextInput
+                              style={[styles.input, styles.passwordInput]}
+                              placeholder="Password"
+                              placeholderTextColor="#999"
+                              secureTextEntry={!showSignupPassword}
+                              value={signupPassword}
+                              onChangeText={setSignupPassword}
+                              editable={!signupLoading}
+                              autoCapitalize="none"
+                            />
+                            <TouchableOpacity
+                              style={styles.passwordEye}
+                              onPress={() => setShowSignupPassword((prev) => !prev)}
+                              activeOpacity={0.7}
+                              accessibilityLabel={showSignupPassword ? "Hide password" : "Show password"}
+                            >
+                              <MaterialIcons
+                                name={showSignupPassword ? "visibility" : "visibility-off"}
+                                size={22}
+                                color="#64748b"
+                              />
+                            </TouchableOpacity>
+                          </View>
                         </>
                       ) : signupRole === "partner" ? (
                         <>
@@ -2752,15 +2796,29 @@ export default function LoginScreen() {
                             onChangeText={(value) => setSignupAccountPhone(normalizePhoneInput(value))}
                             editable={!signupLoading}
                           />
-                          <TextInput
-                            style={styles.input}
-                            placeholder="Password"
-                            placeholderTextColor="#999"
-                            secureTextEntry
-                            value={signupPassword}
-                            onChangeText={setSignupPassword}
-                            editable={!signupLoading}
-                          />
+                          <View style={styles.passwordInputWrapper}>
+                            <TextInput
+                              style={[styles.input, styles.passwordInput]}
+                              placeholder="Password"
+                              placeholderTextColor="#999"
+                              secureTextEntry={!showSignupPassword}
+                              value={signupPassword}
+                              onChangeText={setSignupPassword}
+                              editable={!signupLoading}
+                            />
+                            <TouchableOpacity
+                              style={styles.passwordEye}
+                              onPress={() => setShowSignupPassword((prev) => !prev)}
+                              activeOpacity={0.7}
+                              accessibilityLabel={showSignupPassword ? "Hide password" : "Show password"}
+                            >
+                              <MaterialIcons
+                                name={showSignupPassword ? "visibility" : "visibility-off"}
+                                size={22}
+                                color="#64748b"
+                              />
+                            </TouchableOpacity>
+                          </View>
 
                           {/* Partner Signup Consent */}
                           <TouchableOpacity
@@ -2861,16 +2919,30 @@ export default function LoginScreen() {
                             onChangeText={(value) => setSignupAccountPhone(normalizePhoneInput(value))}
                             editable={!signupLoading}
                           />
-                          <TextInput
-                            style={styles.input}
-                            placeholder="Password"
-                            placeholderTextColor="#999"
-                            secureTextEntry
-                            value={signupPassword}
-                            onChangeText={setSignupPassword}
-                            editable={!signupLoading}
-                            autoCapitalize="none"
-                          />
+                          <View style={styles.passwordInputWrapper}>
+                            <TextInput
+                              style={[styles.input, styles.passwordInput]}
+                              placeholder="Password"
+                              placeholderTextColor="#999"
+                              secureTextEntry={!showSignupPassword}
+                              value={signupPassword}
+                              onChangeText={setSignupPassword}
+                              editable={!signupLoading}
+                              autoCapitalize="none"
+                            />
+                            <TouchableOpacity
+                              style={styles.passwordEye}
+                              onPress={() => setShowSignupPassword((prev) => !prev)}
+                              activeOpacity={0.7}
+                              accessibilityLabel={showSignupPassword ? "Hide password" : "Show password"}
+                            >
+                              <MaterialIcons
+                                name={showSignupPassword ? "visibility" : "visibility-off"}
+                                size={22}
+                                color="#64748b"
+                              />
+                            </TouchableOpacity>
+                          </View>
 
                           <Text style={styles.modalSectionLabel}>Volunteer Profile</Text>
                            <Text style={styles.modalSectionSubLabel}>Profile Type</Text>
@@ -4546,6 +4618,23 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     marginBottom: 12,
   },
+  passwordInputWrapper: {
+    position: "relative",
+    justifyContent: "center",
+    marginBottom: 15,
+  },
+  passwordInput: {
+    marginBottom: 0,
+    paddingRight: 46,
+  },
+  passwordEye: {
+    position: "absolute",
+    right: 14,
+    height: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 2,
+  },
   button: {
     backgroundColor: "#166534",
     borderRadius: 12,
@@ -5642,6 +5731,23 @@ const styles = StyleSheet.create({
     color: "#0f172a",
     marginBottom: 12,
     borderWidth: 0,
+  },
+  glassPasswordWrapper: {
+    position: "relative",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  glassPasswordInput: {
+    marginBottom: 0,
+    paddingRight: 46,
+  },
+  glassPasswordEye: {
+    position: "absolute",
+    right: 14,
+    height: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 2,
   },
   glassErrorBox: {
     flexDirection: "row",

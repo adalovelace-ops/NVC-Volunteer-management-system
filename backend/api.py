@@ -5253,7 +5253,7 @@ def serialize_message_row(row: dict[str, Any]) -> dict[str, Any]:
         ts_str = str(ts or "")
 
     return {
-        "id": str(row.get("id") or ""),
+        "id": str(row.get("messages_id") or row.get("id") or ""),
         "senderId": str(row.get("sender_id") or ""),
         "recipientId": str(row.get("recipient_id") or ""),
         "projectId": row.get("project_id"),
@@ -5261,6 +5261,11 @@ def serialize_message_row(row: dict[str, Any]) -> dict[str, Any]:
         "timestamp": ts_str,
         "read": bool(row.get("read", False)),
         "attachments": attachments,
+        "deleted": bool(row.get("deleted", False)),
+        "edited": bool(row.get("edited", False)),
+        "replyToId": row.get("reply_to_id"),
+        "replyToContent": row.get("reply_to_content"),
+        "replyToSenderName": row.get("reply_to_sender_name"),
     }
 
 

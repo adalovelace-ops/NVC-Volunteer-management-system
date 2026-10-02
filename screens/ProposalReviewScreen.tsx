@@ -100,20 +100,9 @@ export default function ProposalReviewScreen({ navigation }: any) {
       setApprovalNotes('');
       setAction(null);
       
-      // Show success message with project creation confirmation
-      const projectTitle = reviewedProposal.proposalDetails?.proposedTitle || 
-                          getProjectTitle(reviewedProposal.projectId) ||
-                          'Untitled Project';
-      Alert.alert(
-        'Proposal Approved ✅',
-        `"${projectTitle}" has been approved.\n\nA new project has been automatically created in the Program Management Suite.`,
-        [{ text: 'OK', onPress: () => {
-          loadData();
-          if (reviewedProposal.projectId) {
-            navigation.navigate('Projects', { projectId: reviewedProposal.projectId });
-          }
-        }}]
-      );
+      loadData();
+      const targetPid = reviewedProposal.projectId || selectedProposal.projectId;
+      navigation.navigate('Projects', targetPid ? { projectId: targetPid } : undefined);
     } catch (error) {
       Alert.alert(
         'Approval Failed',

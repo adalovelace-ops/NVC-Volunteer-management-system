@@ -215,16 +215,6 @@ export default function ProposalCard({
                 <Text style={styles.detailValue}>{proposalDetails.proposedDescription || 'N/A'}</Text>
               </View>
 
-              <View style={styles.detailSection}>
-                <Text style={styles.detailLabel}>Community Need</Text>
-                <Text style={styles.detailValue}>{proposalDetails.communityNeed || 'N/A'}</Text>
-              </View>
-
-              <View style={styles.detailSection}>
-                <Text style={styles.detailLabel}>Expected Deliverables</Text>
-                <Text style={styles.detailValue}>{proposalDetails.expectedDeliverables || 'N/A'}</Text>
-              </View>
-
               {application.reviewNotes ? (
                 <View style={[
                   styles.detailSection,
